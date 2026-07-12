@@ -3,6 +3,8 @@
 A kid-friendly voxel city **sandbox** — build whatever you want, no money, no rules.
 Runs in any modern browser on Chromebooks, iPads, and desktops. No install, no accounts, no ads.
 
+**▶ Play it live: https://blockville.pages.dev**
+
 ## Play
 
 **Easiest:** open `dist/blockville.html` — the whole game in one file. Double-click it,
