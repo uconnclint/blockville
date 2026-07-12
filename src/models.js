@@ -1374,6 +1374,30 @@ function bCheese(rng) {
   g.set(2, 6, 2, C.gold); g.set(3, 7, 2, C.gold); g.set(1, 7, 2, C.amber); // holes
   return g.done();
 }
+function bJuiceFactory(rng) {
+  const g = facShell(6, 5, 5, pk(rng, [C.pGreen, C.mint, C.lime]), C.roofOrange, C.orange);
+  windowsOn(g, 0, 0, 5, 4, [3], C.win);
+  const juice = pk(rng, [C.orange, C.red, C.purple, C.pPink]); // orange / cherry / grape / berry
+  g.box(1, 6, 1, 3, 9, 3, juice);              // giant juice carton on the roof
+  g.slab(1, 10, 1, 3, 3, C.cream);             // carton cap
+  g.set(2, 8, 1, C.signWhite);                 // label
+  for (let y = 10; y <= 12; y++) g.set(3, y, 2, C.pPink); // bendy straw
+  g.set(4, 12, 2, C.pPink);
+  g.set(4, 3, 0, juice);                       // a little fruit by the door
+  return g.done();
+}
+function bCookieFactory(rng) {
+  const g = facShell(6, 5, 5, pk(rng, [C.cream, C.peach, C.offwhite]), C.roofBrown, C.trunk);
+  windowsOn(g, 0, 0, 5, 4, [3], C.win);
+  const dough = pk(rng, [C.amber, C.gold, C.sandDark]);
+  g.set(2, 6, 2, C.trunk);                     // little stand post
+  g.box(0, 7, 2, 4, 11, 2, dough);             // big round cookie…
+  [[0, 7], [4, 7], [0, 11], [4, 11]].forEach(([x, y]) => g.del(x, y, 2)); // …rounded corners
+  const chips = [[1, 9], [3, 9], [2, 10], [2, 8], [1, 8], [3, 10]];
+  const n = 3 + (rng() * 3 | 0);
+  for (let i = 0; i < n && i < chips.length; i++) g.set(chips[i][0], chips[i][1], 2, C.dirtDark); // chocolate chips
+  return g.done();
+}
 function bCrayon(rng) {
   const g = facShell(6, 5, 5, C.offwhite, C.roofBlue, C.red);
   windowsOn(g, 0, 0, 5, 4, [3], C.winCool);
@@ -2150,6 +2174,7 @@ const BUILDERS = {
   // factories
   'workshop': bWorkshop, 'toy-factory': bToyFactory, 'chocolate-factory': bChocolate,
   'robot-factory': bRobotFactory, 'rocket-lab': bRocketLab, 'sawmill': bSawmill,
+  'juice-factory': bJuiceFactory, 'cookie-factory': bCookieFactory,
   'warehouse': bWarehouse, 'recycling-center': bRecycling,
   'mega-factory': bMegaFactory,
   'cheese-factory': bCheese, 'crayon-factory': bCrayon, 'balloon-factory': bBalloonFactory,
@@ -2231,6 +2256,8 @@ export const CATALOG = {
     { id: 'car-factory', name: 'Car Factory', emoji: '🚗', tw: 1, td: 1, cap: 5, variants: 3 },
     { id: 'bakery-plant', name: 'Bakery Plant', emoji: '🍩', tw: 1, td: 1, cap: 4, variants: 3 },
     { id: 'greenhouse-farm', name: 'Greenhouse Farm', emoji: '🌱', tw: 1, td: 1, cap: 3, variants: 3 },
+    { id: 'juice-factory', name: 'Juice Factory', emoji: '🧃', tw: 1, td: 1, cap: 4, variants: 3 },
+    { id: 'cookie-factory', name: 'Cookie Factory', emoji: '🍪', tw: 1, td: 1, cap: 4, variants: 3 },
   ],
   fun: [
     { id: 'park', name: 'Park', emoji: '🌳', tw: 1, td: 1, cap: 2, variants: 3 },

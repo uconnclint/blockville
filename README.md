@@ -28,7 +28,7 @@ guided missions), or **✨ Everything** (the whole toolbox, nothing hidden).
 1. 🛣️ **Draw roads** — tap Road, then drag. Mostly-straight drags snap to a clean
    grid line (no more iso staircase), with a path preview as you go.
 2. 🏠 **Pick buildings** — tap a category (Homes / Shops / Factories / Fun /
-   🏙️ Downtown / 🌼 Deco) and a drawer slides up: **92 types** — houses, cottages,
+   🏙️ Downtown / 🌼 Deco) and a drawer slides up: **93 types** — houses, cottages,
    apartments, mansions; shops, malls, a cinema; factories; a carousel, ferris
    wheel, stadium, and zoo; a downtown of office towers and glass skyscrapers that
    light up at night; and deco (benches, flowers, streetlights, statues). Buildings
@@ -54,7 +54,7 @@ city with you in real time — everyone's roads and buildings appear instantly. 
 by a tiny Cloudflare Worker + Durable Object (`mp/`); rooms are open, forgiving, and
 vanish when everyone leaves.
 
-More: ↩️ undo, 📷 photo postcard (name your city!), 📖 sticker book (all 92 types),
+More: ↩️ undo, 📷 photo postcard (name your city!), 📖 sticker book (all 93 types),
 🗂️ several saved cities, ❓ replayable help, ☀️ always-bright and 🔊 read-aloud
 toggles, plus screen-reader labels, focusable dialogs, and reduced-motion support.
 
@@ -66,7 +66,7 @@ city autosaves; start or switch cities from 🗂️.
 
 - Plain ES modules, zero build step; Three.js r160 vendored in `vendor/`.
 - 64×64 tile map; buildings up to 4×4 footprints (stadium is the 4×4 showpiece).
-- 92-type building catalog across six categories (homes, shops, factories, fun,
+- 93-type building catalog across six categories (homes, shops, factories, fun,
   downtown skyscrapers, deco; incl. animated rides), all pure-data voxel models
   (`src/models.js`), meshed with hidden-face culling (`src/engine.js`).
 - Sandbox sim with footprint occupancy, cosmetic cause-and-effect stats
