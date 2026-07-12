@@ -48,6 +48,12 @@ and trees make neighborhoods happier and cleaner, factories make smoke (plant tr
 to help!). The HUD shows 👥 people, 💼 jobs, a 😀 happiness face, and 🌿 clean-air —
 the game only *suggests*, never punishes.
 
+**🤝 Build together (multiplayer):** tap 🤝, choose *Build Together* to get a code
+(like `SUNNY-TIGER`), and friends who *Join a Friend* with that code build the SAME
+city with you in real time — everyone's roads and buildings appear instantly. Powered
+by a tiny Cloudflare Worker + Durable Object (`mp/`); rooms are open, forgiving, and
+vanish when everyone leaves.
+
 More: ↩️ undo, 📷 photo postcard (name your city!), 📖 sticker book (all 92 types),
 🗂️ several saved cities, ❓ replayable help, ☀️ always-bright and 🔊 read-aloud
 toggles, plus screen-reader labels, focusable dialogs, and reduced-motion support.

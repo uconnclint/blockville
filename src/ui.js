@@ -115,6 +115,41 @@ const CSS = `
 #bv-ui .bv-menu-logo { text-align: center; margin: -6px 0 2px; }
 #bv-ui .bv-menu-logo img { width: min(340px, 70vw); height: auto; display: inline-block; filter: drop-shadow(0 4px 8px rgba(30,90,140,.25)); }
 
+/* ---------- multiplayer ---------- */
+#bv-ui .bv-mpbadge {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(64px + env(safe-area-inset-top, 0px));
+  display: flex; align-items: center; gap: 8px; pointer-events: auto; cursor: pointer;
+  padding: 6px 14px; border-radius: 20px; font-weight: 900; font-size: 15px;
+  color: #fff; background: linear-gradient(#2fbf71, #26a862);
+  box-shadow: 0 6px 18px rgba(38,168,98,.4), inset 0 0 0 2px rgba(255,255,255,.5);
+  white-space: nowrap;
+}
+#bv-ui .bv-mpbadge-ic { font-size: 17px; }
+#bv-ui .bv-mpbadge-code { letter-spacing: .5px; }
+#bv-ui .bv-mpbadge-peers { opacity: .95; }
+#bv-ui .bv-mp-code {
+  font-size: clamp(30px, 8vw, 52px); font-weight: 900; letter-spacing: 2px;
+  color: var(--bv-accent-dark); text-align: center; margin: 6px 0 2px;
+  background: rgba(255,183,3,.14); border-radius: 18px; padding: 10px 8px;
+  user-select: all; -webkit-user-select: all;
+}
+#bv-ui .bv-mp-choices { display: flex; gap: 12px; margin-top: 6px; }
+#bv-ui .bv-mp-choice {
+  flex: 1; border: none; cursor: pointer; border-radius: 20px; padding: 16px 10px;
+  background: rgba(142,202,230,.18); color: var(--bv-text); font: inherit; font-weight: 800;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  transition: transform .16s var(--bv-spring);
+}
+#bv-ui .bv-mp-choice:active { transform: scale(.95); }
+#bv-ui .bv-mp-choice .bv-mp-ce { font-size: 40px; }
+#bv-ui .bv-mp-status { font-weight: 800; margin: 8px 0; min-height: 22px; }
+#bv-ui .bv-mp-input {
+  width: 100%; box-sizing: border-box; text-align: center; text-transform: uppercase;
+  font-size: 22px; font-weight: 900; letter-spacing: 2px; padding: 12px;
+  border-radius: 16px; border: 3px solid rgba(43,106,153,.25); color: var(--bv-text);
+}
+
 /* ---------- top bar ---------- */
 .bv-top {
   position: absolute; left: 50%; transform: translateX(-50%);
@@ -732,6 +767,8 @@ export function initUI(hooks) {
       showModePicker: noop, setMode: noop, showBlocked: noop,
       setFavorites: noop, setMission: noop, hideMission: noop,
       showCityManager: noop, announce: noop,
+      // v3.5 multiplayer
+      showMultiplayer: noop, setMultiplayer: noop,
     };
   }
 
@@ -1004,7 +1041,23 @@ export function initUI(hooks) {
   citiesBtn.addEventListener('click', () => call(h.onCities));
   top.appendChild(citiesBtn);
 
+  // 🤝 play together (multiplayer) — opens the room panel
+  const mpBtn = iconBtn('bv-btn-round', '🤝', 'Play together', null, 'btn-multiplayer');
+  mpBtn.addEventListener('click', () => showMultiplayer());
+  top.appendChild(mpBtn);
+
   root.appendChild(top);
+
+  // ===== MULTIPLAYER BADGE (shown while in a room) =====
+  const mpBadge = el('div', 'bv-mpbadge');
+  mpBadge.style.display = 'none';
+  const mpBadgeCode = el('span', 'bv-mpbadge-code', '');
+  const mpBadgePeers = el('span', 'bv-mpbadge-peers', '');
+  mpBadge.appendChild(el('span', 'bv-mpbadge-ic', '🤝'));
+  mpBadge.appendChild(mpBadgeCode);
+  mpBadge.appendChild(mpBadgePeers);
+  mpBadge.addEventListener('click', () => showMultiplayer());
+  root.appendChild(mpBadge);
 
   // ===== SELECTED-TOOL BANNER (floating under the top bar) =====
   const banner = el('div', 'bv-banner');
@@ -1891,6 +1944,110 @@ export function initUI(hooks) {
     if (cityOv && cityOv.parentNode) cityOv.parentNode.removeChild(cityOv);
     cityOv = null; cityArgs = null;
   }
+
+  // ===== MULTIPLAYER PANEL =====
+  let mpState = { online: false, code: '', peers: 1, status: '' };
+  let mpOv = null, mpDlg = null;
+  function closeMultiplayer() {
+    if (mpDlg) { try { mpDlg.dispose(); } catch (_) {} mpDlg = null; }
+    if (mpOv && mpOv.parentNode) mpOv.parentNode.removeChild(mpOv);
+    mpOv = null;
+  }
+  function showMultiplayer() {
+    closeMultiplayer();
+    const ov = el('div', 'bv-overlay');
+    const card = el('div', 'bv-card');
+    card.appendChild(el('h2', null, '🤝 Build Together'));
+
+    if (mpState.online) {
+      card.appendChild(el('p', null, 'Share this code so friends can build with you:'));
+      const code = el('div', 'bv-mp-code', mpState.code || '…');
+      card.appendChild(code);
+      const status = el('p', 'bv-mp-status', peersText(mpState.peers, mpState.status));
+      card.appendChild(status);
+      const leave = el('button', 'bv-cta bv-soft', 'Leave room');
+      leave.type = 'button';
+      leave.addEventListener('click', () => { call(h.onLeaveRoom); closeMultiplayer(); });
+      card.appendChild(leave);
+    } else {
+      card.appendChild(el('p', null, 'Build one city together in real time!'));
+      const choices = el('div', 'bv-mp-choices');
+      const hostBtn = el('button', 'bv-mp-choice');
+      hostBtn.type = 'button';
+      hostBtn.appendChild(el('span', 'bv-mp-ce', '🎈'));
+      hostBtn.appendChild(el('span', null, 'Build Together'));
+      hostBtn.appendChild(el('span', 'bv-mode-age', 'Get a code'));
+      hostBtn.addEventListener('click', () => { call(h.onHost); });
+      const joinBtn = el('button', 'bv-mp-choice');
+      joinBtn.type = 'button';
+      joinBtn.appendChild(el('span', 'bv-mp-ce', '🔑'));
+      joinBtn.appendChild(el('span', null, 'Join a Friend'));
+      joinBtn.appendChild(el('span', 'bv-mode-age', 'Type a code'));
+      joinBtn.addEventListener('click', () => showJoinForm(card));
+      choices.appendChild(hostBtn); choices.appendChild(joinBtn);
+      card.appendChild(choices);
+    }
+
+    const close = el('button', 'bv-drawer-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', closeMultiplayer);
+    card.appendChild(close);
+
+    ov.appendChild(card);
+    ov.addEventListener('click', (e) => { if (e.target === ov) closeMultiplayer(); });
+    root.appendChild(ov);
+    mpOv = ov;
+    mpDlg = makeDialog(ov, card, closeMultiplayer, { label: 'Build together' });
+  }
+  function showJoinForm(card) {
+    card.textContent = '';
+    card.appendChild(el('h2', null, '🔑 Join a Friend'));
+    card.appendChild(el('p', null, "Type your friend's code:"));
+    const input = el('input', 'bv-mp-input');
+    input.type = 'text'; input.placeholder = 'SUNNY-TIGER'; input.maxLength = 40;
+    input.autocapitalize = 'characters'; input.autocomplete = 'off'; input.spellcheck = false;
+    card.appendChild(input);
+    const go = el('button', 'bv-cta', 'Join! 🚀');
+    go.type = 'button';
+    const submit = () => { const v = input.value.trim(); if (v) { call(h.onJoin, v); } };
+    go.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    card.appendChild(go);
+    const close = el('button', 'bv-drawer-close', '✕');
+    close.type = 'button'; close.setAttribute('aria-label', 'Close');
+    close.addEventListener('click', closeMultiplayer);
+    card.appendChild(close);
+    setTimeout(() => { try { input.focus(); } catch (_) {} }, 30);
+  }
+  function peersText(peers, status) {
+    if (status === 'reconnecting') return '🔌 Reconnecting…';
+    const n = Math.max(1, peers | 0);
+    if (n <= 1) return '⏳ Waiting for friends to join…';
+    return '🎉 ' + n + ' builders in this city!';
+  }
+  function applyMultiplayer(s) {
+    mpState = Object.assign(mpState, s || {});
+    // badge
+    if (mpState.online) {
+      mpBadge.style.display = '';
+      mpBadgeCode.textContent = mpState.code || '';
+      const n = Math.max(1, mpState.peers | 0);
+      mpBadgePeers.textContent = '· ' + n + (n === 1 ? ' builder' : ' builders');
+      setGlyph(mpBtn._glyph, 'btn-multiplayer', '🤝'); mpBtn.classList.add('bv-on');
+    } else {
+      mpBadge.style.display = 'none';
+      mpBtn.classList.remove('bv-on');
+    }
+    // live panel refresh
+    if (mpOv) {
+      const codeEl = mpOv.querySelector('.bv-mp-code');
+      const statusEl = mpOv.querySelector('.bv-mp-status');
+      if (mpState.online && codeEl) { codeEl.textContent = mpState.code || '…'; }
+      if (mpState.online && statusEl) { statusEl.textContent = peersText(mpState.peers, mpState.status); }
+      else if (!mpState.online && (codeEl || statusEl)) { showMultiplayer(); } // left room → reset panel
+    }
+  }
   function renderCityRows(listWrap) {
     listWrap.textContent = '';
     const cities = Array.isArray(cityArgs.cities) ? cityArgs.cities : [];
@@ -2166,6 +2323,9 @@ export function initUI(hooks) {
     showCityManager(opts) {
       try { showCityManagerOverlay(opts); } catch (_) { /* ignore */ }
     },
+
+    showMultiplayer() { try { showMultiplayer(); } catch (_) { /* ignore */ } },
+    setMultiplayer(s) { try { applyMultiplayer(s); } catch (_) { /* ignore */ } },
 
     announce(text) {
       try { announce(text); } catch (_) { /* ignore */ }

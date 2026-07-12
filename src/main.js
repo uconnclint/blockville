@@ -10,6 +10,7 @@ import { Life } from './life.js';
 import { initUI } from './ui.js';
 import * as audio from './audio.js';
 import { CHALLENGES, GUIDED, makeBaseline, progress } from './challenges.js';
+import { Net, makeCode, normalizeCode } from './net.js';
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -151,6 +152,8 @@ function pushUndo() {
   try { const snap = sim.save(); if (undoStack[undoStack.length - 1] === snap) return; undoStack.push(snap); if (undoStack.length > 25) undoStack.shift(); } catch (e) {}
 }
 function doUndo() {
+  // Undo replays a whole snapshot, which would desync a shared room — off online.
+  if (onlineFlag) { ui.toast('Undo is off when building with friends.', '🤝'); return; }
   while (undoStack.length && undoStack[undoStack.length - 1] === sim.save()) undoStack.pop();
   const snap = undoStack.pop();
   if (!snap) { ui.toast('Nothing to undo!', '🤷'); return; }
@@ -334,6 +337,60 @@ function deleteCity(id) {
   if (id === currentId) switchToCity(cities[0].id);
   openCityManager();
 }
+// Save the current in-memory city as a brand-new slot (non-destructive) and
+// switch to it. Used when leaving a shared room so nobody's solo city is lost.
+function keepAsNewCity(name) {
+  const id = newCityId();
+  cities.push({ id, name: (name || 'Our City').slice(0, 20) }); saveIndex();
+  lsSet(cityKey(id), sim.save());
+  currentId = id; lsSet(CURRENT_KEY, id);
+  const c = currentCity(); if (c) { c.day = sim.state.day; c.pop = sim.state.pop; saveIndex(); }
+}
+
+// ---------------------------------------------------------------------------
+// Multiplayer — build one shared city in real time via a room code
+// ---------------------------------------------------------------------------
+let net = null;
+let onlineFlag = false;
+let mpPeers = 1;
+
+function startRoom(code) {
+  if (net) net.leave();
+  onlineFlag = false; mpPeers = 1;
+  net = new Net({
+    onInit(m) {
+      if (m.snapshot) {
+        if (sim.load(m.snapshot)) afterCityChange();   // adopt the shared city
+      } else if (m.primary) {
+        net.sendSnap(sim.save());                        // founding host seeds the room
+      }
+      onlineFlag = true;
+      mpPeers = m.peers || 1;
+      ui.setMultiplayer({ online: true, code: net.code, peers: mpPeers, status: 'connected' });
+    },
+    onOp(op) { applyOp(op); },
+    onPeers(n) {
+      const grew = n > mpPeers;
+      mpPeers = n;
+      ui.setMultiplayer({ online: true, code: net.code, peers: n });
+      if (grew && onlineFlag) { ui.toast('A friend joined! 🎉', '🤝'); audio.play('milestone'); }
+    },
+    onSnapRequest() { if (net && net.isOnline()) net.sendSnap(sim.save()); },
+    onStatus(s) { ui.setMultiplayer({ online: true, code: net.code, peers: mpPeers, status: s }); },
+  });
+  net.connect(code);
+  ui.setMultiplayer({ online: true, code, peers: 1, status: 'connecting' });
+  ui.showMultiplayer();
+}
+function hostRoom() { startRoom(makeCode()); }
+function joinRoom(code) { const c = normalizeCode(code); if (c) startRoom(c); }
+function leaveRoom() {
+  if (net) net.leave();
+  net = null; onlineFlag = false;
+  keepAsNewCity('Our City');           // keep what we built together, as a new city
+  ui.setMultiplayer({ online: false });
+  ui.toast('Left the room — your city is saved! 👋', '👋');
+}
 
 // ---------------------------------------------------------------------------
 // UI
@@ -349,7 +406,7 @@ const ui = initUI({
     if (tool && tool.name && speechOn()) speak(tool.name);
   },
   onSpeed(s) { sim.state.speed = s; audio.play('click'); },
-  onNew() { createCity('My City'); ui.toast('New city! 🏗️', '🆕'); },
+  onNew() { if (onlineFlag) { ui.toast('Leave the room first!', '🤝'); return; } createCity('My City'); ui.toast('New city! 🏗️', '🆕'); },
   onMute() { return audio.toggleMute(); },
   onUndo() { doUndo(); },
   onPhoto() { takePhoto(); },
@@ -367,7 +424,10 @@ const ui = initUI({
   onSpeak(text) { if (speechOn()) speak(text); },
   onSpeechToggle(on) { const next = typeof on === 'boolean' ? on : !speechOn(); setSpeech(next); if (next) speak('Read aloud is on!'); return next; },
   onAlwaysBright(on) { const next = typeof on === 'boolean' ? on : !(lsGet(BRIGHT_KEY) === '1'); lsSet(BRIGHT_KEY, next ? '1' : '0'); if (engine.setDaylightLock) engine.setDaylightLock(next); return next; },
-  onCities() { openCityManager(); },
+  onCities() { if (onlineFlag) { ui.toast('Leave the room first to switch cities.', '🤝'); return; } openCityManager(); },
+  onHost() { hostRoom(); },
+  onJoin(code) { joinRoom(code); },
+  onLeaveRoom() { leaveRoom(); },
 });
 ui.setCatalog(models.CATALOG);
 if (ui.setStickers) ui.setStickers(stickers);
@@ -433,23 +493,65 @@ function toolOkAt(tool, x, z) {
 function drainNow() { handleEvents(sim.events()); }
 
 // Place a single tile with the active tool. Returns the sim result {ok,reason?}.
-function paintTile(tx, tz) {
+// --- ops: the unit of shared, networked action -----------------------------
+// Build the op for the active tool at a tile, or a reason it can't go there.
+function toolOpAt(tool, tx, tz) {
   if (!inBounds(tx, tz)) return { ok: false, reason: 'bounds' };
-  const prevRoad = sim.state.map[idx(tx, tz)] === T.ROAD;
-  let res = null;
-  if (activeTool === 'road') res = sim.placeRoad(tx, tz);
-  else if (activeTool === 'tree') res = sim.placeTree(tx, tz);
-  else if (activeTool === 'bulldoze') res = sim.bulldoze(tx, tz);
-  else if (activeTool && activeTool.id) res = sim.place(activeTool, tx, tz, hash2(tx, tz) % (activeTool.variants || 1));
-  if (!res || !res.ok) return res || { ok: false };
+  const t = sim.state.map[idx(tx, tz)];
+  if (tool === 'road') {
+    if (!(t === T.GRASS || t === T.SAND || t === T.WATER)) return { ok: false, reason: 'terrain' };
+    return { ok: true, op: { k: 'road', cells: [[tx, tz]] } };
+  }
+  if (tool === 'tree') {
+    if (t !== T.GRASS) return { ok: false, reason: 'terrain' };
+    return { ok: true, op: { k: 'tree', x: tx, z: tz } };
+  }
+  if (tool === 'bulldoze') {
+    if (t === T.GRASS || t === T.WATER || t === T.SAND) return { ok: false, reason: 'empty' };
+    return { ok: true, op: { k: 'erase', x: tx, z: tz } };
+  }
+  if (tool && tool.id) {
+    const p = sim.plan ? sim.plan(tool, tx, tz) : { ok: false };
+    if (!p.ok) return { ok: false, reason: p.reason };
+    return { ok: true, op: { k: 'build', id: tool.id, x: tx, z: tz, v: hash2(tx, tz) % (tool.variants || 1) } };
+  }
+  return { ok: false };
+}
 
-  if (activeTool === 'road') { refreshRoadArea(tx, tz); engine.refreshTile(sim.state, tx, tz); audio.play('road'); }
-  else if (activeTool === 'tree') { engine.addProp('tree', models.treeModel(hash2(tx, tz) % 8), tx, tz); audio.play('place'); }
-  else if (activeTool === 'bulldoze') { engine.removeProp('tree', tx, tz); if (prevRoad) refreshRoadArea(tx, tz); engine.refreshTile(sim.state, tx, tz); audio.play('bulldoze'); }
-  else audio.play('built');
+// Apply an op to the sim + visuals (NO networking). Used for both local (offline)
+// actions and remote ops arriving in server order — so every player converges.
+function applyOp(op) {
+  if (!op) return;
+  if (op.k === 'road') {
+    let placed = 0;
+    for (const c of op.cells) {
+      const x = c[0] | 0, z = c[1] | 0;
+      const r = sim.placeRoad(x, z);
+      if (r && r.ok) { refreshRoadArea(x, z); engine.refreshTile(sim.state, x, z); placed++; }
+    }
+    if (placed) audio.play('road');
+  } else if (op.k === 'tree') {
+    const x = op.x | 0, z = op.z | 0;
+    const r = sim.placeTree(x, z);
+    if (r && r.ok) { engine.addProp('tree', models.treeModel(hash2(x, z) % 8), x, z); audio.play('place'); }
+  } else if (op.k === 'erase') {
+    const x = op.x | 0, z = op.z | 0, prevRoad = sim.state.map[idx(x, z)] === T.ROAD;
+    const r = sim.bulldoze(x, z);
+    if (r && r.ok) { engine.removeProp('tree', x, z); if (prevRoad) refreshRoadArea(x, z); engine.refreshTile(sim.state, x, z); audio.play('bulldoze'); }
+  } else if (op.k === 'build') {
+    const e = ENTRY_BY_ID[op.id];
+    if (e) { const r = sim.place(e, op.x | 0, op.z | 0, op.v | 0); if (r && r.ok) audio.play('built'); }
+  }
   drainNow();
   life.sync(sim.state, sim.roadGraph());
-  return res;
+}
+
+// Route an action: online → send to the room (applied on echo, in server order);
+// offline → apply immediately.
+function emitOp(op) {
+  if (!op) return;
+  if (net && net.isOnline()) net.sendOp(op);
+  else applyOp(op);
 }
 
 // --- gesture handling -------------------------------------------------------
@@ -472,9 +574,8 @@ function roadLineCells(start, end) {
 }
 function commitRoad() {
   if (!roadDrag) return;
-  let placed = 0;
-  for (const c of roadDrag.cells) { const r = sim.placeRoad(c.x, c.z); if (r && r.ok) { refreshRoadArea(c.x, c.z); engine.refreshTile(sim.state, c.x, c.z); placed++; } }
-  if (placed) { audio.play('road'); drainNow(); life.sync(sim.state, sim.roadGraph()); }
+  const cells = roadDrag.cells.map((c) => [c.x, c.z]);
+  if (cells.length) emitOp({ k: 'road', cells });
   if (engine.setGhostCells) engine.setGhostCells(null);
   roadDrag = null;
 }
@@ -484,8 +585,9 @@ function beginGesture(clientX, clientY) {
   if (!tile) return;
   if (activeTool === 'road') { roadDrag = { start: tile, cells: [tile] }; if (engine.setGhostCells) engine.setGhostCells([tile], true); return; }
   lastPaint = tile;
-  const res = paintTile(tile.x, tile.z);
-  if (res && !res.ok) showBlocked(activeTool, tile.x, tile.z, res.reason); // the tap did something — say why not
+  const r = toolOpAt(activeTool, tile.x, tile.z);
+  if (!r.ok) { if (r.reason && r.reason !== 'empty') showBlocked(activeTool, tile.x, tile.z, r.reason); return; }
+  emitOp(r.op);
 }
 function moveGesture(clientX, clientY) {
   const tile = engine.screenToTile(clientX, clientY);
@@ -499,7 +601,7 @@ function moveGesture(clientX, clientY) {
     let x = lastPaint.x, z = lastPaint.z, guard = 0;
     while ((x !== tile.x || z !== tile.z) && guard++ < 160) {
       if (x !== tile.x) x += Math.sign(tile.x - x); else z += Math.sign(tile.z - z);
-      paintTile(x, z); // silent on failure during a drag (feedback is for the initial tap)
+      const r = toolOpAt(activeTool, x, z); if (r.ok) emitOp(r.op); // silent on invalid during a drag
     }
   }
   lastPaint = tile;
@@ -511,7 +613,7 @@ window.addEventListener('pointerdown', (e) => {
   if (painting) { painting = false; return; }
   e.stopPropagation();
   painting = true; paintPointer = e.pointerId; lastPaint = null;
-  pushUndo();
+  if (!onlineFlag) pushUndo();   // undo is disabled in shared rooms
   beginGesture(e.clientX, e.clientY);
 }, { capture: true });
 
@@ -619,7 +721,7 @@ function refreshStatsNow() {
 }
 
 let last = performance.now();
-let statTimer = 0, saveTimer = 0, ambTimer = 0;
+let statTimer = 0, saveTimer = 0, ambTimer = 0, snapTimer = 0;
 function frame(now) { requestAnimationFrame(frame); const dt = Math.min((now - last) / 1000, 0.1); last = now; update(dt); }
 function update(dt) {
   const speed = sim.state.speed;
@@ -649,7 +751,14 @@ function update(dt) {
   }
   maybeSuggest(dt);
   ambTimer += dt; if (ambTimer > 1) { ambTimer = 0; audio.setAmbience(nt, sim.state.pop); }
-  saveTimer += dt; if (saveTimer > 10) { saveTimer = 0; autosave(); }
+  if (onlineFlag) {
+    // In a room: the shared city lives on the server, not local slots. The
+    // "primary" player periodically ships a fresh snapshot so late joiners
+    // catch up and the server's op backlog stays small.
+    if (net && net.isPrimary()) { snapTimer += dt; if (snapTimer > 8) { snapTimer = 0; net.sendSnap(sim.save()); } }
+  } else {
+    saveTimer += dt; if (saveTimer > 10) { saveTimer = 0; autosave(); }
+  }
 
   engine.render(dt);
 }
@@ -661,7 +770,14 @@ window.BV = {
   sim, engine, life, ui, models, step: update,
   metrics: () => missionMetrics(), mode: () => mode,
   cities: () => cities, openCities: openCityManager,
-  paint: (tool, x, z) => { activeTool = (typeof tool === 'string' && ENTRY_BY_ID[tool]) ? ENTRY_BY_ID[tool] : tool; pushUndo(); return paintTile(x, z); },
+  paint: (tool, x, z) => {
+    activeTool = (typeof tool === 'string' && ENTRY_BY_ID[tool]) ? ENTRY_BY_ID[tool] : tool;
+    if (!onlineFlag) pushUndo();
+    const r = toolOpAt(activeTool, x, z);
+    if (r.ok) emitOp(r.op);
+    return r;
+  },
+  net: () => net, host: hostRoom, join: joinRoom, leaveRoom,
   undo: () => doUndo(), weather,
   ff: (seconds) => {
     for (let t = 0; t < seconds; t += 0.25) { handleEvents(sim.tick(0.25)); life.update(0.25, sim.state, sim.roadGraph()); }
