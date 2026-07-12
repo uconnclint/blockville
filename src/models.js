@@ -1326,19 +1326,6 @@ function bSawmill(rng) {
   g.set(5, 2, 1, C.metal); g.set(6, 2, 1, C.metalDark); g.set(5, 3, 1, C.metal); // saw blade
   return g.done();
 }
-function bBottling(rng) {
-  const g = grid(6, 14, 6), bh = 7;
-  g.walls(0, 0, 0, 5, bh - 1, 5, C.concrete);
-  g.slab(0, 0, 0, 5, 5, C.stoneDark); g.slab(0, bh, 0, 5, 5, C.metalDark);
-  g.box(1, 0, 0, 3, 2, 0, C.blue);
-  windowsOn(g, 0, 0, 5, 5, [3, 5].filter(y => y < bh), C.winCool, 1);
-  const caps = [C.blue, C.roofGreen, C.orange]; let i = 0;
-  for (const tx of [1, 3]) for (const tz of [1, 3]) {           // bottle tanks
-    g.box(tx, bh, tz, tx, bh + 2, tz, C.metal); g.set(tx, bh + 3, tz, caps[i++ % caps.length]);
-  }
-  for (let x = 1; x <= 3; x++) g.set(x, bh, 4, C.steel);        // pipe
-  return g.done();
-}
 function bWarehouse(rng) {
   const wall = pk(rng, [C.sandDark, C.metal, C.stone]);
   const g = grid(7, 11, 6), bh = 7;
@@ -2163,7 +2150,7 @@ const BUILDERS = {
   // factories
   'workshop': bWorkshop, 'toy-factory': bToyFactory, 'chocolate-factory': bChocolate,
   'robot-factory': bRobotFactory, 'rocket-lab': bRocketLab, 'sawmill': bSawmill,
-  'bottling-plant': bBottling, 'warehouse': bWarehouse, 'recycling-center': bRecycling,
+  'warehouse': bWarehouse, 'recycling-center': bRecycling,
   'mega-factory': bMegaFactory,
   'cheese-factory': bCheese, 'crayon-factory': bCrayon, 'balloon-factory': bBalloonFactory,
   'car-factory': bCarFactory, 'bakery-plant': bBakeryPlant, 'greenhouse-farm': bGreenhouse,
@@ -2235,7 +2222,6 @@ export const CATALOG = {
     { id: 'robot-factory', name: 'Robot Factory', emoji: '🤖', tw: 1, td: 1, cap: 4, variants: 3 },
     { id: 'rocket-lab', name: 'Rocket Lab', emoji: '🚀', tw: 2, td: 2, cap: 6, variants: 2 },
     { id: 'sawmill', name: 'Sawmill', emoji: '🪵', tw: 1, td: 1, cap: 3, variants: 3 },
-    { id: 'bottling-plant', name: 'Bottling Plant', emoji: '🍾', tw: 1, td: 1, cap: 4, variants: 3 },
     { id: 'warehouse', name: 'Warehouse', emoji: '📦', tw: 1, td: 1, cap: 3, variants: 3 },
     { id: 'recycling-center', name: 'Recycling Center', emoji: '♻️', tw: 1, td: 1, cap: 3, variants: 3 },
     { id: 'mega-factory', name: 'Mega Factory', emoji: '🏭', tw: 3, td: 3, cap: 10, variants: 2 },
