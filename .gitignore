@@ -1,0 +1,14 @@
+# OS / editor
+.DS_Store
+*.swp
+Thumbs.db
+
+# Node (none committed, but just in case)
+node_modules/
+npm-debug.log*
+
+# Cloudflare
+.wrangler/
+
+# Local scratch
+*.local
