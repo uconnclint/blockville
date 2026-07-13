@@ -1,7 +1,7 @@
 // Blockville shared constants — imported by every module. Keep dependency-free.
 
 export const TILE = 8;      // world units per tile
-export const N = 64;        // tiles per map side (v3.1: a third bigger than the old 48)
+export const N = 80;        // tiles per map side (v3.6: a quarter bigger than the old 64)
 
 // Tile types stored in state.map
 export const T = {
@@ -10,6 +10,7 @@ export const T = {
   BLDG: 7,                            // grown building (see zoneOf/level)
   TREE: 8, PARK: 9, SCHOOL: 10, FIRE: 11,
   FOUNTAIN: 12, STADIUM: 13, POWER: 14,
+  MOUNTAIN: 15,                       // raised rocky terrain; height in state.variant[i]
 };
 
 // Tools — id, what they paint, cost

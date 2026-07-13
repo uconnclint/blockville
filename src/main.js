@@ -483,8 +483,8 @@ function ghostArgs(tool, x, z) {
 function toolOkAt(tool, x, z) {
   if (!inBounds(x, z)) return false;
   const t = sim.state.map[idx(x, z)];
-  if (tool === 'bulldoze') return t !== T.GRASS && t !== T.WATER && t !== T.SAND;
-  if (tool === 'road') return t === T.GRASS || t === T.SAND || t === T.WATER;
+  if (tool === 'bulldoze') return t !== T.GRASS && t !== T.WATER && t !== T.SAND && t !== T.MOUNTAIN;
+  if (tool === 'road') return t === T.GRASS || t === T.SAND || t === T.WATER; // mountains blocked
   if (tool === 'tree') return t === T.GRASS;
   if (tool && tool.id) return !!(sim.plan && sim.plan(tool, x, z).ok);
   return false;
@@ -507,7 +507,7 @@ function toolOpAt(tool, tx, tz) {
     return { ok: true, op: { k: 'tree', x: tx, z: tz } };
   }
   if (tool === 'bulldoze') {
-    if (t === T.GRASS || t === T.WATER || t === T.SAND) return { ok: false, reason: 'empty' };
+    if (t === T.GRASS || t === T.WATER || t === T.SAND || t === T.MOUNTAIN) return { ok: false, reason: 'empty' };
     return { ok: true, op: { k: 'erase', x: tx, z: tz } };
   }
   if (tool && tool.id) {

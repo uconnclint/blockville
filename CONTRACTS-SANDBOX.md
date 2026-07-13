@@ -476,3 +476,70 @@ Speech: onSpeak→audio.speak; speech toggle→audio.setSpeechEnabled; default e
 only in Picture Play. Always-bright→engine.setDaylightLock + persist. Selected
 banner handled by ui.setActiveTool. Replayable help (❓)→ui.showWelcome. Favicon in
 index.html + build shells. README 75→92.
+
+# ── v3.6 ADDENDUM — bigger map + generative terrain (oceans/lakes/rivers/mountains/forests)
+constants.js N is now 80 (was 64) and adds T.MOUNTAIN=15. Terrain is fully
+PROCEDURAL from state.seed: every new city gets a different landscape. All modules
+read N from constants (no hardcoded sizes).
+
+## Mountain height storage (shared sim↔engine contract)
+For a tile with map[i]===T.MOUNTAIN, its peak VOXEL height (integer 2..16) is
+stored in state.variant[i]. Engine renders that tile as a solid raised column of
+that height; sim guarantees adjacent mountain tiles form smooth slopes (heights
+differ by ~1–3) so ranges look natural. variant is otherwise unused on non-anchor
+tiles, so there is no conflict.
+
+## sim.js — procedural _generateBaseTerrain() (deterministic from seed)
+Replace the simple river/sand gen. Produce, from a seeded multi-octave value-noise
+ELEVATION field + a MOISTURE field, a varied but always-buildable world at N=80:
+- OCEAN: one map edge (chosen by seed) is deep water, with a wavy coastline ~6–12
+  tiles in. (All water is T.WATER.)
+- LAKES: 1–3 inland water blobs.
+- RIVERS: 1–2 rivers that start high (mountains/edge) and flow downhill (steepest
+  descent) to the ocean/a lake, carving 2–3-tile-wide T.WATER. They should connect
+  to a water body when possible.
+- MOUNTAINS: 1–2 ranges/clusters where elevation is high → T.MOUNTAIN with per-tile
+  height in variant (peak center high, sloping to the edges; snow implied by height
+  in the engine). Keep ranges toward map edges/corners so the middle stays open.
+- BEACHES: T.SAND on grass adjacent to water (existing 8-neighbour rule), plus a
+  little sand at mountain feet is optional.
+- FORESTS: dense T.TREE clusters where MOISTURE is high (plus light scatter
+  elsewhere). Trees are bulldozable. Aim ~250–400 trees total (frustum-culled, so
+  fine). Keep a generous central-ish buildable region mostly clear of mountains/
+  water (≥ ~50% of tiles GRASS overall).
+Deterministic: same seed → identical terrain (needed for load + multiplayer). Keep
+using this._rand (mulberry32 from seed). Base gen sets water/sand/mountains(+height);
+forests may be generated at CONSTRUCT and saved in the trees[] list (load applies
+saved trees; base gen at load must NOT scatter its own so it stays consistent —
+same pattern as today). MOUNTAIN tiles must never be produced under the tree scatter
+or overwrite saved buildings.
+
+Placement rules: MOUNTAIN blocks everything — _footprintReason returns 'terrain' on
+MOUNTAIN (like water/sand); placeRoad/placeTree reject MOUNTAIN; bulldoze does NOT
+remove mountains or water (terrain is scenery). Rivers/lakes/ocean remain bridgeable
+by roads exactly as water is today (placeRoad on WATER → bridge). roadGraph/metrics
+unaffected. save()/load(): no new fields — mountains regenerate from seed; keep the
+N-migration remap for older saves. Extend _selfTest: terrain has some water AND some
+mountain AND grass; a mountain tile has variant height in 2..16; building/road/tree
+on a mountain fails; save/load reproduces the map (incl. mountains) exactly.
+
+## engine.js — render mountains + scale camera for the bigger map
+- buildGround/_buildChunk: for T.MOUNTAIN tiles read h=state.variant[i] (default 4
+  if 0) and build a SOLID 8×8 column from y=0 to y≈h (1 voxel = 1 world unit).
+  Colour by height band: grassy green near the base, rock grey in the middle, snow
+  white on top (roughly top ~2 voxels when h is tall / above a snowline). Use the
+  ground material. NEIGHBOUR-CULL side faces (only emit a side band where the
+  4-neighbour tile is lower or non-mountain; always emit the top) so a range isn't
+  a solid interior — keep vertex counts sane. Water/sand/grass/road render as today
+  (a MOUNTAIN tile does NOT also draw the flat grass slab).
+- Water animation already covers all T.WATER (ocean/lake/river) — verify big bodies
+  render.
+- Camera: default distance and zoom-out clamp scale for MAP_W (now 640): raise the
+  start distance (~250) and max zoom-out (~380) so the whole world frames; shadow
+  frustum/fog already derive from MAP_W — confirm they still cover it.
+- Keep EVERY existing API. Parse-import check must print ok.
+
+## main.js (integrator) — I handle
+Block MOUNTAIN in toolOpAt/ghost (road/tree/build/erase); rebuildAllVisuals already
+rebuilds ground via buildGround (mountains included) and iterates TREE tiles for
+props. No other module changes.

@@ -65,7 +65,7 @@ city autosaves; start or switch cities from 🗂️.
 ## Tech
 
 - Plain ES modules, zero build step; Three.js r160 vendored in `vendor/`.
-- 64×64 tile map; buildings up to 4×4 footprints (stadium is the 4×4 showpiece).
+- 80×80 procedurally-generated map (oceans, lakes, rivers, snow-capped mountains, forests); buildings up to 4×4 footprints (stadium is the 4×4 showpiece).
 - 93-type building catalog across six categories (homes, shops, factories, fun,
   downtown skyscrapers, deco; incl. animated rides), all pure-data voxel models
   (`src/models.js`), meshed with hidden-face culling (`src/engine.js`).

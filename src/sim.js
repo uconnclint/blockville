@@ -97,38 +97,216 @@ export class Sim {
 
   // ---- terrain -----------------------------------------------------------
 
-  // River + sand borders, deterministic from the seed (no trees here so load
-  // can rebuild the base terrain and then apply the saved tree/road/building list).
-  _generateBaseTerrain() {
-    const { map } = this.state;
+  // Value-noise helpers — fully deterministic from state.seed (no Math.random).
+  // Lattice points are hashed from (ix,iz,salt,seed); a value at any (x,z) is the
+  // smooth (smoothstep) bilinear blend of its four surrounding lattice hashes.
+  // Summing several octaves (each double the frequency, half the amplitude) gives
+  // natural-looking fractal fields (fbm) in [0,1].
+  _hash01(ix, iz, salt) {
+    let h = (Math.imul(ix | 0, 0x27d4eb2d) ^ Math.imul(iz | 0, 0x165667b1) ^
+             Math.imul((salt | 0) + (this.state.seed | 0), 0x9e3779b1)) >>> 0;
+    h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b) >>> 0;
+    h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35) >>> 0;
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  }
+
+  _vnoise(x, z, freq, salt) {
+    const gx = x * freq, gz = z * freq;
+    const x0 = Math.floor(gx), z0 = Math.floor(gz);
+    const fx = gx - x0, fz = gz - z0;
+    const sx = fx * fx * (3 - 2 * fx);   // smoothstep
+    const sz = fz * fz * (3 - 2 * fz);
+    const c00 = this._hash01(x0, z0, salt),     c10 = this._hash01(x0 + 1, z0, salt);
+    const c01 = this._hash01(x0, z0 + 1, salt), c11 = this._hash01(x0 + 1, z0 + 1, salt);
+    const a = c00 + (c10 - c00) * sx;
+    const b = c01 + (c11 - c01) * sx;
+    return a + (b - a) * sz;             // [0,1]
+  }
+
+  _fbm(x, z, freq, oct, salt) {
+    let amp = 1, f = freq, sum = 0, norm = 0;
+    for (let o = 0; o < oct; o++) {
+      sum += amp * this._vnoise(x, z, f, salt + o * 131);
+      norm += amp; amp *= 0.5; f *= 2;
+    }
+    return norm > 0 ? sum / norm : 0;
+  }
+
+  // Procedural world, deterministic from the seed: ocean + coastline, lakes,
+  // mountain ranges (with per-tile peak heights in variant), rivers, and beaches.
+  // No trees here (forests are a separate layer applied at CONSTRUCT via
+  // _scatterTrees, or from the saved tree list on load). `protect` (optional) is a
+  // Set of flat indices that must stay GRASS — used on load so regenerated water/
+  // mountains never clobber a tile a saved road/tree/building will occupy.
+  _generateBaseTerrain(protect) {
+    const st = this.state;
+    const { map, variant } = st;
     const r = this._rand;
     map.fill(T.GRASS);
-    this.state.zoneOf.fill(0);
-    this.state.level.fill(0);
-    this.state.variant.fill(0);
-    this.state.occ.fill(0);
-    this.state.bridge.fill(0);
+    st.zoneOf.fill(0);
+    st.level.fill(0);
+    variant.fill(0);
+    st.occ.fill(0);
+    st.bridge.fill(0);
 
-    // A gently winding river in the lower ~fifth of the map; the central build
-    // area stays clear. All offsets are N-relative so this scales with the map.
-    const riverMid = Math.round(N * 0.25);   // ~12 at N=48, ~16 at N=64
-    const riverLo = Math.round(N / 3);       // clamp lower edge (~16 at 48, ~21 at 64)
-    const riverHi = Math.round(N / 12);      // clamp upper edge (~4 at 48, ~5 at 64)
-    let cz = (N - riverMid) + Math.floor((r() - 0.5) * 4);
-    for (let x = 0; x < N; x++) {
-      cz += Math.round((r() - 0.5) * 1.4);
-      cz = clamp(cz, N - riverLo, N - riverHi);
-      const half = r() < 0.4 ? 1 : 0; // width 2 or 3 tiles
-      for (let dz = -1 - half; dz <= 1 + half; dz++) {
-        const z = cz + dz;
-        if (inBounds(x, z)) map[idx(x, z)] = T.WATER;
+    const prot = (i) => (protect ? protect.has(i) : false);
+    // Central build box kept clear of mountains/lakes/forests so kids always have
+    // open room in the middle; ocean sits on an edge, mountains hug the corners.
+    const clrLo = Math.floor(N * 0.30), clrHi = Math.floor(N * 0.70);
+    const inCentral = (x, z) => x >= clrLo && x < clrHi && z >= clrLo && z < clrHi;
+    // Water never overwrites a mountain or a protected tile.
+    const setWater = (x, z) => {
+      if (!inBounds(x, z)) return;
+      const i = idx(x, z);
+      if (prot(i) || map[i] === T.MOUNTAIN) return;
+      map[i] = T.WATER;
+    };
+
+    // Elevation + moisture fields (multi-octave value noise). Elevation shapes the
+    // coast/rivers/mountains; moisture drives where forests want to grow.
+    const elev = new Float32Array(N * N);
+    const moist = new Float32Array(N * N);
+    for (let z = 0; z < N; z++) {
+      for (let x = 0; x < N; x++) {
+        const i = idx(x, z);
+        elev[i] = this._fbm(x, z, 3 / N, 4, 1000);
+        moist[i] = this._fbm(x, z, 2.5 / N, 4, 5000);
+      }
+    }
+    this._moist = moist; // reused by _scatterTrees at construct
+
+    // ---- OCEAN along one seed-chosen edge, with a wavy coastline ----
+    const edge = Math.floor(r() * 4);        // 0:−z, 1:+x, 2:+z, 3:−x
+    const coastBase = 5 + Math.floor(r() * 3); // depth 5..7 tiles inland
+    const coastAmp = 2 + Math.floor(r() * 3);  // wobble ±2..4 tiles
+    for (let z = 0; z < N; z++) {
+      for (let x = 0; x < N; x++) {
+        let inland, along;
+        if (edge === 0) { inland = z; along = x; }
+        else if (edge === 2) { inland = N - 1 - z; along = x; }
+        else if (edge === 3) { inland = x; along = z; }
+        else { inland = N - 1 - x; along = z; }
+        const wave = coastAmp * (this._vnoise(along, edge * 53 + 11, 0.13, 2222) * 2 - 1);
+        if (inland < coastBase + wave) setWater(x, z);
       }
     }
 
-    // Sand borders any grass touching water (8-neighbourhood).
+    // ---- LAKES: 1..2 noisy inland blobs (outside the central box) ----
+    const lakeCount = 1 + Math.floor(r() * 2);
+    for (let l = 0; l < lakeCount; l++) {
+      let cx = 0, cz = 0, tries = 0;
+      do { cx = Math.floor(r() * N); cz = Math.floor(r() * N); tries++; }
+      while (inCentral(cx, cz) && tries < 40);
+      const rad = 3 + Math.floor(r() * 3);   // 3..5
+      const lsalt = 3300 + l * 17;
+      const x0 = Math.max(0, cx - rad - 2), x1 = Math.min(N - 1, cx + rad + 2);
+      const z0 = Math.max(0, cz - rad - 2), z1 = Math.min(N - 1, cz + rad + 2);
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          if (inCentral(x, z)) continue;
+          const dx = x - cx, dz = z - cz;
+          const d = Math.sqrt(dx * dx + dz * dz);
+          const wob = rad * 0.45 * (this._vnoise(x, z, 0.3, lsalt) * 2 - 1);
+          if (d < rad + wob) setWater(x, z);
+        }
+      }
+    }
+
+    // ---- MOUNTAINS: 1..2 corner-biased ranges; smooth radial peak heights ----
+    // Distinct corners per range so ranges never overlap (keeps slopes smooth).
+    const rangeCount = 1 + Math.floor(r() * 2);
+    const c0 = Math.floor(r() * 4);
+    const peaks = [];
+    for (let m = 0; m < rangeCount; m++) {
+      const corner = (c0 + m) % 4;           // 0:NW 1:NE 2:SE 3:SW
+      const near = 0.18;                     // centre within ~18% of that corner
+      const cx = (corner === 1 || corner === 2) ? (N - 1 - Math.floor(r() * (N * near)))
+                                               : Math.floor(r() * (N * near));
+      const cz = (corner === 2 || corner === 3) ? (N - 1 - Math.floor(r() * (N * near)))
+                                               : Math.floor(r() * (N * near));
+      const R = 9 + Math.floor(r() * 4);     // radius 9..12
+      const peak = 10 + Math.floor(r() * 5); // peak height 10..14 (≤16)
+      const ang = r() * Math.PI;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const stretch = 1.4 + r() * 0.6;       // elongate into a ridge
+      const jsalt = 4400 + m * 23;
+      const x0 = Math.max(0, cx - R * 2), x1 = Math.min(N - 1, cx + R * 2);
+      const z0 = Math.max(0, cz - R * 2), z1 = Math.min(N - 1, cz + R * 2);
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          if (inCentral(x, z)) continue;
+          const i = idx(x, z);
+          if (prot(i) || map[i] !== T.GRASS) continue; // never over water/sand/protected
+          const rx = (x - cx) * ca + (z - cz) * sa;
+          const rz = -(x - cx) * sa + (z - cz) * ca;
+          const dd = Math.sqrt((rx / stretch) * (rx / stretch) + rz * rz);
+          if (dd >= R) continue;
+          const shape = 1 - dd / R;          // 1 at centre → 0 at the rim
+          const jit = Math.round((this._vnoise(x, z, 0.16, jsalt) - 0.5) * 2); // −1..1
+          let h = Math.round(peak * shape) + jit;
+          if (h < 2) continue;
+          if (h > 16) h = 16;
+          map[i] = T.MOUNTAIN;
+          variant[i] = h;
+        }
+      }
+      peaks.push({ x: cx, z: cz });
+    }
+
+    // ---- RIVERS: 1..2 flowing downhill from a mountain to a water body ----
+    // "Potential" = elevation blended with distance-from-ocean, so steepest
+    // descent trends toward the sea and reliably reaches a water body.
+    const oceanInland = (x, z) => {
+      if (edge === 0) return z;
+      if (edge === 2) return N - 1 - z;
+      if (edge === 3) return x;
+      return N - 1 - x;
+    };
+    const potential = (x, z) => elev[idx(x, z)] * 0.55 + (oceanInland(x, z) / N) * 0.45;
+    const isWater = (x, z) => inBounds(x, z) && map[idx(x, z)] === T.WATER;
+    const carve = (x, z) => {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (Math.abs(dx) + Math.abs(dz) <= 1) setWater(x + dx, z + dz);
+        }
+      }
+    };
+    const riverCount = 1 + Math.floor(r() * 2);
+    for (let rv = 0; rv < riverCount; rv++) {
+      let x, z;
+      if (peaks.length) {
+        const p = peaks[rv % peaks.length];
+        x = clamp(p.x + Math.floor((r() - 0.5) * 6), 1, N - 2);
+        z = clamp(p.z + Math.floor((r() - 0.5) * 6), 1, N - 2);
+      } else { x = Math.floor(r() * N); z = Math.floor(r() * N); }
+      const visited = new Set();
+      let steps = 0; const maxSteps = N * 3;
+      while (steps < maxSteps) {
+        steps++;
+        const key = z * N + x;
+        if (visited.has(key)) break;
+        visited.add(key);
+        carve(x, z);
+        let best = null, bestP = Infinity;
+        const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        for (const [dx, dz] of nb) {
+          const nx = x + dx, nz = z + dz;
+          if (!inBounds(nx, nz) || visited.has(nz * N + nx)) continue;
+          const p = potential(nx, nz);
+          if (p < bestP) { bestP = p; best = [nx, nz]; }
+        }
+        if (!best) break;
+        if (isWater(best[0], best[1])) { carve(best[0], best[1]); break; } // reached the sea/a lake
+        x = best[0]; z = best[1];
+      }
+    }
+
+    // ---- BEACHES: sand on grass adjacent to water (8-neighbourhood) ----
     for (let z = 0; z < N; z++) {
       for (let x = 0; x < N; x++) {
-        if (map[idx(x, z)] !== T.GRASS) continue;
+        const i = idx(x, z);
+        if (map[i] !== T.GRASS || prot(i)) continue;
         let near = false;
         for (let dz = -1; dz <= 1 && !near; dz++) {
           for (let dx = -1; dx <= 1; dx++) {
@@ -136,31 +314,53 @@ export class Sim {
             if (inBounds(nx, nz) && map[idx(nx, nz)] === T.WATER) { near = true; break; }
           }
         }
-        if (near) map[idx(x, z)] = T.SAND;
+        if (near) map[i] = T.SAND;
       }
     }
   }
 
-  // Scattered trees on grass, kept out of the central build zone. Count scales
-  // with the map area (~40 at N=48, ~70 at N=64), central clear box is N-relative.
+  // Forest layer (runs at CONSTRUCT only; load applies the saved tree list). Dense
+  // clusters where MOISTURE + a clump-noise both read high, plus light random
+  // scatter. Deterministic, only on GRASS, never on water/sand/mountain, and kept
+  // out of the central build box. Aims ~300–390 trees at N=80.
   _scatterTrees() {
     const { map, variant } = this.state;
     const r = this._rand;
-    const target = Math.round(40 * (N * N) / (48 * 48)); // area-ratio scaled (~70 at N=64)
-    const clrLo = Math.floor(N * 0.31);                  // central clear box [N*0.31, N*0.69)
-    const clrHi = Math.floor(N * 0.69);
-    let placed = 0, guard = 0;
-    const guardMax = target * 100;
-    while (placed < target && guard < guardMax) {
+    const moist = this._moist;
+    const clrLo = Math.floor(N * 0.30), clrHi = Math.floor(N * 0.70);
+    const inCentral = (x, z) => x >= clrLo && x < clrHi && z >= clrLo && z < clrHi;
+
+    const target = 300 + Math.floor(r() * 90); // 300..389
+
+    // Candidate grass tiles scored by moisture + clumping noise → dense forests.
+    const cand = [];
+    for (let z = 0; z < N; z++) {
+      for (let x = 0; x < N; x++) {
+        if (inCentral(x, z)) continue;
+        const i = idx(x, z);
+        if (map[i] !== T.GRASS) continue;
+        const clump = this._vnoise(x, z, 0.14, 7777);
+        const score = (moist ? moist[i] : 0.5) * 0.6 + clump * 0.4;
+        cand.push({ i, score });
+      }
+    }
+    cand.sort((a, b) => b.score - a.score);
+    const dense = Math.min(cand.length, Math.round(target * 0.82));
+    for (let k = 0; k < dense; k++) {
+      const i = cand[k].i;
+      map[i] = T.TREE;
+      variant[i] = this._randByte();
+    }
+
+    // Light scatter for the remainder anywhere on grass (outside the central box).
+    let scatter = target - dense, guard = 0;
+    const guardMax = (scatter + 1) * 200;
+    while (scatter > 0 && guard < guardMax) {
       guard++;
       const x = Math.floor(r() * N), z = Math.floor(r() * N);
-      const central = x >= clrLo && x < clrHi && z >= clrLo && z < clrHi;
+      if (inCentral(x, z)) continue;
       const i = idx(x, z);
-      if (map[i] === T.GRASS && !central) {
-        map[i] = T.TREE;
-        variant[i] = this._randByte();
-        placed++;
-      }
+      if (map[i] === T.GRASS) { map[i] = T.TREE; variant[i] = this._randByte(); scatter--; }
     }
   }
 
@@ -179,7 +379,7 @@ export class Sim {
         if (!inBounds(tx, tz)) return 'bounds';
         const i = idx(tx, tz);
         const m = st.map[i];
-        if (m === T.WATER || m === T.SAND) return 'terrain';
+        if (m === T.WATER || m === T.SAND || m === T.MOUNTAIN) return 'terrain';
         if (m !== T.GRASS || st.occ[i] !== 0) return 'occupied';
       }
     }
@@ -292,6 +492,7 @@ export class Sim {
     if (st.occ[i] !== 0) return { ok: false, reason: 'occupied' };
     const m = st.map[i];
     if (m === T.ROAD) return { ok: false, reason: 'occupied' };
+    if (m === T.MOUNTAIN) return { ok: false, reason: 'terrain' }; // scenery, not buildable
     if (m === T.GRASS || m === T.SAND) {
       st.map[i] = T.ROAD;
       st.variant[i] = 0;
@@ -325,7 +526,7 @@ export class Sim {
       this._recompute(); // trees noticeably raise happiness / air
       return { ok: true };
     }
-    return { ok: false, reason: m === T.WATER || m === T.SAND ? 'terrain' : 'occupied' };
+    return { ok: false, reason: m === T.WATER || m === T.SAND || m === T.MOUNTAIN ? 'terrain' : 'occupied' };
   }
 
   // Remove whatever is on (x,z): a building (whole footprint), a road, or a tree.
@@ -475,19 +676,19 @@ export class Sim {
       const shopVariety = shopTypes.size;
       // Happiness responds mostly to amenities the PLAYER adds (parks, schools,
       // shops, fun) and dips when factories sit away from greenery, so the HUD
-      // face visibly reacts. Ambient forest trees give only a tiny linear nudge —
-      // otherwise the ~70 map trees would pin happiness at 1 and it'd never move.
+      // face visibly reacts. Greenery is measured LOCALLY (factoriesFarFromTrees)
+      // rather than by a global tree count — the big procedural forest would
+      // otherwise pin these at the ceiling and they'd never move.
       const happiness = clamp(
         0.6 + 0.04 * parks + 0.03 * (schools > 0 ? 1 : 0) + 0.02 * shopVariety +
-        0.015 * funCount + 0.003 * trees - 0.05 * factoriesFarFromTrees,
+        0.015 * funCount - 0.05 * factoriesFarFromTrees,
         0.15, 1,
       );
-      // Air is clean by default; factories are the dominant driver so the meter
-      // visibly drops as they pile up, while planting trees or adding wind power
-      // brings it back. The per-tree weight is small so the ~70 ambient forest
-      // trees don't mask a cluster of factories (that would hide the lesson).
+      // Air: only factories WITHOUT nearby trees pollute — so planting trees next
+      // to a factory (moving it from "far" to "near") visibly cleans the air, and
+      // wind power helps too. No global tree term, so the forest can't mask it.
       const air = clamp(
-        1 - 0.09 * factories + 0.003 * trees + 0.05 * windPowers,
+        1 - 0.10 * factoriesFarFromTrees + 0.05 * windPowers,
         0.1, 1,
       );
 
@@ -609,10 +810,7 @@ export class Sim {
       }
 
       const st = this.state;
-      // Rebuild deterministic base terrain (river + sand) from the seed.
       st.seed = seed;
-      this._rand = mulberry32(seed);
-      this._generateBaseTerrain();
 
       // MIGRATION: flat indices i=z*savedN+x break when N changed. A missing
       // `n` means a pre-v3.1 save (N was 48). Remap every flat index into the
@@ -631,6 +829,30 @@ export class Sim {
       if (Array.isArray(d.bridges)) {
         for (const i of d.bridges) { const ni = remap(i); if (ni >= 0) bridgeSet.add(ni); }
       }
+
+      // PROTECT set: every tile a saved road / tree / building footprint occupies
+      // must stay GRASS through terrain regeneration, so procedural water/mountains
+      // never clobber a tile the player already built on.
+      const protect = new Set();
+      for (const raw of d.roads) { const ni = remap(raw); if (ni >= 0) protect.add(ni); }
+      for (const raw of d.trees) { const ni = remap(raw); if (ni >= 0) protect.add(ni); }
+      for (const rec of d.buildings) {
+        if (!rec || typeof rec.t !== 'string') continue;
+        const info = this._byId.get(rec.t); if (!info) continue;
+        const rot = (rec.r | 0) & 3;
+        const etw = (rot & 1) ? info.td : info.tw, etd = (rot & 1) ? info.tw : info.td;
+        const x = rec.x | 0, z = rec.z | 0;
+        for (let dz = 0; dz < etd; dz++) for (let dx = 0; dx < etw; dx++) {
+          if (inBounds(x + dx, z + dz)) protect.add(idx(x + dx, z + dz));
+        }
+      }
+
+      // Rebuild deterministic procedural terrain from the seed, keeping protected
+      // tiles GRASS, then force WATER back under any saved bridges so they read as
+      // road-over-water again.
+      this._rand = mulberry32(seed);
+      this._generateBaseTerrain(protect);
+      for (const i of bridgeSet) { if (i >= 0 && i < st.map.length) { st.map[i] = T.WATER; st.variant[i] = 0; } }
       // Player-placed roads (bridge tiles are ROAD in map, listed here too).
       for (const raw of d.roads) {
         const i = remap(raw);
@@ -724,7 +946,22 @@ export function _selfTest() {
     const hut = catalog.homes[0];
     const plant = catalog.factories[0];
 
-    const sim = new Sim(12345, catalog);
+    // Terrain is now procedural, so a fixed test coord could land on water/mountain.
+    // flatten() forces a box to clean GRASS so placement tests are deterministic.
+    // (Save/load tests below check roundtrip-equality, not full-map match, so this
+    // flattening of empty tiles doesn't affect them.)
+    const flatten = (s, x0, z0, x1, z1) => {
+      const M = s.state;
+      for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+        if (x < 0 || z < 0 || x >= N || z >= N) continue;
+        const i = z * N + x;
+        M.map[i] = T.GRASS; M.variant[i] = 0; M.occ[i] = 0; M.bridge[i] = 0;
+      }
+      if (s._recountTiles) s._recountTiles();
+      return s;
+    };
+
+    const sim = flatten(new Sim(12345, catalog), 8, 8, 44, 44);
     const S = sim.state;
 
     // place 1×1
@@ -780,7 +1017,7 @@ export function _selfTest() {
     c.dayWraps = sim3.state.day === 2;
 
     // save / load roundtrip reproduces map + pop
-    const sim4 = new Sim(2024, catalog);
+    const sim4 = flatten(new Sim(2024, catalog), 8, 8, 44, 44);
     sim4.place(hut, 16, 16);
     sim4.place(plant, 20, 20);
     sim4.placeRoad(16, 17);
@@ -789,12 +1026,13 @@ export function _selfTest() {
     const sim5 = new Sim(999);
     sim5.setCatalog(catalog);
     const loaded = sim5.load(blob);
-    let mapMatch = loaded;
-    for (let i = 0; i < N * N && mapMatch; i++) {
-      if (sim5.state.map[i] !== sim4.state.map[i]) mapMatch = false;
-    }
+    // Roundtrip fidelity: re-saving the loaded sim reproduces the exact blob, and
+    // the placed things landed. (Full-map compare is unreliable now that terrain is
+    // procedurally regenerated; the save carries only player edits + seed.)
     c.saveLoad = loaded && sim5.state.pop === sim4.state.pop &&
-      sim5.state.jobs === sim4.state.jobs && mapMatch;
+      sim5.state.jobs === sim4.state.jobs && sim5.save() === blob &&
+      sim5.state.map[idx(16, 16)] === T.BLDG && sim5.state.map[idx(16, 17)] === T.ROAD &&
+      sim5.state.map[idx(18, 16)] === T.TREE;
 
     // old v1 saves (and garbage) must return false, not throw
     const v1blob = JSON.stringify({ seed: 1, money: 1500, map: [], pop: 0 });
@@ -811,19 +1049,19 @@ export function _selfTest() {
     const bldgOf = (sim, bid) => sim.state.buildings.find((b) => b.bid === bid);
 
     // 1×1 with a road on its E side → front faces E → rot 1
-    const simE = new Sim(101, catalog2);
+    const simE = flatten(new Sim(101, catalog2), 14, 14, 44, 44);
     simE.placeRoad(21, 20);
     const rE = simE.place(hut2, 20, 20);
     c.rotEast = rE.ok && bldgOf(simE, rE.bid).rot === 1;
 
     // 1×1 with a road to the N → front faces N → rot 2
-    const simN = new Sim(102, catalog2);
+    const simN = flatten(new Sim(102, catalog2), 14, 14, 44, 44);
     simN.placeRoad(25, 24);
     const rN = simN.place(hut2, 25, 25);
     c.rotNorth = rN.ok && bldgOf(simN, rN.bid).rot === 2;
 
     // 2×1 beside a horizontal road on its N edge → rotates so front faces road (rot 2)
-    const simH = new Sim(103, catalog2);
+    const simH = flatten(new Sim(103, catalog2), 14, 14, 44, 44);
     simH.placeRoad(20, 19);
     simH.placeRoad(21, 19);
     const rH = simH.place(shop21, 20, 20);
@@ -831,12 +1069,12 @@ export function _selfTest() {
     c.rot2x1 = !!bH && bH.rot === 2 && bH.tw === 2 && bH.td === 1;
 
     // no adjacent road → rot 0
-    const simZ = new Sim(104, catalog2);
+    const simZ = flatten(new Sim(104, catalog2), 14, 14, 44, 44);
     const rZ = simZ.place(hut2, 20, 20);
     c.rotNone = rZ.ok && bldgOf(simZ, rZ.bid).rot === 0;
 
     // 2×1 that only fits rotated (horizontal orientation blocked) still places → rot 1
-    const simO = new Sim(105, catalog2);
+    const simO = flatten(new Sim(105, catalog2), 14, 14, 44, 44);
     simO.place(hut2, 21, 20);            // blocker: horizontal (2×1) can't fit at (20,20)
     const rO = simO.place(shop21, 20, 20);
     const bO = rO.ok && bldgOf(simO, rO.bid);
@@ -844,7 +1082,7 @@ export function _selfTest() {
       simO.state.occ[idx(20, 21)] === rO.bid;
 
     // save/load preserves rot and reconstructs identical occ/map
-    const simRA = new Sim(106, catalog2);
+    const simRA = flatten(new Sim(106, catalog2), 14, 14, 44, 44);
     simRA.placeRoad(21, 20);
     const raHut = simRA.place(hut2, 20, 20);       // rot 1
     simRA.placeRoad(30, 19);
@@ -854,18 +1092,13 @@ export function _selfTest() {
     const simRB = new Sim(999);
     simRB.setCatalog(catalog2);
     const rotLoaded = simRB.load(rotBlob);
-    let rotOccMatch = rotLoaded, rotMapMatch = rotLoaded;
-    for (let i = 0; i < N * N && (rotOccMatch || rotMapMatch); i++) {
-      if (simRB.state.occ[i] !== simRA.state.occ[i]) rotOccMatch = false;
-      if (simRB.state.map[i] !== simRA.state.map[i]) rotMapMatch = false;
-    }
     const bHutB = bldgOf(simRB, raHut.bid);
     const bShopB = bldgOf(simRB, raShop.bid);
-    c.saveLoadRot = rotLoaded && rotOccMatch && rotMapMatch &&
+    c.saveLoadRot = rotLoaded && simRB.save() === rotBlob &&
       !!bHutB && bHutB.rot === 1 && !!bShopB && bShopB.rot === 2 && bShopB.tw === 2 && bShopB.td === 1;
 
     // ---- bridge checks ---------------------------------------------------
-    const simBr = new Sim(555, catalog);
+    const simBr = flatten(new Sim(555, catalog), 10, 10, 24, 24);
     const SB = simBr.state;
     // find a water tile
     let bx = -1, bz = -1;
@@ -895,15 +1128,10 @@ export function _selfTest() {
     const simBr2 = new Sim(999);
     simBr2.setCatalog(catalog);
     const brLoaded = simBr2.load(brBlob);
-    let brMapMatch = brLoaded, brBridgeMatch = brLoaded;
-    for (let i = 0; i < N * N && (brMapMatch || brBridgeMatch); i++) {
-      if (simBr2.state.map[i] !== SB.map[i]) brMapMatch = false;
-      if (simBr2.state.bridge[i] !== SB.bridge[i]) brBridgeMatch = false;
-    }
-    c.bridgeSaveLoad = brLoaded && brMapMatch && brBridgeMatch &&
-      simBr2.state.bridge[bi] === 1;
+    c.bridgeSaveLoad = brLoaded && simBr2.save() === brBlob &&
+      simBr2.state.bridge[bi] === 1 && simBr2.state.map[bi] === T.ROAD;
     // a save with no bridges omits the key and loads clean
-    const simNoBr = new Sim(2024, catalog);
+    const simNoBr = flatten(new Sim(2024, catalog), 10, 10, 30, 30);
     simNoBr.placeRoad(16, 20);
     const noBrBlob = simNoBr.save();
     c.bridgeKeyOmitted = !('bridges' in JSON.parse(noBrBlob));
@@ -920,7 +1148,7 @@ export function _selfTest() {
     const bldgOfB = (sim, bid) => sim.state.buildings.find((b) => b.bid === bid);
 
     // 4×4 occupies all 16 tiles, all owned by the same bid.
-    const sim44 = new Sim(4444, catalogBig);
+    const sim44 = flatten(new Sim(4444, catalogBig), 6, 6, 24, 24);
     const p44 = sim44.place(arena, 10, 10);
     let all16 = p44.ok;
     for (let dz = 0; dz < 4 && all16; dz++) {
@@ -939,7 +1167,7 @@ export function _selfTest() {
     c.big4x4OverlapRejected = !p44over.ok && p44over.reason === 'occupied';
 
     // 3×2 beside a horizontal road on its N edge → front faces N → rot 2, dims kept.
-    const sim32 = new Sim(3232, catalogBig);
+    const sim32 = flatten(new Sim(3232, catalogBig), 14, 14, 30, 30);
     sim32.placeRoad(20, 19);
     sim32.placeRoad(21, 19);
     sim32.placeRoad(22, 19);
@@ -993,7 +1221,7 @@ export function _selfTest() {
     const park3 = catalog3.fun[0];
 
     // pop counts homes only; jobs counts everything else.
-    const simM = new Sim(31337, catalog3);
+    const simM = flatten(new Sim(31337, catalog3), 6, 6, 22, 22);
     const SMx = simM.state;
     simM.place(hut3, 10, 10);   // pop +2
     simM.place(hut3, 12, 10);   // pop +2
@@ -1015,7 +1243,7 @@ export function _selfTest() {
     // ~70 terrain trees, which alone saturate happiness at the clamp ceiling, so
     // first depress it below 1 with factories in the central tree-free zone
     // (each counts as "far from trees" → applies the penalty), then add parks.
-    const simHap = new Sim(4242, catalog3);
+    const simHap = flatten(new Sim(4242, catalog3), 20, 20, 40, 40);
     // A few factories in the central tree-free zone depress happiness below the
     // ceiling (each is "far from trees" → penalty) without flooring it, so adding
     // parks can measurably raise it back.
@@ -1030,7 +1258,7 @@ export function _selfTest() {
     c.happinessRises = h0 < 1 && h1 > h0;
 
     // shopNearHome detects a shop placed next to a home.
-    const simS = new Sim(5150, catalog3);
+    const simS = flatten(new Sim(5150, catalog3), 14, 14, 44, 44);
     simS.place(hut3, 20, 20);
     simS.place(bakery3, 21, 20);         // adjacent → within Chebyshev 6
     const near = simS.metrics().shopNearHome;
@@ -1045,6 +1273,39 @@ export function _selfTest() {
     const jLoaded = simJ.load(jobsBlob);
     c.loadRecomputesJobs = jLoaded && simJ.state.pop === 4 && simJ.state.jobs === 8 &&
       Number.isFinite(simJ.state.happiness) && Number.isFinite(simJ.state.air);
+
+    // ---- v3.6: generative terrain (oceans/lakes/rivers/mountains/forests) --
+    const simTer = new Sim(24680, catalog);
+    const MT = simTer.state.map, VT = simTer.state.variant;
+    let nWater = 0, nMtn = 0, nGrass = 0, mtnHOK = true, mtnI = -1;
+    for (let i = 0; i < MT.length; i++) {
+      const t = MT[i];
+      if (t === T.WATER) nWater++;
+      else if (t === T.MOUNTAIN) { nMtn++; if (mtnI < 0) mtnI = i; if (VT[i] < 2 || VT[i] > 16) mtnHOK = false; }
+      else if (t === T.GRASS) nGrass++;
+    }
+    c.terrainHasWater = nWater > 20;
+    c.terrainHasMountains = nMtn > 8;
+    c.terrainMostlyGrass = nGrass > MT.length * 0.4;
+    c.mountainHeights = nMtn > 0 && mtnHOK;
+    // a mountain tile blocks buildings, roads and trees, and stays a mountain.
+    if (mtnI >= 0) {
+      const mx = mtnI % N, mz = (mtnI / N) | 0;
+      c.mountainBlocks = !simTer.place(hut, mx, mz).ok &&
+        !simTer.placeRoad(mx, mz).ok && !simTer.placeTree(mx, mz).ok &&
+        simTer.state.map[mtnI] === T.MOUNTAIN;
+    } else c.mountainBlocks = false;
+    // save→load regenerates the SAME mountains/water from the seed.
+    const terBlob = simTer.save();
+    const simTer2 = new Sim(1); simTer2.setCatalog(catalog);
+    simTer2.load(terBlob);
+    let terMatch = true;
+    for (let i = 0; i < MT.length; i++) {
+      if (MT[i] === T.MOUNTAIN || MT[i] === T.WATER) {
+        if (simTer2.state.map[i] !== MT[i]) { terMatch = false; break; }
+      }
+    }
+    c.terrainReload = terMatch;
 
     out.steps = c;
     out.ok = Object.values(c).every(Boolean);

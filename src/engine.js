@@ -6,9 +6,9 @@
 import * as THREE from '../vendor/three.module.js';
 import { TILE, N, CHUNK } from './constants.js';
 
-const MAP_W = N * TILE;               // world width of the map (512 at N=64)
-const CENTER = MAP_W / 2;             // world center (256 at N=64)
-const CHUNKS = Math.ceil(N / CHUNK);  // 4 chunks per side at N=64
+const MAP_W = N * TILE;               // world width of the map (640 at N=80)
+const CENTER = MAP_W / 2;             // world center (320 at N=80)
+const CHUNKS = Math.ceil(N / CHUNK);  // 5 chunks per side at N=80
 
 // Day / night key colours (sRGB hex).
 const DAY_SKY = 0x87d4f5;
@@ -30,6 +30,10 @@ const GRASS_B = 0x74c73f;
 const WATER_C = 0x3fa9f0;
 const SAND_C = 0xe6d59a;
 const ROAD_C = 0x40454d;
+// Mountain height bands (grassy base -> rock -> snow cap).
+const MTN_GRASS = 0x5a9e3f;   // low ~1/3
+const MTN_ROCK = 0x8b9098;    // middle
+const MTN_SNOW = 0xf4f8ff;    // top ~2 voxels on tall peaks
 
 const clamp = THREE.MathUtils.clamp;
 
@@ -90,7 +94,7 @@ export class Engine {
     // ---- Camera ------------------------------------------------------------
     this.camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
     this._camTarget = new THREE.Vector3(CENTER, 0, CENTER);
-    this._camDist = 215;
+    this._camDist = 250;
     this._camAz = Math.PI * 0.25;
     this._camPolar = 0.9;
     // Smoothed (damped) copies actually used to place the camera.
@@ -700,9 +704,57 @@ export class Engine {
       }
     };
 
+    // Mountain band colours (linear triples), precomputed once per chunk.
+    const MG = this._linTriple(MTN_GRASS);
+    const MR = this._linTriple(MTN_ROCK);
+    const MS = this._linTriple(MTN_SNOW);
+    // Neighbour mountain height (0 = ground/water/border/non-mountain).
+    const mtnH = (nx, nz) => {
+      if (nx < 0 || nz < 0 || nx >= N || nz >= N) return 0;
+      const ni = nz * N + nx;
+      if (state.map[ni] !== 15 /* MOUNTAIN */) return 0;
+      const hv = state.variant ? state.variant[ni] : 0;
+      return hv > 0 ? hv : 4;
+    };
+
     for (let z = z0t; z < z1t; z++) {
       for (let x = x0t; x < x1t; x++) {
         let type = state.map[z * N + x];
+
+        // MOUNTAIN: solid raised column (y=0..h), height-banded colour, with
+        // neighbour-culled side walls. Does NOT emit the flat grass slab.
+        if (type === 15 /* MOUNTAIN */) {
+          const hv = state.variant ? state.variant[z * N + x] : 0;
+          const h = hv > 0 ? hv : 4;                 // voxel height (default 4)
+          const wx0 = x * TILE, wx1 = wx0 + TILE;
+          const wz0 = z * TILE, wz1 = wz0 + TILE;
+          const snowy = h >= 8;
+          const snowLine = h - 2;                    // top ~2 voxels get snow
+          const third = h / 3;
+          // Colour of the voxel at level L (spanning y=L..L+1).
+          const band = (L) => {
+            if (snowy && L >= snowLine) return MS;
+            if (L < third) return MG;
+            return MR;
+          };
+          // Top cap (always emitted), coloured by the peak voxel.
+          const cTop = band(h - 1);
+          quad(wx0, h, wz0, wx0, h, wz1, wx1, h, wz1, wx1, h, wz0, 0, 1, 0, cTop, 0);
+          // Exposed side walls: for each side emit only the voxel band above the
+          // neighbour's height (buried faces against equal/taller mountains skip).
+          const hE = mtnH(x + 1, z), hW = mtnH(x - 1, z),
+                hN = mtnH(x, z - 1), hS = mtnH(x, z + 1);
+          for (let L = hE; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // East +X
+            quad(wx1, y0, wz1, wx1, y0, wz0, wx1, y1, wz0, wx1, y1, wz1, 1, 0, 0, c, 0); }
+          for (let L = hW; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // West -X
+            quad(wx0, y0, wz0, wx0, y0, wz1, wx0, y1, wz1, wx0, y1, wz0, -1, 0, 0, c, 0); }
+          for (let L = hN; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // North -Z
+            quad(wx1, y0, wz0, wx0, y0, wz0, wx0, y1, wz0, wx1, y1, wz0, 0, 0, -1, c, 0); }
+          for (let L = hS; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // South +Z
+            quad(wx0, y0, wz1, wx1, y0, wz1, wx1, y1, wz1, wx0, y1, wz1, 0, 0, 1, c, 0); }
+          continue;
+        }
+
         // Bridge tile: map says ROAD, but render it as animated WATER (the wooden
         // deck is drawn separately as a prop by main.js).
         if (state.bridge && state.bridge[z * N + x] === 1) type = 1 /* WATER */;
@@ -815,7 +867,7 @@ export class Engine {
     };
 
     const wheel = (e) => {
-      this._camDist = clamp(this._camDist * Math.pow(1.0015, e.deltaY), 30, 340);
+      this._camDist = clamp(this._camDist * Math.pow(1.0015, e.deltaY), 30, 380);
       e.preventDefault();
     };
 
@@ -848,7 +900,7 @@ export class Engine {
     const dist = Math.hypot(dx, dy);
     const ang = Math.atan2(dy, dx);
     if (this._pinchDist == null) { this._pinchDist = dist; this._pinchAng = ang; return; }
-    if (dist > 0) this._camDist = clamp(this._camDist * (this._pinchDist / dist), 30, 340);
+    if (dist > 0) this._camDist = clamp(this._camDist * (this._pinchDist / dist), 30, 380);
     this._camAz += ang - this._pinchAng;
     this._pinchDist = dist;
     this._pinchAng = ang;
