@@ -25,21 +25,25 @@ First run, pick a mode: **🧸 Picture Play** (ages 5–6: six big picture choic
 read-aloud, minimal text), **🏙️ City Explorer** (ages 7–9: full catalog + stats +
 guided missions), or **✨ Everything** (the whole toolbox, nothing hidden).
 
-1. 🛣️ **Draw roads** — tap Road, then drag. Mostly-straight drags snap to a clean
+1. ✋ **Move safely** — the dedicated Move tool pans the map. If a building or
+   tree is selected, a tap places it while a drag pans instead, so exploring can
+   never paint an accidental row of buildings. Arrow keys + Enter also work.
+2. 🛣️ **Draw roads** — tap Road, then drag. Mostly-straight drags snap to a clean
    grid line (no more iso staircase), with a path preview as you go.
-2. 🏠 **Pick buildings** — tap a category (Homes / Shops / Factories / Fun /
+3. 🏠 **Pick buildings** — tap a category (Homes / Shops / Factories / Fun /
    🏙️ Downtown / 🌼 Deco) and a drawer slides up: **93 types** — houses, cottages,
    apartments, mansions; shops, malls, a cinema; factories; a carousel, ferris
    wheel, stadium, and zoo; a downtown of office towers and glass skyscrapers that
    light up at night; and deco (benches, flowers, streetlights, statues). Buildings
    turn to face the nearest road. If a spot won't work you get a red footprint and
    a friendly reason ("This building needs grass").
-3. 🌉 **Cross the river** — drag a road over water and it becomes a wooden bridge.
-4. 🧭 **City Helper** (optional) — little missions with a picture, read-aloud
+4. 🌉 **Cross the river** — drag a road from one bank to the other and it becomes
+   a wooden bridge. The helper only celebrates after both banks are connected.
+5. 🧭 **City Helper** (optional) — little missions with a picture, read-aloud
    directions, and "2 of 3" progress: *build a road with 5 pieces*, *add 3 homes*,
    *put a shop near the homes*, *build a bridge across the river*… tap **Free Build**
    any time to just play.
-5. 👀 **Watch it come alive** — cars drive, people stroll (some walk their dogs!),
+6. 👀 **Watch it come alive** — cars drive, people stroll (some walk their dogs!),
    boats drift the river, rides spin, balloons rise, factories puff smoke, windows
    glow at night, fireworks burst over the stadium. Seasons change every 3 days.
 
@@ -54,11 +58,13 @@ city with you in real time — everyone's roads and buildings appear instantly. 
 by a tiny Cloudflare Worker + Durable Object (`mp/`); rooms are open, forgiving, and
 vanish when everyone leaves.
 
-More: ↩️ undo, 📷 photo postcard (name your city!), 📖 sticker book (all 93 types),
+More: ↩️ undo and 🧹 erase in every mode, 📷 photo postcard (name your city!),
+📖 sticker book (all 93 types), 🎯 find-my-city, optional project library,
+changeable play modes,
 🗂️ several saved cities, ❓ replayable help, ☀️ always-bright and 🔊 read-aloud
 toggles, plus screen-reader labels, focusable dialogs, and reduced-motion support.
 
-Drag to move the camera, pinch or scroll to zoom, two-finger twist or right-drag
+Choose Move and drag to move the camera, pinch or scroll to zoom, two-finger twist or right-drag
 to rotate. Day turns to night on a 2-minute cycle. 🧹 Erase removes anything. Each
 city autosaves; start or switch cities from 🗂️.
 

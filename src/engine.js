@@ -94,7 +94,7 @@ export class Engine {
     // ---- Camera ------------------------------------------------------------
     this.camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
     this._camTarget = new THREE.Vector3(CENTER, 0, CENTER);
-    this._camDist = 250;
+    this._camDist = 205;
     this._camAz = Math.PI * 0.25;
     this._camPolar = 0.9;
     // Smoothed (damped) copies actually used to place the camera.
@@ -892,6 +892,19 @@ export class Engine {
     this._camTarget.z = clamp(this._camTarget.z, -panMargin, MAP_W + panMargin);
   }
 
+  panScreen(prevX, prevY, curX, curY) {
+    this._panBy(prevX, prevY, curX, curY);
+  }
+
+  // Gently frame a tile or neighborhood. Main uses this for "find my city"
+  // and for missions whose target (such as the river) may begin off-screen.
+  focusAt(x, z, distance) {
+    const tx = clamp((Number(x) + 0.5) * TILE, 0, MAP_W);
+    const tz = clamp((Number(z) + 0.5) * TILE, 0, MAP_W);
+    this._camTarget.set(tx, 0, tz);
+    if (Number.isFinite(distance)) this._camDist = clamp(distance, 45, 300);
+  }
+
   _twoPointer() {
     let a = null, b = null;
     for (const p of this._pointers.values()) { if (!a) a = p; else if (!b) b = p; }
@@ -937,12 +950,12 @@ export class Engine {
     this.fog.color.copy(this._skyCol);
 
     // Sun dims and cools toward moonlight.
-    this.sun.intensity = 1.1 + (0.08 - 1.1) * te;
+    this.sun.intensity = 1.1 + (0.18 - 1.1) * te;
     this.sun.color.copy(this._sunDayColor).lerp(this._moonColor, te);
 
     // Fill lights dim at night.
-    this.hemi.intensity = 0.6 + (0.18 - 0.6) * te;
-    this.ambient.intensity = 0.18 + (0.10 - 0.18) * te;
+    this.hemi.intensity = 0.6 + (0.28 - 0.6) * te;
+    this.ambient.intensity = 0.18 + (0.15 - 0.18) * te;
   }
 
   // ---------------------------------------------------------------------------

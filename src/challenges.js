@@ -15,9 +15,11 @@
 //   {kind:'roads', n}         delta: n new road tiles since mission start
 //   {kind:'homes', n}         delta: n new homes
 //   {kind:'trees', n}         delta: n new trees
+//   {kind:'treesNearFactory', n} delta: n new trees within 6 tiles of a factory
 //   {kind:'place', cat, n}    delta: n new buildings in a category
+//   {kind:'type', id, n}       delta: n new buildings of one exact type
 //   {kind:'shopNearHome', n}  absolute: metrics.shopNearHome >= n
-//   {kind:'bridge'}           absolute: metrics.bridges >= 1
+//   {kind:'bridge'}           absolute: a bridge connects both river banks
 //   {kind:'nameCity'}         literacy — main passes metrics.cityNamed
 //   {kind:'postcard'}         literacy — main passes metrics.postcardTaken
 //   {kind:'design'}           open-ended — completes on any placement since start
@@ -83,7 +85,7 @@ export const CHALLENGES = [
     say: "Let's place a school so the kids have somewhere to learn!",
     emoji: '🏫',
     subject: 'civics',
-    goal: { kind: 'place', cat: 'fun', n: 1 },
+    goal: { kind: 'type', id: 'school', n: 1 },
     hint: 'Open the Fun drawer and look for the school. Tap the grass to place it.',
     ask: 'What do people do at a school? Who works there?',
   },
@@ -93,7 +95,7 @@ export const CHALLENGES = [
     say: "Let's add a fire station to keep everyone safe!",
     emoji: '🚒',
     subject: 'civics',
-    goal: { kind: 'place', cat: 'fun', n: 1 },
+    goal: { kind: 'type', id: 'fire-station', n: 1 },
     hint: 'Find the fire station in the Fun drawer and place it near the homes.',
     ask: 'How do firefighters help a city? What else keeps people safe?',
   },
@@ -103,19 +105,29 @@ export const CHALLENGES = [
     say: "Let's add a park where people can play and rest!",
     emoji: '🏞️',
     subject: 'civics',
-    goal: { kind: 'place', cat: 'fun', n: 1 },
+    goal: { kind: 'type', id: 'park', n: 1 },
     hint: 'Pick a park from the Fun drawer and place it near where people live.',
     ask: 'What would you do at your park? Did people look happier?',
   },
 
   // ── ENVIRONMENT ───────────────────────────────────────────────────────────
   {
+    id: 'factory',
+    title: 'A Factory at Work',
+    say: "Let's build a toy factory, then watch what happens to jobs and the air!",
+    emoji: '🏭',
+    subject: 'environment',
+    goal: { kind: 'type', id: 'toy-factory', n: 1 },
+    hint: 'Pick the Toy Factory and place it on the grass.',
+    ask: 'What came from the factory? What could help keep the air clean?',
+  },
+  {
     id: 'treesNearFactory',
     title: 'Trees for Clean Air',
     say: 'Factories make smoke. Let\'s plant some trees to help clean the air!',
     emoji: '🌳',
     subject: 'environment',
-    goal: { kind: 'trees', n: 3 },
+    goal: { kind: 'treesNearFactory', n: 3 },
     hint: 'Tap the Tree tool and plant trees near your factory. Watch the air get better!',
     ask: 'What happened to the air when you planted trees? How does the city feel now?',
   },
@@ -125,7 +137,7 @@ export const CHALLENGES = [
     say: "Let's add wind power for clean energy — no smoke at all!",
     emoji: '💨',
     subject: 'environment',
-    goal: { kind: 'place', cat: 'fun', n: 1 },
+    goal: { kind: 'type', id: 'wind-power', n: 1 },
     hint: 'Find the wind turbine in the Fun drawer. Its blades spin in the breeze!',
     ask: 'Where does wind power come from? Why is clean energy good for your city?',
   },
@@ -177,7 +189,7 @@ export const CHALLENGES = [
 
 // First-run helper sequence (ordered ids). Matches the user's examples:
 // road → 3 homes → shop near homes → bridge, then a couple more gentle ones.
-export const GUIDED = ['road5', 'homes3', 'shopNear', 'bridge', 'park', 'treesNearFactory'];
+export const GUIDED = ['road5', 'homes3', 'shopNear', 'bridge', 'park', 'factory', 'treesNearFactory'];
 
 // Map a 'place' goal category to the metrics field that counts it.
 const CAT_FIELD = {
@@ -206,10 +218,14 @@ export function makeBaseline(goal, metrics) {
       return { homes: Number(m.homes) || 0 };
     case 'trees':
       return { trees: Number(m.trees) || 0 };
+    case 'treesNearFactory':
+      return { trees: Number(m.treesNearFactories) || 0 };
     case 'place': {
       const field = CAT_FIELD[goal.cat] || goal.cat;
       return { count: Number(m[field]) || 0 };
     }
+    case 'type':
+      return { count: Number(m.types && m.types[goal.id]) || 0 };
     // Absolute / main-driven goals count from nothing.
     case 'shopNearHome':
     case 'bridge':
@@ -243,10 +259,21 @@ export function progress(goal, metrics, baseline) {
       const done = clamp((Number(m.trees) || 0) - (Number(b.trees) || 0), 0, total);
       return { done, total, complete: done >= total };
     }
+    case 'treesNearFactory': {
+      const total = Math.max(1, Number(goal.n) || 1);
+      const done = clamp((Number(m.treesNearFactories) || 0) - (Number(b.trees) || 0), 0, total);
+      return { done, total, complete: done >= total };
+    }
     case 'place': {
       const total = Math.max(1, Number(goal.n) || 1);
       const field = CAT_FIELD[goal.cat] || goal.cat;
       const done = clamp((Number(m[field]) || 0) - (Number(b.count) || 0), 0, total);
+      return { done, total, complete: done >= total };
+    }
+    case 'type': {
+      const total = Math.max(1, Number(goal.n) || 1);
+      const now = Number(m.types && m.types[goal.id]) || 0;
+      const done = clamp(now - (Number(b.count) || 0), 0, total);
       return { done, total, complete: done >= total };
     }
     case 'shopNearHome': {
@@ -255,7 +282,7 @@ export function progress(goal, metrics, baseline) {
       return { done, total, complete: (Number(m.shopNearHome) || 0) >= total };
     }
     case 'bridge': {
-      const done = (Number(m.bridges) || 0) >= 1 ? 1 : 0;
+      const done = (Number(m.bridgeCrossings) || 0) >= 1 ? 1 : 0;
       return { done, total: 1, complete: done >= 1 };
     }
     case 'nameCity': {
@@ -326,6 +353,14 @@ export function _selfTest() {
     const p = progress(goal, { trees: 43 }, base);
     check('trees-complete', p.done === 3 && p.complete);
   }
+  // Factory greenery counts only nearby trees, not trees anywhere in the city.
+  {
+    const goal = { kind: 'treesNearFactory', n: 3 };
+    const base = makeBaseline(goal, { treesNearFactories: 8 });
+    check('factory-trees-base', base.trees === 8);
+    check('factory-trees-far-incomplete', !progress(goal, { treesNearFactories: 8, trees: 999 }, base).complete);
+    check('factory-trees-near-complete', progress(goal, { treesNearFactories: 11 }, base).complete);
+  }
   // place delta with category → field mapping (fun → funCount).
   {
     const goal = { kind: 'place', cat: 'fun', n: 1 };
@@ -335,6 +370,14 @@ export function _selfTest() {
     check('place-incomplete', p.done === 0 && !p.complete);
     p = progress(goal, { funCount: 3 }, base);
     check('place-complete', p.done === 1 && p.complete);
+  }
+  // exact building type delta.
+  {
+    const goal = { kind: 'type', id: 'school', n: 1 };
+    const base = makeBaseline(goal, { types: { school: 1 } });
+    check('type-base', base.count === 1);
+    check('type-incomplete', !progress(goal, { types: { school: 1 } }, base).complete);
+    check('type-complete', progress(goal, { types: { school: 2 } }, base).complete);
   }
   // shopNearHome absolute.
   {
@@ -348,8 +391,8 @@ export function _selfTest() {
   // bridge absolute.
   {
     const goal = { kind: 'bridge' };
-    check('bridge-incomplete', !progress(goal, { bridges: 0 }, {}).complete);
-    const p = progress(goal, { bridges: 1 }, {});
+    check('bridge-incomplete', !progress(goal, { bridgeCrossings: 0 }, {}).complete);
+    const p = progress(goal, { bridgeCrossings: 1 }, {});
     check('bridge-complete', p.done === 1 && p.total === 1 && p.complete);
   }
   // nameCity via flag.

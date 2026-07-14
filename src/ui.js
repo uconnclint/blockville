@@ -14,6 +14,7 @@ import { ART } from './art.js';
 const DIRECT_ROAD  = { id: 'road',     emoji: '🛣️', label: 'Road' };
 const DIRECT_TREE  = { id: 'tree',     emoji: '🌳', label: 'Tree' };
 const DIRECT_ERASE = { id: 'bulldoze', emoji: '🧹', label: 'Erase' };
+const DIRECT_MOVE  = { id: 'move',      emoji: '✋', label: 'Move' };
 
 // Category tabs (open drawers). key matches CATALOG keys.
 const CATEGORY_TABS = [
@@ -269,7 +270,7 @@ const CSS = `
 .bv-drawer-strip::-webkit-scrollbar { display: none; }
 .bv-card-btn {
   position: relative; flex: 0 0 auto;
-  width: 72px; min-width: 72px; height: 72px; min-height: 64px;
+  width: 88px; min-width: 88px; height: 84px; min-height: 76px;
   border: none; border-radius: 18px;
   background: var(--bv-card-solid); color: var(--bv-text);
   cursor: pointer;
@@ -282,9 +283,9 @@ const CSS = `
 .bv-card-btn:active { transform: scale(.92); }
 .bv-card-btn .bv-c-em { font-size: 30px; line-height: 1; }
 .bv-card-btn .bv-c-lbl {
-  font-size: 10px; font-weight: 800; letter-spacing: .1px; line-height: 1.05;
-  max-width: 66px; text-align: center;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 850; letter-spacing: .1px; line-height: 1.05;
+  max-width: 80px; text-align: center;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 .bv-card-btn .bv-c-size {
   position: absolute; top: -5px; right: -4px;
@@ -665,6 +666,10 @@ const CSS = `
 .bv-mission-btn:active { transform: scale(.94); }
 .bv-mission-next { display: none; }
 .bv-mission.bv-complete .bv-mission-next { display: block; }
+#bv-ui.bv-drawer-on .bv-mission { bottom: calc(200px + env(safe-area-inset-bottom, 0px)); }
+@media (max-height: 650px) {
+  #bv-ui.bv-drawer-on .bv-mission { transform: scale(.82); transform-origin: left bottom; bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
+}
 
 /* ---------- mode picker ---------- */
 .bv-mode-card { max-width: 580px; }
@@ -683,12 +688,15 @@ const CSS = `
 .bv-mode-opt .bv-mode-em { font-size: 44px; line-height: 1; }
 .bv-mode-opt .bv-mode-nm { font-size: 18px; font-weight: 900; }
 .bv-mode-opt .bv-mode-age { font-size: 13px; font-weight: 700; opacity: .7; }
+.bv-project-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; max-height: 55vh; overflow-y: auto; margin: 10px 0; }
+.bv-project-btn { border: none; border-radius: 18px; padding: 12px; background: rgba(142,202,230,.18); color: var(--bv-text); font: inherit; font-weight: 850; text-align: left; cursor: pointer; }
+.bv-project-btn span { display: block; font-size: 12px; opacity: .72; margin-top: 3px; }
 
 /* ---------- picture-play simple bar ---------- */
 .bv-picbar {
   position: absolute; left: 0; right: 0;
   bottom: calc(10px + env(safe-area-inset-bottom,0px));
-  display: none; align-items: center; justify-content: center; gap: 10px;
+  display: none; align-items: center; justify-content: flex-start; gap: 10px;
   padding: 10px calc(12px + env(safe-area-inset-right,0px)) 10px calc(12px + env(safe-area-inset-left,0px));
   overflow-x: auto; scrollbar-width: none; touch-action: pan-x; pointer-events: auto;
 }
@@ -764,7 +772,8 @@ export function initUI(hooks) {
       showPostcard: noop, askCityName: (_c, cb) => { try { if (typeof cb === 'function') cb('Blockville'); } catch (_) { /* ignore */ } },
       toast: noop, celebrate: noop, showWelcome: noop, destroy: noop,
       // v3.3 additions — all harmless no-ops without a DOM
-      showModePicker: noop, setMode: noop, showBlocked: noop,
+      showModePicker: noop, setMode: noop, setSpeechState: noop, setBrightState: noop,
+      showHelpMenu: noop, showProjects: noop, showBlocked: noop,
       setFavorites: noop, setMission: noop, hideMission: noop,
       showCityManager: noop, announce: noop,
       // v3.5 multiplayer
@@ -901,11 +910,13 @@ export function initUI(hooks) {
 
   const stPop = makeStat('bv-pop', '👥', '0', 'stat-people');
   stPop.root.setAttribute('aria-label', '0 people');
+  stPop.root.title = 'People living in your homes';
 
   // 💼 jobs — hidden until a jobs value is first supplied
   const stJobs = makeStat('bv-jobs', '💼', '0', 'stat-jobs');
   stJobs.root.style.display = 'none';
   stJobs.root.setAttribute('aria-label', '0 jobs');
+  stJobs.root.title = 'Jobs created by shops, factories, and city places';
 
   // 😀 happiness FACE — morphs 😟🙂😀🤩 by value; hidden until supplied
   const stHappy = el('div', 'bv-stat bv-happy');
@@ -915,6 +926,7 @@ export function initUI(hooks) {
   stHappy.appendChild(happyIc);
   stHappy.style.display = 'none';
   stHappy.setAttribute('aria-label', 'Happiness');
+  stHappy.title = 'Parks, schools, fun, and nearby shops help happiness';
 
   // 🌿 air meter — small bar; hidden until supplied
   const stAir = el('div', 'bv-stat bv-air');
@@ -925,6 +937,7 @@ export function initUI(hooks) {
   stAir.appendChild(airBar);
   stAir.style.display = 'none';
   stAir.setAttribute('aria-label', 'Clean air');
+  stAir.title = 'Factories lower air quality; nearby trees and wind power help';
 
   // day stat: sun/moon icon + "Day n" + clock sublabel
   const stDay = el('div', 'bv-stat bv-day');
@@ -979,6 +992,10 @@ export function initUI(hooks) {
   const newBtn = iconBtn('bv-btn-round', '🆕', 'New city', null, 'btn-new-city');
   newBtn.addEventListener('click', showNewConfirm);
   top.appendChild(newBtn);
+
+  const findBtn = iconBtn('bv-btn-round', '🎯', 'Find my city', 'Center the camera on what you built');
+  findBtn.addEventListener('click', () => call(h.onFocusCity));
+  top.appendChild(findBtn);
 
   top.appendChild(el('div', 'bv-sep'));
 
@@ -1177,12 +1194,13 @@ export function initUI(hooks) {
   // Toolbar tab/tool → custom-art key. (Declared before the calls below so it's
   // not in the temporal dead zone when addDirectTool/addCategoryTab run.)
   const TAB_ART = {
-    road: 'tool-road', tree: 'tool-tree', bulldoze: 'tool-erase',
+    move: null, road: 'tool-road', tree: 'tool-tree', bulldoze: 'tool-erase',
     homes: 'tab-homes', shops: 'tab-shops', factories: 'tab-factories',
     fun: 'tab-fun', downtown: 'tab-downtown', deco: 'tab-deco',
   };
 
-  // 🛣️ Road (direct)
+  // ✋ Move + 🛣️ Road (direct)
+  addDirectTool(DIRECT_MOVE);
   addDirectTool(DIRECT_ROAD);
   // category tabs
   CATEGORY_TABS.forEach(addCategoryTab);
@@ -1289,6 +1307,7 @@ export function initUI(hooks) {
 
   function openDrawer(key) {
     openCat = key;
+    root.classList.add('bv-drawer-on');
     buildDrawerCards(key);
     drawer.classList.add('bv-open');
     // re-trigger the springy animation
@@ -1352,6 +1371,7 @@ export function initUI(hooks) {
   // came from this drawer, deselect it too.
   function closeDrawer(closeFromControl) {
     drawer.classList.remove('bv-open');
+    root.classList.remove('bv-drawer-on');
     openCat = null;
     hideSwipeHint();
     if (closeFromControl && activeEntryId() != null) {
@@ -1454,6 +1474,7 @@ export function initUI(hooks) {
   function toolEmojiName(tool) {
     if (tool == null) return null;
     if (typeof tool === 'string') {
+      if (tool === 'move') return { em: DIRECT_MOVE.emoji, nm: DIRECT_MOVE.label };
       if (tool === 'road') return { em: DIRECT_ROAD.emoji, nm: DIRECT_ROAD.label };
       if (tool === 'tree') return { em: DIRECT_TREE.emoji, nm: DIRECT_TREE.label };
       if (tool === 'bulldoze') return { em: DIRECT_ERASE.emoji, nm: DIRECT_ERASE.label };
@@ -1536,7 +1557,7 @@ export function initUI(hooks) {
     const ov = el('div', 'bv-overlay');
     const card = el('div', 'bv-card');
     card.appendChild(el('h2', null, 'Start a brand new city? 🏗️'));
-    card.appendChild(el('p', null, 'Your city will go away!'));
+    card.appendChild(el('p', null, 'Your current city stays safely in My Cities.'));
     const choices = el('div', 'bv-choices');
     const keep = el('button', 'bv-cta bv-soft', 'Keep building!');
     keep.type = 'button';
@@ -1653,8 +1674,10 @@ export function initUI(hooks) {
         const has = stickers.has(entry.id);
         if (has) { got++; secGot++; }
         const cell = el('div', 'bv-cell ' + (has ? 'bv-got' : 'bv-locked'));
+        const tw = Math.max(1, Number(entry.tw) || 1), td = Math.max(1, Number(entry.td) || 1);
+        const clue = (tw > 1 || td > 1) ? ('Mystery ' + tw + '×' + td) : ('Mystery ' + sec.label.slice(0, -1));
         cell.appendChild(el('span', 'bv-cell-em', entry.emoji || '🏢'));
-        cell.appendChild(el('span', 'bv-cell-lbl', has ? (entry.name || String(entry.id)) : '???'));
+        cell.appendChild(el('span', 'bv-cell-lbl', has ? (entry.name || String(entry.id)) : clue));
         grid.appendChild(cell);
       });
       countEl.textContent = secGot + ' / ' + list.length;
@@ -1681,6 +1704,7 @@ export function initUI(hooks) {
       const card = el('div', 'bv-card bv-sticker-card');
       stickerHeadEl = el('h2', 'bv-sticker-head', '📖 Sticker Book');
       card.appendChild(stickerHeadEl);
+      card.appendChild(el('p', 'bv-sticker-head', 'Place a building to discover it. Your discoveries stay safe if you use Undo.'));
       stickerBodyEl = el('div', 'bv-sticker-scroll');
       card.appendChild(stickerBodyEl);
       const close = el('button', 'bv-cta', 'All done! ✕');
@@ -1784,6 +1808,76 @@ export function initUI(hooks) {
     setTimeout(() => { try { input.select(); } catch (_) { /* ignore */ } }, 60);
   }
 
+  function showWelcomeOverlay() {
+    closeOverlay();
+    const ov = el('div', 'bv-overlay');
+    const card = el('div', 'bv-card');
+    card.appendChild(el('h2', null, 'Welcome to Blockville! 🏙️'));
+    card.appendChild(el('p', null, "Let's build an awesome city together!"));
+    const steps = el('div', 'bv-steps');
+    [
+      ['✋', '1. Use Move to explore the map', null],
+      ['🛣️', '2. Roads draw when you drag', 'step-1-roads'],
+      ['🏠', '3. Buildings place when you tap', 'step-2-build'],
+    ].forEach(([emo, tx, art]) => {
+      const st = el('div', 'bv-step');
+      const emS = el('span', 'bv-step-em'); setGlyph(emS, art, emo);
+      st.appendChild(emS); st.appendChild(el('span', 'bv-step-tx', tx)); steps.appendChild(st);
+    });
+    card.appendChild(steps);
+    card.appendChild(el('p', 'bv-hint', 'Tap Move before dragging · Pinch or scroll to zoom · Undo fixes mistakes'));
+    const cta = el('button', 'bv-cta', "Let's build! 🚀");
+    cta.type = 'button'; cta.addEventListener('click', closeOverlay); card.appendChild(cta);
+    ov.appendChild(card); ov.addEventListener('click', (e) => { if (e.target === ov) closeOverlay(); });
+    root.appendChild(ov); activeOverlay = ov;
+    activeOverlayDlg = makeDialog(ov, card, closeOverlay, { label: 'Welcome to Blockville', initialFocus: cta });
+  }
+
+  function showHelpMenuOverlay() {
+    closeOverlay();
+    const ov = el('div', 'bv-overlay');
+    const card = el('div', 'bv-card');
+    card.appendChild(el('h2', null, 'How can I help? ❓'));
+    card.appendChild(el('p', null, 'Choose one—nothing will be reset unless you ask.'));
+    const choices = el('div', 'bv-choices');
+    const how = el('button', 'bv-cta bv-soft', '🎮 How to play');
+    const projects = el('button', 'bv-cta bv-soft', '🗺️ Choose a project');
+    const modes = el('button', 'bv-cta bv-soft', '🧸 Change play mode');
+    const restart = el('button', 'bv-cta bv-soft', '🎯 Restart helper missions');
+    const close = el('button', 'bv-cta', 'Back to my city');
+    [how, projects, modes, restart, close].forEach((b) => { b.type = 'button'; choices.appendChild(b); });
+    how.addEventListener('click', showWelcomeOverlay);
+    projects.addEventListener('click', () => { closeOverlay(); call(h.onProjects); });
+    modes.addEventListener('click', () => { closeOverlay(); showModePickerOverlay(h.onMode); });
+    restart.addEventListener('click', () => { closeOverlay(); call(h.onRestartHelper); });
+    close.addEventListener('click', closeOverlay);
+    card.appendChild(choices); ov.appendChild(card);
+    ov.addEventListener('click', (e) => { if (e.target === ov) closeOverlay(); });
+    root.appendChild(ov); activeOverlay = ov;
+    activeOverlayDlg = makeDialog(ov, card, closeOverlay, { label: 'Help', initialFocus: how });
+  }
+
+  function showProjectsOverlay(projects, onPick) {
+    closeOverlay();
+    const ov = el('div', 'bv-overlay');
+    const card = el('div', 'bv-card bv-mode-card');
+    card.appendChild(el('h2', null, 'Choose a city project 🗺️'));
+    card.appendChild(el('p', null, 'Try one idea, or close this and keep free-building.'));
+    const list = el('div', 'bv-project-list');
+    (Array.isArray(projects) ? projects : []).forEach((p) => {
+      if (!p || !p.id) return;
+      const b = el('button', 'bv-project-btn', (p.emoji || '🎯') + ' ' + (p.title || 'Project'));
+      b.type = 'button'; b.appendChild(el('span', null, p.say || ''));
+      b.addEventListener('click', () => { closeOverlay(); call(onPick || h.onProject, p.id); });
+      list.appendChild(b);
+    });
+    card.appendChild(list);
+    const close = el('button', 'bv-cta bv-soft', 'Keep free-building');
+    close.type = 'button'; close.addEventListener('click', closeOverlay); card.appendChild(close);
+    ov.appendChild(card); root.appendChild(ov); activeOverlay = ov;
+    activeOverlayDlg = makeDialog(ov, card, closeOverlay, { label: 'Choose a city project', initialFocus: list.querySelector('button') || close });
+  }
+
   // ---------- first-run mode picker ----------
   let modeOv = null, modeDlg = null;
   function closeModePicker() {
@@ -1815,9 +1909,9 @@ export function initUI(hooks) {
     const grid = el('div', 'bv-mode-grid');
     let firstOpt = null;
     [
-      ['picture', '🧸', 'Picture Play', 'Ages 5–6', 'mode-picture-play'],
-      ['explorer', '🏙️', 'City Explorer', 'Ages 7–9', 'mode-city-explorer'],
-      ['everything', '✨', 'Everything', 'All the tools', 'mode-everything'],
+      ['picture', '🧸', 'Picture Play', 'Big tools + spoken guidance', 'mode-picture-play'],
+      ['explorer', '🏙️', 'City Explorer', 'Full catalog + guided projects', 'mode-city-explorer'],
+      ['everything', '✨', 'Everything', 'Full catalog, free build', 'mode-everything'],
     ].forEach(([mode, em, nm, age, art]) => {
       const opt = el('button', 'bv-mode-opt');
       opt.type = 'button';
@@ -1864,13 +1958,13 @@ export function initUI(hooks) {
       ? (activeEntryId() != null && String(activeEntryId()) === String(item.id))
       : (activeDirectId() === String(item.id));
     applyActive(already ? null : toolVal);
-    call(h.onPalettePick, item);
+    call(h.onPalettePick, already ? null : item);
     if (speechOn) call(h.onSpeak, label);
   }
 
   // ---------- mode switching ----------
   let curMode = 'everything';
-  const advButtons = [undoBtn, photoBtn, bookBtn, citiesBtn];
+  const advButtons = [];
   function applyMode(mode, picturePalette) {
     const m = (mode === 'picture' || mode === 'explorer' || mode === 'everything') ? mode : 'everything';
     curMode = m;
@@ -1965,12 +2059,13 @@ export function initUI(hooks) {
       card.appendChild(code);
       const status = el('p', 'bv-mp-status', peersText(mpState.peers, mpState.status));
       card.appendChild(status);
-      const leave = el('button', 'bv-cta bv-soft', 'Leave room');
+      const leave = el('button', 'bv-cta bv-soft', 'Play alone again');
       leave.type = 'button';
       leave.addEventListener('click', () => { call(h.onLeaveRoom); closeMultiplayer(); });
       card.appendChild(leave);
     } else {
       card.appendChild(el('p', null, 'Build one city together in real time!'));
+      card.appendChild(el('p', 'bv-hint', 'Friend codes only · no chat · leave any time · your shared city is saved'));
       const choices = el('div', 'bv-mp-choices');
       const hostBtn = el('button', 'bv-mp-choice');
       hostBtn.type = 'button';
@@ -2021,6 +2116,7 @@ export function initUI(hooks) {
     setTimeout(() => { try { input.focus(); } catch (_) {} }, 30);
   }
   function peersText(peers, status) {
+    if (status === 'connecting') return '🔌 Connecting safely…';
     if (status === 'reconnecting') return '🔌 Reconnecting…';
     const n = Math.max(1, peers | 0);
     if (n <= 1) return '⏳ Waiting for friends to join…';
@@ -2192,7 +2288,7 @@ export function initUI(hooks) {
           return;
         }
         // direct tool string
-        if (tool === 'road' || tool === 'tree' || tool === 'bulldoze') {
+        if (tool === 'move' || tool === 'road' || tool === 'tree' || tool === 'bulldoze') {
           applyActive(tool);
           return;
         }
@@ -2261,38 +2357,15 @@ export function initUI(hooks) {
     },
 
     showWelcome() {
-      try {
-        closeOverlay();
-        const ov = el('div', 'bv-overlay');
-        const card = el('div', 'bv-card');
-        card.appendChild(el('h2', null, 'Welcome to Blockville! 🏙️'));
-        card.appendChild(el('p', null, "Let's build an awesome city together!"));
-        const steps = el('div', 'bv-steps');
-        [
-          ['🛣️', '1. Draw roads', 'step-1-roads'],
-          ['🏠', '2. Pick buildings and place them!', 'step-2-build'],
-          ['👀', '3. Watch your city come alive!', 'step-3-alive'],
-        ].forEach(([emo, tx, art]) => {
-          const st = el('div', 'bv-step');
-          const emS = el('span', 'bv-step-em'); setGlyph(emS, art, emo);
-          st.appendChild(emS);
-          st.appendChild(el('span', 'bv-step-tx', tx));
-          steps.appendChild(st);
-        });
-        card.appendChild(steps);
-        card.appendChild(el('p', 'bv-hint', '✋ Drag to move around · 🤏 Pinch to zoom'));
-        const cta = el('button', 'bv-cta', "Let's build! 🚀");
-        cta.type = 'button';
-        // Just close — this button dismisses the tutorial. (The ❓ Help button is
-        // what RE-opens it via onHelp; wiring onHelp here caused an open/close loop.)
-        cta.addEventListener('click', () => { closeOverlay(); });
-        card.appendChild(cta);
-        ov.appendChild(card);
-        ov.addEventListener('click', (e) => { if (e.target === ov) closeOverlay(); });
-        root.appendChild(ov);
-        activeOverlay = ov;
-        activeOverlayDlg = makeDialog(ov, card, closeOverlay, { label: 'Welcome to Blockville', initialFocus: cta });
-      } catch (_) { /* ignore */ }
+      try { showWelcomeOverlay(); } catch (_) { /* ignore */ }
+    },
+
+    showHelpMenu() {
+      try { showHelpMenuOverlay(); } catch (_) { /* ignore */ }
+    },
+
+    showProjects(projects, onPick) {
+      try { showProjectsOverlay(projects, onPick); } catch (_) { /* ignore */ }
     },
 
     // ---- v3.3 additions ----
@@ -2302,6 +2375,22 @@ export function initUI(hooks) {
 
     setMode(mode, picturePalette) {
       try { applyMode(mode, picturePalette); } catch (_) { /* ignore */ }
+    },
+
+    setSpeechState(on) {
+      try {
+        speechOn = !!on; setPressed(speechBtn, speechOn);
+        setGlyph(speechBtn._glyph, speechOn ? 'btn-readaloud-on' : 'btn-readaloud-off', '🗣️');
+        speechBtn.setAttribute('aria-label', speechOn ? 'Read aloud on' : 'Read aloud off');
+      } catch (_) { /* ignore */ }
+    },
+
+    setBrightState(on) {
+      try {
+        brightOn = !!on; setPressed(brightBtn, brightOn);
+        setGlyph(brightBtn._glyph, brightOn ? 'btn-bright-on' : 'btn-bright-off', '☀️');
+        brightBtn.setAttribute('aria-label', brightOn ? 'Always bright on' : 'Always bright off');
+      } catch (_) { /* ignore */ }
     },
 
     showBlocked(text) {

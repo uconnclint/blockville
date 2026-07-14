@@ -633,6 +633,38 @@ export class Sim {
     return false;
   }
 
+  _roadNearFootprint(x, z, tw, td) {
+    const { map } = this.state;
+    for (let tz = z - 1; tz <= z + td; tz++) for (let tx = x - 1; tx <= x + tw; tx++) {
+      if (!inBounds(tx, tz)) continue;
+      if (tx >= x && tx < x + tw && tz >= z && tz < z + td) continue;
+      if (map[idx(tx, tz)] === T.ROAD) return true;
+    }
+    return false;
+  }
+
+  // A real crossing is a continuous run of bridge tiles with ordinary road on
+  // both banks. A single road tile dropped into water is still a bridge piece,
+  // but it does not count as crossing the river for the City Helper.
+  _bridgeCrossings() {
+    const st = this.state;
+    const isBridge = (x, z) => inBounds(x, z) && st.bridge[idx(x, z)] === 1;
+    const isLandRoad = (x, z) => inBounds(x, z) && st.map[idx(x, z)] === T.ROAD && !isBridge(x, z);
+    let crossings = 0;
+    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+      if (!isBridge(x, z)) continue;
+      if ((x === 0 || !isBridge(x - 1, z)) && isLandRoad(x - 1, z)) {
+        let ex = x; while (ex + 1 < N && isBridge(ex + 1, z)) ex++;
+        if (isLandRoad(ex + 1, z)) crossings++;
+      }
+      if ((z === 0 || !isBridge(x, z - 1)) && isLandRoad(x, z - 1)) {
+        let ez = z; while (ez + 1 < N && isBridge(x, ez + 1)) ez++;
+        if (isLandRoad(x, ez + 1)) crossings++;
+      }
+    }
+    return crossings;
+  }
+
   // Iterate buildings once, fold in cached tile counts, and produce the full
   // metrics object. Also stores the derived happiness/air back onto state.
   // Defensive: any failure falls back to safe values.
@@ -642,19 +674,29 @@ export class Sim {
       const trees = this._treeCount | 0;
       let homes = 0, shops = 0, factories = 0, funCount = 0, downtown = 0;
       let parks = 0, schools = 0, firestations = 0, windPowers = 0;
+      let roadConnectedBuildings = 0, roadConnectedHomes = 0, roadConnectedJobs = 0;
+      const types = Object.create(null);
       let factoriesFarFromTrees = 0;
       const shopTypes = new Set();
       const homePts = [];
       const shopPts = [];
+      const factoryPts = [];
 
       for (const b of st.buildings) {
         if (!b) continue;
         const cat = b.cat;
         const type = b.type;
+        if (type) types[type] = (types[type] || 0) + 1;
+        if (this._roadNearFootprint(b.x, b.z, b.tw | 0 || 1, b.td | 0 || 1)) {
+          roadConnectedBuildings++;
+          if (cat === 'homes') roadConnectedHomes++;
+          else if (cat !== 'deco') roadConnectedJobs++;
+        }
         if (cat === 'homes') { homes++; homePts.push(b); }
         else if (cat === 'shops') { shops++; shopPts.push(b); if (type) shopTypes.add(type); }
         else if (cat === 'factories') {
           factories++;
+          factoryPts.push(b);
           if (!this._treeNearFootprint(b.x, b.z, b.tw | 0 || 1, b.td | 0 || 1, 6)) factoriesFarFromTrees++;
         }
         else if (cat === 'fun') funCount++;
@@ -674,6 +716,18 @@ export class Sim {
       }
 
       const shopVariety = shopTypes.size;
+      // Count unique trees close to at least one factory. This powers the guided
+      // clean-air mission, so trees planted on the other side of town do not count.
+      const nearFactoryTreeTiles = new Set();
+      for (const f of factoryPts) {
+        const tw = f.tw | 0 || 1, td = f.td | 0 || 1;
+        for (let z = Math.max(0, f.z - 6); z <= Math.min(N - 1, f.z + td - 1 + 6); z++) {
+          for (let x = Math.max(0, f.x - 6); x <= Math.min(N - 1, f.x + tw - 1 + 6); x++) {
+            if (st.map[idx(x, z)] === T.TREE) nearFactoryTreeTiles.add(idx(x, z));
+          }
+        }
+      }
+      const treesNearFactories = nearFactoryTreeTiles.size;
       // Happiness responds mostly to amenities the PLAYER adds (parks, schools,
       // shops, fun) and dips when factories sit away from greenery, so the HUD
       // face visibly reacts. Greenery is measured LOCALLY (factoriesFarFromTrees)
@@ -700,19 +754,20 @@ export class Sim {
         jobs: st.jobs | 0,
         roadTiles: this._roadCount | 0,
         bridges: this._bridgeCount | 0,
+        bridgeCrossings: this._bridgeCrossings(),
         homes, shops, factories, funCount, downtown,
-        trees, parks, schools, firestations,
-        shopNearHome,
-        happiness, air,
+        trees, treesNearFactories, parks, schools, firestations,
+        shopNearHome, roadConnectedBuildings, roadConnectedHomes, roadConnectedJobs,
+        happiness, air, types,
       };
     } catch (e) {
       // Never throw from a cosmetic recompute; keep whatever state we had.
       return {
         residents: st.pop | 0, jobs: st.jobs | 0,
-        roadTiles: this._roadCount | 0, bridges: this._bridgeCount | 0,
+        roadTiles: this._roadCount | 0, bridges: this._bridgeCount | 0, bridgeCrossings: 0,
         homes: 0, shops: 0, factories: 0, funCount: 0, downtown: 0,
-        trees: this._treeCount | 0, parks: 0, schools: 0, firestations: 0,
-        shopNearHome: 0,
+        trees: this._treeCount | 0, treesNearFactories: 0, parks: 0, schools: 0, firestations: 0,
+        shopNearHome: 0, roadConnectedBuildings: 0, roadConnectedHomes: 0, roadConnectedJobs: 0, types: {},
         happiness: Number.isFinite(st.happiness) ? st.happiness : 1,
         air: Number.isFinite(st.air) ? st.air : 1,
       };
@@ -1112,6 +1167,12 @@ export function _selfTest() {
     // road over water succeeds and marks bridge
     const rBr = simBr.placeRoad(bx, bz);
     c.bridgePlace = rBr.ok && SB.map[bi] === T.ROAD && SB.bridge[bi] === 1;
+    const simCross = flatten(new Sim(556, catalog), 14, 14, 30, 30);
+    simCross.state.map[idx(20, 20)] = T.WATER;
+    simCross.state.map[idx(21, 20)] = T.WATER;
+    simCross.placeRoad(19, 20); simCross.placeRoad(20, 20);
+    simCross.placeRoad(21, 20); simCross.placeRoad(22, 20);
+    c.bridgeCrossing = simCross.metrics().bridgeCrossings === 1;
     // bulldozing the bridge restores WATER and clears the flag
     const bdBr = simBr.bulldoze(bx, bz);
     c.bridgeBulldozeRestoresWater = bdBr.ok && SB.map[bi] === T.WATER && SB.bridge[bi] === 0;

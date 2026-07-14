@@ -183,7 +183,7 @@ function setSpeech(on) { try { audio.setSpeechEnabled(on); } catch (e) {} lsSet(
 // ---------------------------------------------------------------------------
 // City Helper — guided missions from challenges.js
 // ---------------------------------------------------------------------------
-let helperOn = false, guidedIdx = 0, mission = null, baseline = null;
+let helperOn = false, guidedIdx = 0, mission = null, baseline = null, customMission = false;
 let placedSinceStart = 0, missionComplete = false;
 let cityNamedFlag = false, postcardFlag = false;
 
@@ -203,9 +203,11 @@ function startMission(id) {
   baseline = makeBaseline(mission.goal, (sim.metrics && sim.metrics()) || {});
   placedSinceStart = 0; missionComplete = false;
   pushMission(false);
+  if (id === 'bridge') focusNearestRiver();
   if (speechOn()) speak(mission.say);
 }
-function startHelper() { helperOn = true; guidedIdx = 0; startMission(GUIDED[0]); }
+function startHelper() { helperOn = true; customMission = false; guidedIdx = 0; startMission(GUIDED[0]); }
+function startProject(id) { helperOn = true; customMission = true; startMission(id); }
 function checkMission() {
   if (!helperOn || !mission || missionComplete) return;
   const p = progress(mission.goal, missionMetrics(), baseline);
@@ -217,6 +219,12 @@ function checkMission() {
   }
 }
 function nextMission() {
+  if (customMission) {
+    customMission = false; helperOn = false; mission = null;
+    if (ui.hideMission) ui.hideMission();
+    ui.celebrate('Project complete! 🎉', 'Pick another project any time from Help.');
+    return;
+  }
   guidedIdx++;
   if (guidedIdx < GUIDED.length) startMission(GUIDED[guidedIdx]);
   else { helperOn = false; if (ui.hideMission) ui.hideMission(); ui.celebrate('You did it! 🎉', 'You finished all the helper missions!'); audio.play('milestone'); }
@@ -237,7 +245,11 @@ function maybeSuggest(dt) {
   if (m.homes >= 3 && m.parks === 0) opts.push(['Add a park — it makes your neighborhood happier!', '🎠']);
   if (m.homes === 0 && (m.shops + m.downtown + m.factories) > 0) opts.push(['Add some homes so people can move in!', '🏠']);
   if (m.homes >= 5 && m.shops === 0) opts.push(['Your people need shops to visit!', '🏪']);
-  if (m.roadTiles === 0 && (m.homes + m.shops) > 0) opts.push(['Build roads to connect your city!', '🛣️']);
+  if (m.residents > 0 && m.jobs === 0) opts.push(['Add a shop or factory so grown-ups have places to work!', '💼']);
+  if (m.jobs > Math.max(8, m.residents * 2)) opts.push(['There are lots of jobs—build more homes for new neighbors!', '🏠']);
+  if ((m.homes + m.shops + m.factories + m.funCount) > 0 && m.roadConnectedBuildings === 0) {
+    opts.push(['Put a road beside a building—then cars and walkers can visit!', '🛣️']);
+  }
   suggestTimer = 0;
   if (!opts.length) return;
   const pick = opts.find((o) => o[0] !== lastSuggest) || opts[0];
@@ -273,22 +285,55 @@ function renameCurrentCity(name) {
 // ---------------------------------------------------------------------------
 let mode = lsGet(MODE_KEY);
 function picturePalette() {
-  const items = [{ kind: 'tool', id: 'road', emoji: '🛣️', label: 'Road' }];
-  const wanted = ['small-house', 'bakery', 'park', 'school'];
+  const items = [
+    { kind: 'tool', id: 'move', emoji: '✋', label: 'Move' },
+    { kind: 'tool', id: 'road', emoji: '🛣️', label: 'Road' },
+  ];
+  const wanted = ['small-house', 'bakery', 'park', 'school', 'toy-factory'];
   for (const id of wanted) {
     let e = ENTRY_BY_ID[id];
     if (!e && id === 'bakery') { const shop = models.CATALOG.shops && models.CATALOG.shops[0]; e = shop; }
     if (e) items.push({ kind: 'entry', id: e.id, emoji: e.emoji, label: e.name, entry: e });
   }
   items.push({ kind: 'tool', id: 'tree', emoji: '🌳', label: 'Tree' });
+  items.push({ kind: 'tool', id: 'bulldoze', emoji: '🧹', label: 'Erase' });
   return items;
 }
 function applyMode(m) {
   mode = m; lsSet(MODE_KEY, m);
   if (ui.setMode) ui.setMode(m, m === 'picture' ? picturePalette() : null);
+  activeTool = null;
+  if (ui.setActiveTool) ui.setActiveTool('move');
   const def = m === 'picture'; // narration on by default only in Picture Play
   const pref = lsGet(SPEECH_KEY);
-  setSpeech(pref === null ? def : pref === '1');
+  const speech = pref === null ? def : pref === '1';
+  setSpeech(speech);
+  if (ui.setSpeechState) ui.setSpeechState(speech);
+}
+
+function focusCity() {
+  if (!engine.focusAt) return;
+  const pts = [];
+  for (const b of sim.state.buildings) pts.push([b.x + (b.tw || 1) / 2, b.z + (b.td || 1) / 2]);
+  for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+    const t = sim.state.map[idx(x, z)];
+    if (t === T.ROAD) pts.push([x, z]);
+  }
+  if (!pts.length) { engine.focusAt(N / 2, N / 2, 175); ui.toast('Here is your building area!', '🎯'); return; }
+  let sx = 0, sz = 0; for (const p of pts) { sx += p[0]; sz += p[1]; }
+  engine.focusAt(sx / pts.length, sz / pts.length, Math.min(230, Math.max(90, 90 + Math.sqrt(pts.length) * 7)));
+  ui.toast('Found your city!', '🎯');
+}
+
+function focusNearestRiver() {
+  if (!engine.focusAt) return;
+  let best = null, bestD = Infinity;
+  for (let z = 1; z < N - 1; z++) for (let x = 1; x < N - 1; x++) {
+    if (sim.state.map[idx(x, z)] !== T.WATER) continue;
+    const d = (x - N / 2) ** 2 + (z - N / 2) ** 2;
+    if (d < bestD) { bestD = d; best = { x, z }; }
+  }
+  if (best) { engine.focusAt(best.x, best.z, 125); ui.toast('The blue water is ready for your bridge!', '🌉'); }
 }
 
 // ---------------------------------------------------------------------------
@@ -398,25 +443,36 @@ function leaveRoom() {
 let activeTool = null; // null | 'road' | 'tree' | 'bulldoze' | catalog entry
 const ui = initUI({
   onTool(tool) {
-    activeTool = tool;
-    ui.setActiveTool(tool);
+    activeTool = (tool == null || tool === 'move') ? null : tool;
+    ui.setActiveTool((tool == null || tool === 'move') ? 'move' : tool);
     engine.setGhost(null, 0, 0, true);
     if (engine.setGhostCells) engine.setGhostCells(null);
     audio.play('click');
     if (tool && tool.name && speechOn()) speak(tool.name);
   },
   onSpeed(s) { sim.state.speed = s; audio.play('click'); },
-  onNew() { if (onlineFlag) { ui.toast('Leave the room first!', '🤝'); return; } createCity('My City'); ui.toast('New city! 🏗️', '🆕'); },
+  onNew() {
+    if (onlineFlag) { ui.toast('Leave the room first!', '🤝'); return; }
+    createCity('My City');
+    if (mode === 'everything') freeBuild(); else startHelper();
+    focusCity();
+    ui.toast('New city—fresh map, fresh helper!', '🆕');
+  },
   onMute() { return audio.toggleMute(); },
   onUndo() { doUndo(); },
   onPhoto() { takePhoto(); },
-  onHelp() { ui.showWelcome(); if (!helperOn && mode !== 'everything') startHelper(); },
+  onHelp() { if (ui.showHelpMenu) ui.showHelpMenu(); else ui.showWelcome(); },
+  onProjects() { if (ui.showProjects) ui.showProjects(CHALLENGES, startProject); },
+  onProject(id) { startProject(id); },
+  onRestartHelper() { if (mode === 'everything') applyMode('explorer'); startHelper(); ui.toast('Helper missions restarted!', '🎯'); },
+  onMode(nextMode) { applyMode(nextMode || 'explorer'); if (mode === 'everything') freeBuild(); else startHelper(); },
+  onFocusCity() { focusCity(); },
   onFreeBuild() { freeBuild(); },
   onMissionNext() { nextMission(); },
   onPalettePick(item) {
-    if (!item) { activeTool = null; ui.setActiveTool(null); return; }
+    if (!item) { activeTool = null; ui.setActiveTool('move'); return; }
     const tool = item.kind === 'tool' ? item.id : (item.entry || ENTRY_BY_ID[item.id]);
-    activeTool = tool; ui.setActiveTool(tool);
+    activeTool = tool === 'move' ? null : tool; ui.setActiveTool(tool === 'move' ? 'move' : tool);
     engine.setGhost(null, 0, 0, true);
     audio.play('click');
     if (speechOn()) speak(item.label || (tool && tool.name) || '');
@@ -520,27 +576,57 @@ function toolOpAt(tool, tx, tz) {
 
 // Apply an op to the sim + visuals (NO networking). Used for both local (offline)
 // actions and remote ops arriving in server order — so every player converges.
+function announceEffect(entry, before, after) {
+  if (!entry || !before || !after) return;
+  const bits = [];
+  const pop = (after.residents || 0) - (before.residents || 0);
+  const jobs = (after.jobs || 0) - (before.jobs || 0);
+  const happy = Math.round(((after.happiness || 0) - (before.happiness || 0)) * 100);
+  const air = Math.round(((after.air || 0) - (before.air || 0)) * 100);
+  if (pop) bits.push('+' + pop + ' people');
+  if (jobs) bits.push('+' + jobs + ' jobs');
+  if (happy > 0) bits.push('happier neighbors');
+  if (air < 0) bits.push('air −' + Math.abs(air) + '%');
+  if (air > 0) bits.push('air +' + air + '%');
+  if (bits.length) ui.toast((entry.name || 'Building') + ': ' + bits.join(' · '), entry.emoji || '✨');
+}
+
 function applyOp(op) {
   if (!op) return;
   if (op.k === 'road') {
+    const before = sim.metrics();
     let placed = 0;
     for (const c of op.cells) {
       const x = c[0] | 0, z = c[1] | 0;
       const r = sim.placeRoad(x, z);
       if (r && r.ok) { refreshRoadArea(x, z); engine.refreshTile(sim.state, x, z); placed++; }
     }
-    if (placed) audio.play('road');
+    if (placed) {
+      audio.play('road');
+      const after = sim.metrics();
+      if ((after.bridgeCrossings || 0) > (before.bridgeCrossings || 0)) ui.toast('Your bridge connects both river banks!', '🌉');
+    }
   } else if (op.k === 'tree') {
+    const before = sim.metrics();
     const x = op.x | 0, z = op.z | 0;
     const r = sim.placeTree(x, z);
-    if (r && r.ok) { engine.addProp('tree', models.treeModel(hash2(x, z) % 8), x, z); audio.play('place'); }
+    if (r && r.ok) {
+      engine.addProp('tree', models.treeModel(hash2(x, z) % 8), x, z); audio.play('place');
+      const after = sim.metrics();
+      const air = Math.round(((after.air || 0) - (before.air || 0)) * 100);
+      ui.toast(air > 0 ? ('Tree planted: air +' + air + '%') : 'Tree planted!', '🌳');
+    }
   } else if (op.k === 'erase') {
     const x = op.x | 0, z = op.z | 0, prevRoad = sim.state.map[idx(x, z)] === T.ROAD;
     const r = sim.bulldoze(x, z);
     if (r && r.ok) { engine.removeProp('tree', x, z); if (prevRoad) refreshRoadArea(x, z); engine.refreshTile(sim.state, x, z); audio.play('bulldoze'); }
   } else if (op.k === 'build') {
     const e = ENTRY_BY_ID[op.id];
-    if (e) { const r = sim.place(e, op.x | 0, op.z | 0, op.v | 0); if (r && r.ok) audio.play('built'); }
+    if (e) {
+      const before = sim.metrics();
+      const r = sim.place(e, op.x | 0, op.z | 0, op.v | 0);
+      if (r && r.ok) { audio.play('built'); announceEffect(e, before, sim.metrics()); }
+    }
   }
   drainNow();
   life.sync(sim.state, sim.roadGraph());
@@ -557,6 +643,7 @@ function emitOp(op) {
 // --- gesture handling -------------------------------------------------------
 let painting = false, paintPointer = -1, lastPaint = null;
 let roadDrag = null; // { start:{x,z}, cells:[{x,z}...] }
+let pendingTile = null, gestureStart = null, lastScreen = null, gestureMoved = false;
 
 // Snap a road drag to a single straight tile line along the dominant axis
 // (avoids the isometric staircase). Always includes both endpoints.
@@ -584,10 +671,15 @@ function beginGesture(clientX, clientY) {
   const tile = engine.screenToTile(clientX, clientY);
   if (!tile) return;
   if (activeTool === 'road') { roadDrag = { start: tile, cells: [tile] }; if (engine.setGhostCells) engine.setGhostCells([tile], true); return; }
-  lastPaint = tile;
-  const r = toolOpAt(activeTool, tile.x, tile.z);
-  if (!r.ok) { if (r.reason && r.reason !== 'empty') showBlocked(activeTool, tile.x, tile.z, r.reason); return; }
-  emitOp(r.op);
+  if (activeTool === 'bulldoze') {
+    lastPaint = tile;
+    const r = toolOpAt(activeTool, tile.x, tile.z);
+    if (r.ok) emitOp(r.op);
+    return;
+  }
+  // Buildings and trees place on TAP only. If the pointer moves, the same
+  // gesture pans the camera instead of painting an accidental row of objects.
+  pendingTile = tile;
 }
 function moveGesture(clientX, clientY) {
   const tile = engine.screenToTile(clientX, clientY);
@@ -597,7 +689,7 @@ function moveGesture(clientX, clientY) {
     if (engine.setGhostCells) engine.setGhostCells(roadDrag.cells, true);
     return;
   }
-  if (lastPaint && (lastPaint.x !== tile.x || lastPaint.z !== tile.z)) {
+  if (activeTool === 'bulldoze' && lastPaint && (lastPaint.x !== tile.x || lastPaint.z !== tile.z)) {
     let x = lastPaint.x, z = lastPaint.z, guard = 0;
     while ((x !== tile.x || z !== tile.z) && guard++ < 160) {
       if (x !== tile.x) x += Math.sign(tile.x - x); else z += Math.sign(tile.z - z);
@@ -613,6 +705,8 @@ window.addEventListener('pointerdown', (e) => {
   if (painting) { painting = false; return; }
   e.stopPropagation();
   painting = true; paintPointer = e.pointerId; lastPaint = null;
+  pendingTile = null; gestureStart = { x: e.clientX, y: e.clientY };
+  lastScreen = { x: e.clientX, y: e.clientY }; gestureMoved = false;
   if (!onlineFlag) pushUndo();   // undo is disabled in shared rooms
   beginGesture(e.clientX, e.clientY);
 }, { capture: true });
@@ -620,7 +714,14 @@ window.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', (e) => {
   if (painting && e.pointerId === paintPointer) {
     e.stopPropagation();
-    moveGesture(e.clientX, e.clientY);
+    if (activeTool === 'road' || activeTool === 'bulldoze') {
+      moveGesture(e.clientX, e.clientY);
+    } else if (gestureStart && lastScreen) {
+      const dist = Math.hypot(e.clientX - gestureStart.x, e.clientY - gestureStart.y);
+      if (dist > 7) gestureMoved = true;
+      if (gestureMoved && engine.panScreen) engine.panScreen(lastScreen.x, lastScreen.y, e.clientX, e.clientY);
+      lastScreen = { x: e.clientX, y: e.clientY };
+    }
     if (activeTool !== 'road') engine.setGhost(null, 0, 0, true);
     return;
   }
@@ -635,11 +736,46 @@ function endPaint(e) {
   if (painting && e.pointerId === paintPointer) {
     e.stopPropagation();
     if (activeTool === 'road') commitRoad();
-    painting = false; lastPaint = null;
+    else if (activeTool !== 'bulldoze' && !gestureMoved && pendingTile) {
+      const r = toolOpAt(activeTool, pendingTile.x, pendingTile.z);
+      if (r.ok) emitOp(r.op);
+      else if (r.reason && r.reason !== 'empty') showBlocked(activeTool, pendingTile.x, pendingTile.z, r.reason);
+    }
+    painting = false; lastPaint = null; pendingTile = null; gestureStart = null; lastScreen = null;
   }
 }
 window.addEventListener('pointerup', endPaint, { capture: true });
 window.addEventListener('pointercancel', endPaint, { capture: true });
+
+// Keyboard placement: focus the city canvas, move a tile cursor with arrows,
+// and press Enter/Space to build. This keeps the map usable without a pointer.
+let keyboardTile = { x: Math.floor(N / 2), z: Math.floor(N / 2) };
+canvas.tabIndex = 0;
+canvas.setAttribute('aria-label', 'City map. Choose a tool, use arrow keys to move the building cursor, and press Enter to place. Press Escape for Move mode.');
+canvas.addEventListener('keydown', (e) => {
+  const step = e.shiftKey ? 5 : 1;
+  let moved = false;
+  if (e.key === 'ArrowLeft') { keyboardTile.x = Math.max(0, keyboardTile.x - step); moved = true; }
+  else if (e.key === 'ArrowRight') { keyboardTile.x = Math.min(N - 1, keyboardTile.x + step); moved = true; }
+  else if (e.key === 'ArrowUp') { keyboardTile.z = Math.max(0, keyboardTile.z - step); moved = true; }
+  else if (e.key === 'ArrowDown') { keyboardTile.z = Math.min(N - 1, keyboardTile.z + step); moved = true; }
+  else if (e.key === 'Escape') { activeTool = null; ui.setActiveTool('move'); engine.setGhost(null, 0, 0, true); ui.announce('Move mode'); e.preventDefault(); return; }
+  else if ((e.key === 'Enter' || e.key === ' ') && activeTool) {
+    const r = toolOpAt(activeTool, keyboardTile.x, keyboardTile.z);
+    if (r.ok) { if (!onlineFlag) pushUndo(); emitOp(r.op); }
+    else if (r.reason && r.reason !== 'empty') showBlocked(activeTool, keyboardTile.x, keyboardTile.z, r.reason);
+    e.preventDefault(); return;
+  }
+  if (moved) {
+    e.preventDefault();
+    if (engine.focusAt) engine.focusAt(keyboardTile.x, keyboardTile.z, 115);
+    if (activeTool) {
+      const g = ghostArgs(activeTool, keyboardTile.x, keyboardTile.z);
+      engine.setGhost(g.model, keyboardTile.x, keyboardTile.z, g.ok, g.rot);
+      ui.announce('Tile ' + (keyboardTile.x + 1) + ', ' + (keyboardTile.z + 1) + (g.ok ? ', ready' : ', blocked'));
+    } else ui.announce('Map position ' + (keyboardTile.x + 1) + ', ' + (keyboardTile.z + 1));
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Sim events → visuals / stickers / missions
@@ -789,7 +925,10 @@ window.BV = {
 // ---------------------------------------------------------------------------
 // Go!
 // ---------------------------------------------------------------------------
-if (lsGet(BRIGHT_KEY) === '1' && engine.setDaylightLock) engine.setDaylightLock(true);
+if (lsGet(BRIGHT_KEY) === '1') {
+  if (engine.setDaylightLock) engine.setDaylightLock(true);
+  if (ui.setBrightState) ui.setBrightState(true);
+}
 while (partyIdx < POP_PARTY.length && sim.state.pop >= POP_PARTY[partyIdx]) partyIdx++;
 cityNamedFlag = cityName() !== 'Blockville' && cityName() !== 'My City';
 rebuildAllVisuals();
