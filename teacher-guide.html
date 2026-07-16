@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blockville — Grown-Ups' Corner (Teacher Guide & Standards)</title>
+<style>
+  :root{
+    --ink:#2b3a4a; --soft:#5b6b7b; --line:#e4ebf1;
+    --blue:#2b6a99; --sky:#87d4f5; --sun:#ffb703; --sun2:#fb8500;
+    --grass:#2fbf71; --paper:#fbfcfe; --card:#ffffff; --apple:#e5484d;
+    --shadow:0 6px 22px rgba(43,106,153,.10);
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    margin:0; color:var(--ink); background:var(--paper);
+    font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+    line-height:1.55; font-size:16px;
+  }
+  .wrap{max-width:940px; margin:0 auto; padding:28px 20px 80px;}
+  header.masthead{
+    background:linear-gradient(135deg,#eaf7ff,#f4fbe9);
+    border:2px solid #dcebf6; border-radius:26px; padding:30px 32px;
+    box-shadow:var(--shadow); position:relative; overflow:hidden;
+  }
+  header.masthead:before{content:"🏗️"; position:absolute; right:22px; top:14px; font-size:76px; opacity:.16;}
+  .eyebrow{display:inline-block; background:var(--apple); color:#fff; font-weight:800;
+    font-size:13px; letter-spacing:.5px; padding:5px 12px; border-radius:999px;}
+  h1{font-size:34px; margin:12px 0 4px; color:var(--blue); letter-spacing:.2px;}
+  .sub{font-size:17px; color:var(--soft); margin:0; max-width:60ch;}
+  .badges{margin-top:16px; display:flex; flex-wrap:wrap; gap:8px;}
+  .badge{background:#fff; border:1.5px solid var(--line); border-radius:999px;
+    padding:6px 13px; font-size:13.5px; font-weight:700; color:var(--blue);}
+  .badge b{color:var(--sun2);}
+
+  section{margin-top:34px;}
+  h2{font-size:23px; color:var(--blue); margin:0 0 6px; display:flex; align-items:center; gap:10px;}
+  h2 .n{display:inline-flex; width:30px; height:30px; flex:0 0 30px; align-items:center; justify-content:center;
+    background:var(--sun); color:#5a3b00; border-radius:9px; font-size:15px; font-weight:900;}
+  .lede{color:var(--soft); margin:.2em 0 1em; max-width:70ch;}
+
+  .card{background:var(--card); border:1.5px solid var(--line); border-radius:18px;
+    padding:18px 20px; box-shadow:var(--shadow); margin:14px 0;}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  @media (max-width:680px){ .grid{grid-template-columns:1fr;} }
+  .tool{display:flex; gap:12px; align-items:flex-start;}
+  .tool .ico{font-size:26px; flex:0 0 34px; text-align:center; line-height:1.3;}
+  .tool h4{margin:0 0 2px; font-size:16px; color:var(--ink);}
+  .tool p{margin:0; font-size:14.5px; color:var(--soft);}
+
+  table{width:100%; border-collapse:collapse; font-size:14.5px; margin:8px 0 2px; background:#fff;
+    border:1.5px solid var(--line); border-radius:14px; overflow:hidden;}
+  caption{caption-side:top; text-align:left; font-weight:800; color:var(--blue); padding:6px 2px 10px; font-size:15px;}
+  th,td{padding:10px 12px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line);}
+  thead th{background:#eef6fc; color:var(--blue); font-size:13px; letter-spacing:.3px; text-transform:uppercase;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.code{white-space:nowrap; font-weight:800; color:var(--sun2); font-family:"SFMono-Regular",Consolas,monospace; font-size:13px;}
+  .std-note{font-size:12.5px; color:var(--soft); margin:6px 2px 0;}
+
+  .lesson{border-left:6px solid var(--grass);}
+  .lesson.blue{border-left-color:var(--blue);}
+  .lesson.sun{border-left-color:var(--sun);}
+  .lesson .meta{font-size:13px; font-weight:800; color:var(--grass); text-transform:uppercase; letter-spacing:.4px;}
+  .lesson.blue .meta{color:var(--blue);} .lesson.sun .meta{color:var(--sun2);}
+  .lesson h3{margin:3px 0 8px; font-size:19px; color:var(--ink);}
+  .kv{font-size:14.5px; margin:6px 0;}
+  .kv b{color:var(--blue);}
+  ol.steps{margin:8px 0 8px 2px; padding-left:22px;}
+  ol.steps li{margin:5px 0;}
+  .vocab{display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;}
+  .vocab span{background:#f1f8ec; border:1px solid #d8ecc9; color:#2c6b3f; border-radius:8px;
+    padding:3px 9px; font-size:13px; font-weight:700;}
+  .qs{background:#fff8e8; border:1px solid #ffe6ad; border-radius:12px; padding:10px 14px; margin-top:8px;}
+  .qs b{color:var(--sun2);}
+  .qs ul{margin:6px 0 0; padding-left:20px;} .qs li{margin:3px 0; font-size:14.5px;}
+
+  .talk li{margin:7px 0;}
+  .talk b{color:var(--blue);}
+
+  .rubric td:first-child{font-weight:800; color:var(--blue); white-space:nowrap;}
+  .lvl{font-weight:800;}
+  .lvl1{color:#c26a00;} .lvl2{color:#2b8a5b;} .lvl3{color:#1f6feb;}
+
+  .tip{background:#eef9f1; border:1.5px solid #cfeeda; border-radius:14px; padding:12px 16px; font-size:14.5px; color:#256b45;}
+  footer{margin-top:40px; padding-top:16px; border-top:1px solid var(--line); color:var(--soft); font-size:13px;}
+  a{color:var(--blue); font-weight:700;}
+  .print-hint{font-size:12.5px; color:var(--soft); margin-top:6px;}
+
+  @media print{
+    body{background:#fff; font-size:12.5px;}
+    .wrap{padding:0;}
+    header.masthead,.card,table{box-shadow:none;}
+    section{margin-top:20px; page-break-inside:avoid;}
+    .lesson,.card,table{page-break-inside:avoid;}
+    header.masthead:before{display:none;}
+    a{color:var(--ink); text-decoration:none;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <span class="eyebrow">🍎 GROWN-UPS' CORNER</span>
+    <h1>Blockville — Teacher Guide &amp; Standards</h1>
+    <p class="sub">A free, no-login voxel city-building sandbox for young builders. Kids draw roads,
+      place buildings from a big picture menu, and watch a living city grow on a world of oceans,
+      forests, and mountains — while practicing planning, community thinking, and caring for the
+      environment.</p>
+    <div class="badges">
+      <span class="badge">👧 <b>Ages 5–9</b> (K–Grade 4)</span>
+      <span class="badge">💻 CSTA 1A &amp; 1B</span>
+      <span class="badge">🌎 NGSS science tie-in</span>
+      <span class="badge">🖨️ Print-friendly</span>
+      <span class="badge">⏱️ 20–30 min lessons</span>
+    </div>
+    <p class="print-hint">Tip: use your browser's <b>Print</b> (Ctrl/⌘-P) to make a clean handout.</p>
+  </header>
+
+  <!-- 1. OVERVIEW -->
+  <section id="overview">
+    <h2><span class="n">1</span> What Is Blockville?</h2>
+    <p class="lede">Blockville is a gentle, open-ended sandbox — there is no score, no money, and no way
+      to lose. Children build whatever city they imagine on a big, procedurally generated island that
+      is different every time. It runs in any browser on Chromebooks and iPads with nothing to install.
+      Below is every tool and mechanic a student actually uses, tied to the real in-game action.</p>
+
+    <div class="card">
+      <h4 style="margin:0 0 10px; color:var(--blue);">🎚️ Three play modes (chosen on the start screen)</h4>
+      <div class="grid">
+        <div class="tool"><div class="ico">🧸</div><div><h4>Picture Play (Ages 5–6)</h4>
+          <p>A simplified toolbar of six big picture buttons with read-aloud labels and almost no text —
+          ideal for pre-readers.</p></div></div>
+        <div class="tool"><div class="ico">🏙️</div><div><h4>City Explorer (Ages 7–9)</h4>
+          <p>The full building catalog plus the guided "City Helper" missions and the people/jobs/
+          happiness/clean-air stats.</p></div></div>
+        <div class="tool"><div class="ico">✨</div><div><h4>Everything</h4>
+          <p>Every tool unlocked with no guardrails — for confident builders and free exploration.</p></div></div>
+        <div class="tool"><div class="ico">🔊</div><div><h4>Read-aloud &amp; accessibility</h4>
+          <p>A speaker toggle reads tool and mission names aloud; the whole city map is keyboard-navigable
+          (arrow keys move a cursor, Enter places, Esc returns to Move).</p></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4 style="margin:0 0 10px; color:var(--blue);">🧰 The building tools (bottom toolbar)</h4>
+      <div class="grid">
+        <div class="tool"><div class="ico">✋</div><div><h4>Move</h4><p>The default hand tool — drag to look
+          around the city, pinch or scroll to zoom. Nothing is placed, so kids can explore safely.</p></div></div>
+        <div class="tool"><div class="ico">🛣️</div><div><h4>Road</h4><p>Tap and drag to draw a road. Drags snap
+          to a straight line, and a road drawn onto water automatically becomes a <b>bridge</b>.</p></div></div>
+        <div class="tool"><div class="ico">🏠</div><div><h4>Homes / Shops / Factories</h4><p>Tap a category to open a
+          drawer of buildings; tap a card, then tap the map to place it. Buildings turn to face the nearest road.</p></div></div>
+        <div class="tool"><div class="ico">🎡</div><div><h4>Fun / 🏙️ Downtown / 🌼 Deco</h4><p>Parks, schools, fire
+          stations, rides, skyscrapers, and decorations — <b>93 building types</b> in all, some 2×2 tiles big.</p></div></div>
+        <div class="tool"><div class="ico">🌳</div><div><h4>Tree</h4><p>Plant trees anywhere on grass — they add
+          greenery and help keep the city's air clean near factories.</p></div></div>
+        <div class="tool"><div class="ico">🧹</div><div><h4>Erase</h4><p>Remove any building, road, or tree.
+          A friendly red outline appears if a spot won't work, with a reason ("This building needs grass").</p></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4 style="margin:0 0 10px; color:var(--blue);">🌱 Living world &amp; gentle cause-and-effect</h4>
+      <div class="grid">
+        <div class="tool"><div class="ico">🧭</div><div><h4>City Helper missions</h4><p>Optional bite-size goals with a
+          picture and "2 of 3" progress — <i>build a road with 5 pieces, add 3 homes, put a shop near the homes,
+          build a bridge, add a park…</i> A <b>Free Build</b> button opts out anytime.</p></div></div>
+        <div class="tool"><div class="ico">📊</div><div><h4>People, Jobs, Happiness, Clean-Air</h4><p>Homes bring
+          <b>people</b>; shops/factories add <b>jobs</b>; parks and schools raise the <b>happiness</b> face;
+          factories lower <b>clean-air</b> unless trees or wind turbines are nearby.</p></div></div>
+        <div class="tool"><div class="ico">⛰️</div><div><h4>Generated terrain</h4><p>Every new city sits on a unique
+          island with oceans, lakes, rivers, forests, and snow-capped mountains to build around.</p></div></div>
+        <div class="tool"><div class="ico">🚗</div><div><h4>It comes alive</h4><p>Cars drive the roads, people stroll,
+          boats sail, factories puff smoke, day turns to night, and the seasons change.</p></div></div>
+        <div class="tool"><div class="ico">🤝</div><div><h4>Build together (multiplayer)</h4><p>Tap 🤝 for a room code
+          (like <i>SUNNY-TIGER</i>); classmates who enter it build in the <b>same city together, live</b>.</p></div></div>
+        <div class="tool"><div class="ico">📷</div><div><h4>Keepsakes</h4><p>Name the city and snap a 📷 photo postcard,
+          collect stickers for every building type tried, and keep several saved cities.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. STANDARDS -->
+  <section id="standards">
+    <h2><span class="n">2</span> Standards Alignment</h2>
+    <p class="lede">Blockville is a computational-thinking and design sandbox with a strong community &amp;
+      environment theme. Codes and titles below are quoted from the <b>CSTA K-12 Computer Science Standards
+      (2017)</b> and <b>Next Generation Science Standards (NGSS)</b>. Only standards with a concrete in-game
+      justification are listed.</p>
+
+    <table>
+      <caption>CSTA Level 1A — Grades K–2 (Picture Play / early City Explorer)</caption>
+      <thead><tr><th style="width:120px;">Code</th><th style="width:38%;">Standard</th><th>How Blockville addresses it</th></tr></thead>
+      <tbody>
+        <tr><td class="code">1A-AP-08</td>
+          <td>Model daily processes by creating and following algorithms (sets of step-by-step instructions) to complete tasks.</td>
+          <td>The City Helper walks children through an ordered sequence — <i>road → homes → shop → bridge</i> — and they follow those steps to grow a working town.</td></tr>
+        <tr><td class="code">1A-AP-11</td>
+          <td>Decompose (break down) the steps needed to solve a problem into a precise sequence of instructions.</td>
+          <td>Building a city means breaking a big goal ("make a neighborhood") into small placements: draw roads first, then homes beside them, then a park.</td></tr>
+        <tr><td class="code">1A-AP-12</td>
+          <td>Develop plans that describe a program's sequence of events, goals, and expected outcomes.</td>
+          <td>Before placing, kids decide where roads and buildings should go and predict what will happen — e.g., "if I add homes, more people will come."</td></tr>
+        <tr><td class="code">1A-AP-14</td>
+          <td>Debug (identify and fix) errors in an algorithm or program that includes sequences and simple loops.</td>
+          <td>The red "won't fit" outline and the Erase &amp; Undo tools let children notice a mistake and fix it — a first, concrete taste of debugging.</td></tr>
+        <tr><td class="code">1A-CS-01</td>
+          <td>Select and operate appropriate software to perform a variety of tasks, and recognize that users have different needs and preferences for the technology they use.</td>
+          <td>Choosing Picture Play vs. City Explorer, and toggling read-aloud or Always-Bright, shows that people pick settings that fit their own needs.</td></tr>
+        <tr><td class="code">1A-IC-17</td>
+          <td>Work respectfully and responsibly with others online.</td>
+          <td>The 🤝 shared-room multiplayer has children build one city together, practicing turn-taking and respect for each other's work.</td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <caption>CSTA Level 1B — Grades 3–5 (City Explorer / Everything)</caption>
+      <thead><tr><th style="width:120px;">Code</th><th style="width:38%;">Standard</th><th>How Blockville addresses it</th></tr></thead>
+      <tbody>
+        <tr><td class="code">1B-AP-08</td>
+          <td>Compare and refine multiple algorithms for the same task and determine which is the most appropriate.</td>
+          <td>There are many ways to lay out the same city; students compare a grid vs. a winding-road plan and refine the one that connects buildings best.</td></tr>
+        <tr><td class="code">1B-AP-11</td>
+          <td>Decompose (break down) problems into smaller, manageable subproblems to facilitate the program development process.</td>
+          <td>A "capital city" is broken into subproblems — the housing area, the downtown, the roads that connect them, the park where people relax.</td></tr>
+        <tr><td class="code">1B-AP-12</td>
+          <td>Modify, remix, or incorporate portions of an existing program into one's own work, to develop something new or add more advanced features.</td>
+          <td>Students load a saved city (or a friend's shared room) and remix it — extending roads and adding downtown towers to make something new.</td></tr>
+        <tr><td class="code">1B-AP-13</td>
+          <td>Use an iterative process to plan the development of a program by including others' perspectives and considering user preferences.</td>
+          <td>In multiplayer, partners plan together, react to each other's additions, and revise the shared city as it grows.</td></tr>
+        <tr><td class="code">1B-AP-15</td>
+          <td>Test and debug (identify and fix errors) a program or algorithm to ensure it runs as intended.</td>
+          <td>Kids "test" a layout by watching whether the clean-air and happiness meters respond, then fix problems (add trees near a smoky factory) until it works.</td></tr>
+        <tr><td class="code">1B-IC-20</td>
+          <td>Seek diverse perspectives for the purpose of improving computational artifacts.</td>
+          <td>Building a shared city invites classmates' different ideas about where things belong, improving the final design.</td></tr>
+      </tbody>
+    </table>
+    <p class="std-note">CSTA standards © Computer Science Teachers Association, K-12 CS Standards (2017), csteachers.org/k12standards. Reproduced here for classroom alignment.</p>
+
+    <table>
+      <caption>🌎 NGSS science tie-in (Earth &amp; Human Activity + Engineering Design)</caption>
+      <thead><tr><th style="width:120px;">Code</th><th style="width:38%;">Standard</th><th>How Blockville addresses it</th></tr></thead>
+      <tbody>
+        <tr><td class="code">K-2-ETS1-1</td>
+          <td>Ask questions, make observations, and gather information about a situation people want to change to define a simple problem that can be solved through the development of a new or improved object or tool.</td>
+          <td>"The people need a way across the river" becomes a defined problem the child solves by building a bridge.</td></tr>
+        <tr><td class="code">K-ESS3-3</td>
+          <td>Communicate solutions that will reduce the impact of humans on the land, water, air, and/or other living things in the local environment.</td>
+          <td>Factories dim the clean-air meter; children plant trees and add wind power to reduce that impact — then explain why it helped.</td></tr>
+        <tr><td class="code">3-5-ETS1-2</td>
+          <td>Generate and compare multiple possible solutions to a problem based on how well each is likely to meet the criteria and constraints of the problem.</td>
+          <td>Given a mountainous, watery island, students generate and compare different city layouts that fit the terrain's constraints.</td></tr>
+        <tr><td class="code">5-ESS3-1</td>
+          <td>Obtain and combine information about ways individual communities use science ideas to protect the Earth's resources and environment.</td>
+          <td>Balancing factories with parks, trees, and wind turbines models how real communities use clean-energy and green space to protect the environment.</td></tr>
+      </tbody>
+    </table>
+    <p class="std-note">NGSS is a registered trademark of Achieve. Neither Achieve nor the CSTA was involved in producing this guide.</p>
+  </section>
+
+  <!-- 3. LESSON PLANS -->
+  <section id="lessons">
+    <h2><span class="n">3</span> Three Ready-to-Run Lessons</h2>
+    <p class="lede">Each fits in a 20–30 minute block. Steps name the exact in-game tools. Choose the mode that
+      matches your group (Picture Play for the youngest, City Explorer/Everything for older builders).</p>
+
+    <div class="card lesson">
+      <div class="meta">Lesson 1 · Grades K–1 · Picture Play mode</div>
+      <h3>🏡 Our First Little Town</h3>
+      <div class="kv"><b>Objective:</b> Follow a simple, ordered plan (an algorithm) to build a tiny town where
+        homes connect to a road — practicing sequencing and one-to-one placement.</div>
+      <div class="kv"><b>Vocabulary:</b></div>
+      <div class="vocab"><span>plan</span><span>step</span><span>road</span><span>home</span><span>in order</span><span>first / next / last</span></div>
+      <ol class="steps">
+        <li>As a class, say the plan aloud: "<b>First</b> a road, <b>next</b> some homes, <b>last</b> a tree." (This is our algorithm.)</li>
+        <li>Turn on the 🔊 read-aloud speaker so the game names each tool.</li>
+        <li>Pick the <b>🛣️ Road</b> button and drag to draw one straight road across the grass.</li>
+        <li>Tap the <b>🏠 Homes</b> picture, then tap the map <b>three times</b> right next to the road — count "1, 2, 3" together.</li>
+        <li>Watch what appears: little people and cars! Ask why they came (the homes).</li>
+        <li>Finish with the <b>🌳 Tree</b> tool — plant two trees so the town looks nice.</li>
+      </ol>
+      <div class="qs"><b>Talk about it:</b>
+        <ul>
+          <li>What did we build <i>first</i>? What came <i>next</i>?</li>
+          <li>What happened after we added homes? Where did the people come from?</li>
+          <li>If we did it out of order — homes with no road — would it still work?</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card lesson sun">
+      <div class="meta">Lesson 2 · Grades 2–3 · City Explorer mode</div>
+      <h3>🌳 Community Helpers &amp; Clean Air</h3>
+      <div class="kv"><b>Objective:</b> Place community buildings where they make sense, and use trees and clean
+        energy to keep a factory town's air clean — connecting design choices to an environmental result.</div>
+      <div class="kv"><b>Vocabulary:</b></div>
+      <div class="vocab"><span>community</span><span>fire station</span><span>park</span><span>factory</span><span>pollution</span><span>clean air</span><span>wind power</span><span>balance</span></div>
+      <ol class="steps">
+        <li>Start a fresh city and note the 🌿 <b>clean-air</b> meter at the top — it's full and green.</li>
+        <li>Draw a <b>🛣️ Road</b> loop, then add 3–4 <b>🏭 Factories</b> from the Factories drawer. Watch the smoke — and the clean-air meter drop.</li>
+        <li>Predict as a class: "How can we make the air cleaner without erasing the factories?"</li>
+        <li>Use the <b>🌳 Tree</b> tool to plant trees right next to each factory, and add a <b>Wind Turbine</b> from the Fun drawer. Watch the meter climb back up.</li>
+        <li>Now be a city planner: from the <b>🎡 Fun</b> drawer, place a <b>School</b>, a <b>Fire Station</b>, and a <b>Park</b> where they'd help people most. Watch the 😀 happiness face.</li>
+        <li>Erase and re-place one building to a better spot if the meters don't improve.</li>
+      </ol>
+      <div class="qs"><b>Talk about it:</b>
+        <ul>
+          <li>What made the clean-air meter go down? What brought it back up?</li>
+          <li>Why did you put the fire station where you did? Who does it help?</li>
+          <li>How do real towns keep their air clean? (Trees, parks, clean energy.)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card lesson blue">
+      <div class="meta">Lesson 3 · Grades 3–4 · City Explorer / Everything · pairs</div>
+      <h3>🤝 Build Together: Plan a City With a Partner</h3>
+      <div class="kv"><b>Objective:</b> Break a shared goal into parts, divide the work, and iterate on one
+        city together — practicing decomposition and collaborative design.</div>
+      <div class="kv"><b>Vocabulary:</b></div>
+      <div class="vocab"><span>plan</span><span>collaborate</span><span>decompose</span><span>neighborhood</span><span>downtown</span><span>compare</span><span>revise</span></div>
+      <ol class="steps">
+        <li>One partner taps <b>🤝 Build Together</b> to get a room code and reads it to the other, who taps <b>Join a Friend</b> and enters it.</li>
+        <li>Together, agree on a plan and <b>decompose</b> it: Partner A builds the <b>homes neighborhood</b>; Partner B builds the <b>🏙️ Downtown</b> towers.</li>
+        <li>Both use the <b>🛣️ Road</b> tool to connect your two areas — meet in the middle and cross any river with a <b>bridge</b>.</li>
+        <li>Add shared community spots — a <b>Park</b>, a <b>School</b> — and discuss where each should go.</li>
+        <li>Step back and <b>compare</b>: does everything connect? Are people and cars moving? <b>Revise</b> anything that feels crowded or cut off.</li>
+        <li>Name your city and take a 📷 postcard together to save your teamwork.</li>
+      </ol>
+      <div class="qs"><b>Talk about it:</b>
+        <ul>
+          <li>How did you split up the work? Why did that division make sense?</li>
+          <li>What did your partner do that you wouldn't have thought of?</li>
+          <li>What would you change if you started your shared city over?</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. CONVERSATION STARTERS -->
+  <section id="talk">
+    <h2><span class="n">4</span> Talking With Kids About What They Made</h2>
+    <p class="lede">Open-ended prompts beat yes/no questions. Ask children to <i>show</i> you as they explain —
+      it turns their building into storytelling and reflection.</p>
+    <div class="card">
+      <ul class="talk">
+        <li><b>Give me a tour.</b> "Walk me through your city — where does the story start?"</li>
+        <li><b>Purpose.</b> "Why did you put the fire station <i>there</i>? Who does it help?"</li>
+        <li><b>Cause &amp; effect.</b> "Your happiness face is smiling big — what did you build that made people happy?"</li>
+        <li><b>Environment.</b> "Your air got a little cloudy. What could you add to help it?"</li>
+        <li><b>Trade-offs.</b> "You had a mountain and a river in the way. How did you plan around them?"</li>
+        <li><b>Iteration.</b> "Was there something you built, then changed? What made you change it?"</li>
+        <li><b>Naming &amp; identity.</b> "You named your city ___ — why that name? What is it famous for?"</li>
+        <li><b>Collaboration.</b> "What was the best part of building with a partner? The trickiest?"</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 5. RUBRIC -->
+  <section id="rubric">
+    <h2><span class="n">5</span> Capstone &amp; Rubric: "Make Your Own City"</h2>
+    <p class="lede"><b>The task:</b> Over one or two sessions, plan and build a city that (1) connects its
+      buildings with roads, (2) includes at least one community helper (school, fire station, or park),
+      and (3) keeps its clean-air meter healthy. Then give a short tour explaining your choices.</p>
+    <table class="rubric">
+      <thead><tr>
+        <th style="width:150px;">Look-for</th>
+        <th><span class="lvl lvl1">🌱 Beginning</span></th>
+        <th><span class="lvl lvl2">🌿 Growing</span></th>
+        <th><span class="lvl lvl3">🌳 Soaring</span></th>
+      </tr></thead>
+      <tbody>
+        <tr><td>Planning &amp; sequence</td>
+          <td>Places buildings one at a time with little order.</td>
+          <td>Follows a rough plan — roads first, then buildings nearby.</td>
+          <td>Describes a clear plan and builds it in a sensible order, adjusting as needed.</td></tr>
+        <tr><td>Connection (roads)</td>
+          <td>Buildings are scattered; few reach a road.</td>
+          <td>Most buildings touch a road; roads form a simple network.</td>
+          <td>All key buildings connect; roads bridge water and link separate areas.</td></tr>
+        <tr><td>Community thinking</td>
+          <td>Adds buildings mostly at random.</td>
+          <td>Includes at least one helper (school/fire station/park) in a fitting spot.</td>
+          <td>Places several helpers thoughtfully and can explain who each one serves.</td></tr>
+        <tr><td>Environment (clean air)</td>
+          <td>Doesn't notice the clean-air meter.</td>
+          <td>Notices pollution and adds some trees or wind power.</td>
+          <td>Deliberately balances factories with trees/clean energy and explains the effect.</td></tr>
+        <tr><td>Explaining choices</td>
+          <td>Names a few things in the city.</td>
+          <td>Gives reasons for a couple of placements.</td>
+          <td>Tells a clear story of the city and justifies key design decisions.</td></tr>
+      </tbody>
+    </table>
+    <div class="tip" style="margin-top:14px;">💡 <b>Make it a keepsake:</b> have each child use the 📷 photo button to name their
+      city and save a postcard, then dictate or write one sentence about it — a natural literacy extension and a
+      ready-made portfolio artifact.</div>
+  </section>
+
+  <footer>
+    <p><b>Blockville</b> is a free, ad-free, no-login sandbox. No student accounts or personal data are required;
+      cities save locally in the browser, and multiplayer rooms use only a random word code with no chat.
+      This guide may be printed and shared for classroom use.</p>
+    <p>Play the game: <a href="./index.html">open Blockville →</a></p>
+  </footer>
+
+</div>
+</body>
+</html>

@@ -673,6 +673,10 @@ const CSS = `
 
 /* ---------- mode picker ---------- */
 .bv-mode-card { max-width: 580px; }
+.bv-teacher-link { display: block; text-align: center; margin: 14px auto 2px; font-size: 12.5px;
+  font-weight: 700; color: #7a94ab; text-decoration: none; opacity: .8;
+  padding: 6px 10px; border-radius: 10px; pointer-events: auto; }
+.bv-teacher-link:hover { color: var(--bv-blue, #2b6a99); opacity: 1; background: rgba(43,106,153,.07); }
 .bv-mode-grid { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 4px; }
 @media (min-width: 640px) { .bv-mode-grid { flex-direction: row; } }
 .bv-mode-opt {
@@ -1925,6 +1929,15 @@ export function initUI(hooks) {
       if (!firstOpt) firstOpt = opt;
     });
     card.appendChild(grid);
+    // Discreet grown-ups' link (teacher guide + standards). Sits below the big
+    // mode buttons so a child won't hit it by accident, but a teacher can find it.
+    const teacher = document.createElement('a');
+    teacher.className = 'bv-teacher-link';
+    teacher.href = './teacher-guide.html';
+    teacher.target = '_blank';
+    teacher.rel = 'noopener';
+    teacher.textContent = '\u{1F34E} Grown-Ups’ Corner (Teacher Guide & Standards)';
+    card.appendChild(teacher);
     ov.appendChild(card);
     root.appendChild(ov);
     modeOv = ov;
