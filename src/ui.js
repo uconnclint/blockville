@@ -673,6 +673,22 @@ const CSS = `
 
 /* ---------- mode picker ---------- */
 .bv-mode-card { max-width: 580px; }
+/* Entry gate (splash / mode picker) — hide the in-game HUD chrome behind it. */
+#bv-ui.bv-gated .bv-top, #bv-ui.bv-gated .bv-toolbar, #bv-ui.bv-gated .bv-picbar,
+#bv-ui.bv-gated .bv-banner, #bv-ui.bv-gated .bv-mpbadge, #bv-ui.bv-gated .bv-mission,
+#bv-ui.bv-gated .bv-favs { display: none !important; }
+.bv-splash-sub { text-align: center; color: var(--bv-text); opacity: .8; font-weight: 800; font-size: 15px; margin: 2px 0 14px; }
+.bv-splash-actions { display: flex; flex-direction: column; gap: 11px; }
+.bv-splash-btn { display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer;
+  border: none; font: inherit; font-weight: 900; border-radius: 20px; padding: 16px 20px; font-size: 20px;
+  color: #fff; background: linear-gradient(var(--bv-accent), var(--bv-accent-dark));
+  box-shadow: 0 7px 18px rgba(255,183,3,.45), inset 0 0 0 2px rgba(255,255,255,.4);
+  touch-action: manipulation; transition: transform .16s var(--bv-spring); }
+.bv-splash-btn:active { transform: scale(.96); }
+.bv-splash-btn.bv-sec { background: #fff; color: var(--bv-text); font-size: 17px; padding: 13px 18px;
+  box-shadow: 0 4px 12px rgba(43,106,153,.16), inset 0 0 0 2px rgba(43,106,153,.10); }
+.bv-splash-btn.bv-friend { background: linear-gradient(#2fbf71, #26a862); font-size: 17px; padding: 13px 18px;
+  box-shadow: 0 6px 16px rgba(38,168,98,.42), inset 0 0 0 2px rgba(255,255,255,.4); }
 .bv-teacher-link { display: block; text-align: center; margin: 14px auto 2px; font-size: 12.5px;
   font-weight: 700; color: #7a94ab; text-decoration: none; opacity: .8;
   padding: 6px 10px; border-radius: 10px; pointer-events: auto; }
@@ -782,6 +798,8 @@ export function initUI(hooks) {
       showCityManager: noop, announce: noop,
       // v3.5 multiplayer
       showMultiplayer: noop, setMultiplayer: noop,
+      showSplash: (o) => { try { if (o && typeof o.onPlay === 'function') o.onPlay(); } catch (_) {} },
+      hideSplash: noop,
     };
   }
 
@@ -1888,6 +1906,71 @@ export function initUI(hooks) {
     if (modeDlg) { try { modeDlg.dispose(); } catch (_) { /* ignore */ } modeDlg = null; }
     if (modeOv && modeOv.parentNode) modeOv.parentNode.removeChild(modeOv);
     modeOv = null;
+    if (!splashOv) root.classList.remove('bv-gated');
+  }
+
+  // ===== SPLASH (front door) =====
+  let splashOv = null, splashDlg = null;
+  function closeSplash() {
+    if (splashDlg) { try { splashDlg.dispose(); } catch (_) { /* ignore */ } splashDlg = null; }
+    if (splashOv && splashOv.parentNode) splashOv.parentNode.removeChild(splashOv);
+    splashOv = null;
+    if (!modeOv) root.classList.remove('bv-gated');
+  }
+  function showSplashOverlay(opts) {
+    const o = opts || {};
+    closeSplash();
+    const ov = el('div', 'bv-overlay bv-menu-overlay');
+    if (ART && ART['menu-bg']) ov.style.backgroundImage =
+      'linear-gradient(rgba(135,212,245,.28), rgba(135,212,245,.58)), url(' + ART['menu-bg'] + ')';
+    const card = el('div', 'bv-card bv-mode-card');
+    if (ART && ART['logo-blockville']) {
+      const logo = el('div', 'bv-menu-logo');
+      const img = document.createElement('img'); img.src = ART['logo-blockville'];
+      img.alt = 'Blockville'; img.draggable = false; logo.appendChild(img);
+      card.appendChild(logo);
+    } else {
+      card.appendChild(el('h1', 'bv-menu-title', '🏗️ Blockville'));
+    }
+    card.appendChild(el('p', 'bv-splash-sub', 'Build your own voxel city!'));
+
+    const actions = el('div', 'bv-splash-actions');
+    const primary = el('button', 'bv-splash-btn');
+    primary.type = 'button';
+    const nm = (o.cityName && String(o.cityName).slice(0, 16)) || '';
+    primary.textContent = o.hasSave ? ('▶️  Continue' + (nm ? ' — ' + nm : ' Building')) : '🚀  Start Building!';
+    primary.addEventListener('click', () => { closeSplash(); call(o.onPlay); });
+    actions.appendChild(primary);
+
+    if (o.hasSave) {
+      const nc = el('button', 'bv-splash-btn bv-sec', '🆕  New City');
+      nc.type = 'button';
+      nc.addEventListener('click', () => { closeSplash(); call(o.onNew); });
+      actions.appendChild(nc);
+    }
+
+    const friend = el('button', 'bv-splash-btn bv-friend', '🤝  Play With a Friend');
+    friend.type = 'button';
+    friend.addEventListener('click', () => { closeSplash(); call(o.onJoin); });
+    actions.appendChild(friend);
+    card.appendChild(actions);
+
+    // Grown-ups' link — teacher guide + standards, opens in a new tab.
+    const teacher = document.createElement('a');
+    teacher.className = 'bv-teacher-link';
+    teacher.href = './teacher-guide.html';
+    teacher.target = '_blank';
+    teacher.rel = 'noopener';
+    teacher.textContent = '\u{1F34E} Grown-Ups’ Corner (Teacher Guide & Standards)';
+    card.appendChild(teacher);   // the <a target="_blank"> opens the guide natively
+
+    ov.appendChild(card);
+    root.appendChild(ov);
+    splashOv = ov;
+    root.classList.add('bv-gated');   // hide the HUD behind the front door
+    // Escape / makeDialog close acts as "play" so the gate never traps a keyboard user.
+    splashDlg = makeDialog(ov, card, () => { closeSplash(); call(o.onPlay); },
+      { label: 'Blockville — start or continue', initialFocus: primary });
   }
   function showModePickerOverlay(onPick) {
     closeModePicker();
@@ -1941,6 +2024,7 @@ export function initUI(hooks) {
     ov.appendChild(card);
     root.appendChild(ov);
     modeOv = ov;
+    root.classList.add('bv-gated');   // keep the HUD hidden behind the mode picker
     modeDlg = makeDialog(ov, card, closeModePicker, { label: 'Choose how to play', initialFocus: firstOpt });
   }
 
@@ -2428,6 +2512,8 @@ export function initUI(hooks) {
 
     showMultiplayer() { try { showMultiplayer(); } catch (_) { /* ignore */ } },
     setMultiplayer(s) { try { applyMultiplayer(s); } catch (_) { /* ignore */ } },
+    showSplash(o) { try { showSplashOverlay(o); } catch (_) { /* ignore */ } },
+    hideSplash() { try { closeSplash(); } catch (_) { /* ignore */ } },
 
     announce(text) {
       try { announce(text); } catch (_) { /* ignore */ }

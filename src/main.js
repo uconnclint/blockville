@@ -934,13 +934,37 @@ cityNamedFlag = cityName() !== 'Blockville' && cityName() !== 'My City';
 rebuildAllVisuals();
 requestAnimationFrame(frame);
 
-function startFlow() {
+// First-run flow: choose a play mode, then welcome + guided helper on the fresh
+// generated city.
+function firstRunFlow() {
+  if (ui.showModePicker) ui.showModePicker((m) => { applyMode(m || 'explorer'); afterMode(); });
+  else { applyMode('explorer'); afterMode(); }
+}
+function afterMode() {
   if (!loadedFromSave) ui.showWelcome();
   if (mode !== 'everything') startHelper();
 }
+
 const boot = document.getElementById('boot');
 setTimeout(() => {
   if (boot) { boot.style.opacity = '0'; setTimeout(() => boot.remove(), 600); }
-  if (!mode) { if (ui.showModePicker) ui.showModePicker((m) => { applyMode(m || 'explorer'); startFlow(); }); else { applyMode('explorer'); startFlow(); } }
-  else { applyMode(mode); startFlow(); }
+  const firstRun = !mode;
+  if (!firstRun) applyMode(mode);   // returning player: ready the toolbar for the loaded city
+
+  // The SPLASH is the front door: continue/start a city, play with a friend, or
+  // (for grown-ups) open the teacher guide.
+  ui.showSplash({
+    hasSave: !firstRun && loadedFromSave,
+    cityName: cityName(),
+    onPlay() { if (firstRun) firstRunFlow(); /* else: the loaded city is already live */ },
+    onNew() {
+      if (firstRun) firstRunFlow();
+      else { createCity('My City'); ui.toast('New city! 🏗️', '🆕'); }
+    },
+    onJoin() {
+      if (firstRun) applyMode('explorer');   // need a mode before joining a room
+      if (ui.showMultiplayer) ui.showMultiplayer();
+    },
+    onGuide() { try { window.open('./teacher-guide.html', '_blank', 'noopener'); } catch (e) {} },
+  });
 }, 400);
