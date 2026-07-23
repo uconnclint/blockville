@@ -103,7 +103,7 @@ Style: ui.js injects its own `<style>`. Big rounded touch targets (min 56px), to
 ```js
 export function initAudio()             // lazy AudioContext on first user gesture
 export function play(name)              // 'place','road','bulldoze','built','upgrade','milestone','coin','error','click','piggy'  — cheerful synthesized WebAudio blips/arps, SHORT, quiet (master gain .25)
-export function setAmbience(nightT, pop)// soft looping pad + birds by day, crickets at night, denser hum with pop. All synthesized. Must survive not being supported (try/catch).
+export function setAmbience(nightT, pop)// ensures the background music playlist is running (nightT/pop kept for call-site compatibility, unused). Must survive not being supported (try/catch).
 export function toggleMute() -> muted
 ```
 

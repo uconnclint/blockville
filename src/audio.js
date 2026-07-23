@@ -1,7 +1,11 @@
-// Blockville audio layer — 100% synthesized WebAudio, no files.
-// Cheerful, toy-like blips + a barely-there evolving ambience.
+// Blockville audio layer — synthesized WebAudio SFX + inlined background music.
+// Cheerful, toy-like blips, plus a rotating playlist of pre-generated music
+// loops (base64-inlined from ./music.js, decoded locally — no fetch(), no
+// external URLs, same "self-contained" rule as the art assets).
 // Everything is wrapped so unsupported / blocked audio never throws.
 // Module top-level touches no window / AudioContext (parse-safe in node).
+
+import { MUSIC } from './music.js';
 
 let ctx = null;          // AudioContext (created lazily on first initAudio())
 let master = null;       // master GainNode (0.25)
@@ -9,8 +13,18 @@ let muted = false;
 let started = false;     // did initAudio succeed at least once
 const lastPlay = {};     // per-sound rate-limit timestamps
 
-// ---- ambience state (lazy, tiny node count) ----
-let amb = null;          // { gain, dayGain, nightGain, humGain, timers:[], nodes:[] }
+// ---- background music state (lazy; decoded once on first initAudio()) ----
+let musicStarted = false;   // did startMusic() already kick off decoding
+let musicGain = null;       // GainNode -> master, overall music volume
+let musicBusA = null;       // crossfade bus A -> musicGain
+let musicBusB = null;       // crossfade bus B -> musicGain
+let activeBus = null;       // 'A' | 'B' | null — which bus is currently audible
+const musicSrc = { A: null, B: null }; // currently-playing BufferSourceNode per bus
+let musicBuffers = null;    // [{ key, buffer }] once decoded
+let musicQueue = [];        // shuffled remaining track keys to play
+let musicLastKey = null;    // last key played, to avoid an immediate repeat
+let musicTimer = null;      // pending setTimeout id for the next crossfade
+const CROSSFADE = 2.5;      // seconds of overlap between tracks
 
 // ±3% random pitch wobble so repeats don't grate.
 const wob = () => 1 + (Math.random() * 2 - 1) * 0.03;
@@ -35,7 +49,7 @@ export function initAudio() {
       ctx.resume().catch(() => {});
     }
     started = true;
-    startAmbience();                 // lazy; safe to call repeatedly
+    startMusic();                    // lazy; safe to call repeatedly
   } catch (e) {
     /* audio simply unavailable — stay silent */
   }
@@ -214,105 +228,115 @@ export function play(name) {
 }
 
 // ------------------------------------------------------------------
-// ambience — very quiet, evolving background (all under gain 0.06)
+// background music — rotating playlist of pre-generated loops, decoded
+// from inlined base64 (./music.js) and crossfaded so tracks never hard-cut.
 // ------------------------------------------------------------------
-function startAmbience() {
-  if (amb || !ctx || !master) return;
-  try {
-    const gain = ctx.createGain();
-    gain.gain.value = 0.06;          // total ambience ceiling — barely there
-    gain.connect(master);
 
-    // Day vs night sub-buses, crossfaded by nightT in setAmbience.
-    const dayGain = ctx.createGain();  dayGain.gain.value = 1;
-    const nightGain = ctx.createGain(); nightGain.gain.value = 0;
-    dayGain.connect(gain); nightGain.connect(gain);
+// decodeAudioData works both as a Promise API and (older Safari) a
+// callback API — support either without throwing.
+function decodeAudio(arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    try {
+      const p = ctx.decodeAudioData(arrayBuffer, resolve, reject);
+      if (p && typeof p.then === 'function') p.then(resolve, reject);
+    } catch (e) { reject(e); }
+  });
+}
 
-    // --- warm day pad: 2 detuned triangles through a slow-LFO lowpass ---
-    const dayLP = ctx.createBiquadFilter();
-    dayLP.type = 'lowpass'; dayLP.frequency.value = 700; dayLP.Q.value = 0.4;
-    dayLP.connect(dayGain);
-    const padA = ctx.createOscillator(); padA.type = 'triangle';
-    padA.frequency.value = 130.81; padA.detune.value = -6;   // C3-ish
-    const padB = ctx.createOscillator(); padB.type = 'triangle';
-    padB.frequency.value = 196.0; padB.detune.value = 7;     // G3-ish
-    const padGain = ctx.createGain(); padGain.gain.value = 0.5;
-    padA.connect(padGain); padB.connect(padGain); padGain.connect(dayLP);
-    // slow LFO on the lowpass cutoff for gentle movement
-    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.06;
-    const lfoGain = ctx.createGain(); lfoGain.gain.value = 300;
-    lfo.connect(lfoGain); lfoGain.connect(dayLP.frequency);
-    padA.start(); padB.start(); lfo.start();
+function base64ToArrayBuffer(dataUri) {
+  const b64 = dataUri.slice(dataUri.indexOf(',') + 1);
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
 
-    // --- darker night pad (one detuned triangle, lower) ---
-    const nightLP = ctx.createBiquadFilter();
-    nightLP.type = 'lowpass'; nightLP.frequency.value = 400; nightLP.Q.value = 0.4;
-    nightLP.connect(nightGain);
-    const nPad = ctx.createOscillator(); nPad.type = 'triangle';
-    nPad.frequency.value = 98.0; nPad.detune.value = 5;      // G2-ish
-    const nPadGain = ctx.createGain(); nPadGain.gain.value = 0.5;
-    nPad.connect(nPadGain); nPadGain.connect(nightLP);
-    nPad.start();
+async function decodeMusicBuffers() {
+  const keys = Object.keys(MUSIC || {});
+  const results = await Promise.all(keys.map(async (key) => {
+    try {
+      const buffer = await decodeAudio(base64ToArrayBuffer(MUSIC[key]));
+      return { key, buffer };
+    } catch (e) { return null; }
+  }));
+  return results.filter(Boolean);
+}
 
-    // --- city hum: filtered brown noise, gain scaled by population ---
-    const humSrc = ctx.createBufferSource();
-    const hlen = Math.floor(ctx.sampleRate * 2);
-    const hbuf = ctx.createBuffer(1, hlen, ctx.sampleRate);
-    const hd = hbuf.getChannelData(0);
-    let lastB = 0;
-    for (let i = 0; i < hlen; i++) {
-      const w = Math.random() * 2 - 1;
-      lastB = (lastB + 0.02 * w) / 1.02; hd[i] = lastB * 3.5;
+// Pop the next track key off the shuffled queue, reshuffling (and avoiding
+// an immediate repeat of the last track) whenever the queue runs dry.
+function nextMusicKey() {
+  if (!musicQueue.length) {
+    const keys = musicBuffers.map((b) => b.key);
+    const shuffled = keys.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
-    humSrc.buffer = hbuf; humSrc.loop = true;
-    const humLP = ctx.createBiquadFilter();
-    humLP.type = 'lowpass'; humLP.frequency.value = 240; humLP.Q.value = 0.5;
-    const humGain = ctx.createGain(); humGain.gain.value = 0;
-    humSrc.connect(humLP); humLP.connect(humGain); humGain.connect(gain);
-    humSrc.start();
+    if (shuffled.length > 1 && shuffled[0] === musicLastKey) {
+      [shuffled[0], shuffled[1]] = [shuffled[1], shuffled[0]];
+    }
+    musicQueue = shuffled;
+  }
+  return musicQueue.shift();
+}
 
-    amb = {
-      gain, dayGain, nightGain, humGain,
-      timers: [],
-      nodes: [padA, padB, lfo, nPad, humSrc],
-      nightT: 0,
-    };
+// Start `key` on the idle crossfade bus while fading the current bus out,
+// then schedule the same thing again near the end of this track.
+function crossfadeToKey(key) {
+  if (!ctx || !musicBuffers) return;
+  const entry = musicBuffers.find((b) => b.key === key);
+  if (!entry) return;
+  musicLastKey = key;
 
-    // --- day birdsong: tiny descending sine chirps every 4-9s ---
-    const scheduleBird = () => {
-      if (!amb) return;
-      try {
-        if (amb.nightT < 0.6 && !muted) {
-          const t = now() + 0.02;
-          const base = 1600 + Math.random() * 800;
-          for (let i = 0; i < 3; i++) {
-            tone(base - i * 140, t + i * 0.05, 0.05,
-              { type: 'sine', gain: 0.05 * (1 - amb.nightT), dest: amb.dayGain });
-          }
-        }
-      } catch (e) { /* ignore */ }
-      const id = setTimeout(scheduleBird, 4000 + Math.random() * 5000);
-      amb.timers.push(id);
-    };
-    // --- night crickets: rhythmic filtered noise ticks ~2Hz ---
-    const scheduleCricket = () => {
-      if (!amb) return;
-      try {
-        if (amb.nightT > 0.4 && !muted) {
-          const t = now() + 0.02;
-          noise(t, 0.03, { gain: 0.06 * amb.nightT, type: 'bandpass',
-            freq: 4800, q: 6, dest: amb.nightGain });
-          noise(t + 0.06, 0.03, { gain: 0.05 * amb.nightT, type: 'bandpass',
-            freq: 4800, q: 6, dest: amb.nightGain });
-        }
-      } catch (e) { /* ignore */ }
-      const id = setTimeout(scheduleCricket, 500); // ~2Hz
-      amb.timers.push(id);
-    };
-    amb.timers.push(setTimeout(scheduleBird, 3000));
-    amb.timers.push(setTimeout(scheduleCricket, 500));
+  const targetName = activeBus === 'A' ? 'B' : 'A';
+  const targetBus = targetName === 'A' ? musicBusA : musicBusB;
+  const oldName = activeBus;
+  const oldBus = oldName === 'A' ? musicBusA : (oldName === 'B' ? musicBusB : null);
+
+  const src = ctx.createBufferSource();
+  src.buffer = entry.buffer;
+  src.connect(targetBus);
+
+  const t = now();
+  const fade = Math.min(CROSSFADE, entry.buffer.duration / 2);
+  targetBus.gain.cancelScheduledValues(t);
+  targetBus.gain.setValueAtTime(0, t);
+  targetBus.gain.linearRampToValueAtTime(1, t + fade);
+  src.start(t);
+  musicSrc[targetName] = src;
+
+  if (oldBus) {
+    oldBus.gain.cancelScheduledValues(t);
+    oldBus.gain.setValueAtTime(oldBus.gain.value, t);
+    oldBus.gain.linearRampToValueAtTime(0, t + fade);
+    const oldSrc = musicSrc[oldName];
+    if (oldSrc) { try { oldSrc.stop(t + fade + 0.05); } catch (e) { /* ignore */ } }
+  }
+  activeBus = targetName;
+
+  if (musicTimer) clearTimeout(musicTimer);
+  const msUntilNext = Math.max(1000, (entry.buffer.duration - fade) * 1000);
+  musicTimer = setTimeout(() => {
+    try { crossfadeToKey(nextMusicKey()); } catch (e) { /* ignore */ }
+  }, msUntilNext);
+}
+
+function startMusic() {
+  if (musicStarted || !ctx || !master) return;
+  musicStarted = true;
+  try {
+    musicGain = ctx.createGain();
+    musicGain.gain.value = 0.4;      // pre-master music level (master applies 0.25 on top)
+    musicGain.connect(master);
+    musicBusA = ctx.createGain(); musicBusA.gain.value = 0; musicBusA.connect(musicGain);
+    musicBusB = ctx.createGain(); musicBusB.gain.value = 0; musicBusB.connect(musicGain);
+
+    decodeMusicBuffers().then((buffers) => {
+      musicBuffers = buffers;
+      if (buffers && buffers.length) crossfadeToKey(nextMusicKey());
+    }).catch(() => { /* no music available — game stays silent-but-fine */ });
   } catch (e) {
-    amb = null; // never throw
+    musicStarted = false; // allow a later retry
   }
 }
 
@@ -425,20 +449,13 @@ export function isSpeechEnabled() {
   return speechEnabled;
 }
 
+// Kept for API compatibility with main.js's day/night + population loop.
+// Background music is now a flat rotating playlist (no day/night or
+// population-driven mixing), so this just makes sure the playlist is
+// running — nightT/pop are accepted but unused.
 export function setAmbience(nightT, pop) {
   try {
     if (!started) return;
-    startAmbience();
-    if (!amb || !ctx) return;
-    const t = now();
-    const nt = Math.max(0, Math.min(1, Number(nightT) || 0));
-    amb.nightT = nt;
-    // crossfade day <-> night pads
-    amb.dayGain.gain.setTargetAtTime(1 - nt, t, 0.5);
-    amb.nightGain.gain.setTargetAtTime(nt, t, 0.5);
-    // city hum scales with population: min(pop/300,1) * 0.04
-    const p = Math.max(0, Number(pop) || 0);
-    const humLevel = Math.min(p / 300, 1) * 0.04;
-    amb.humGain.gain.setTargetAtTime(humLevel, t, 1.0);
+    startMusic();
   } catch (e) { /* ignore */ }
 }
