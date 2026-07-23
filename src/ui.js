@@ -152,24 +152,49 @@ const CSS = `
 }
 
 /* ---------- top bar ---------- */
-.bv-top {
+/* Outer wrap owns the centered/fixed positioning and lays out (optional)
+   arrow buttons beside the scrollable pill — never on top of it, so a
+   crowded icon row never gets an icon hidden under the arrow itself. Fade
+   hints sit inside a relative strip-wrap around just the pill. Same
+   affordance pattern as the building drawer strip below. */
+.bv-top-wrap {
   position: absolute; left: 50%; transform: translateX(-50%);
   top: calc(10px + env(safe-area-inset-top, 0px));
-  display: flex; align-items: center; gap: 14px;
   max-width: calc(100vw - 20px);
+  display: flex; align-items: center; gap: 4px;
+  pointer-events: auto;
+}
+.bv-top-strip-wrap { position: relative; flex: 1 1 auto; min-width: 0; display: flex; }
+.bv-top {
+  display: flex; align-items: center; gap: 14px;
+  flex: 1 1 auto; min-width: 0;
   padding: 8px 12px;
   background: var(--bv-card);
   -webkit-backdrop-filter: blur(14px) saturate(1.4);
   backdrop-filter: blur(14px) saturate(1.4);
   border-radius: 26px;
   box-shadow: 0 8px 26px rgba(43,106,153,.20), inset 0 0 0 2px rgba(255,255,255,.6);
-  pointer-events: auto;
   flex-wrap: nowrap;
   overflow-x: auto; overflow-y: hidden;
   scrollbar-width: none;
   touch-action: pan-x;
 }
 .bv-top::-webkit-scrollbar { display: none; }
+.bv-top-fade { position: absolute; top: 0; bottom: 0; width: 30px; pointer-events: none; opacity: 0; transition: opacity .2s ease; z-index: 2; }
+.bv-top-fade.l { left: 0; background: linear-gradient(to right, rgba(255,255,255,.92), rgba(255,255,255,0)); border-radius: 26px 0 0 26px; }
+.bv-top-fade.r { right: 0; background: linear-gradient(to left, rgba(255,255,255,.92), rgba(255,255,255,0)); border-radius: 0 26px 26px 0; }
+.bv-top-fade.bv-show { opacity: 1; }
+.bv-top-arrow {
+  flex: 0 0 auto; align-self: center; width: 30px; height: 30px; min-width: 30px;
+  border: none; border-radius: 12px; background: var(--bv-card-solid); color: var(--bv-text);
+  font-size: 15px; font-weight: 900; cursor: pointer; display: none;
+  align-items: center; justify-content: center;
+  box-shadow: 0 3px 10px rgba(43,106,153,.18); touch-action: manipulation;
+  transition: transform .15s var(--bv-spring);
+}
+.bv-top-arrow.bv-show { display: flex; }
+.bv-top-arrow:active { transform: scale(.85); }
+.bv-top-arrow[disabled] { opacity: .28; cursor: default; }
 .bv-stat {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 18px;
@@ -674,7 +699,7 @@ const CSS = `
 /* ---------- mode picker ---------- */
 .bv-mode-card { max-width: 580px; }
 /* Entry gate (splash / mode picker) — hide the in-game HUD chrome behind it. */
-#bv-ui.bv-gated .bv-top, #bv-ui.bv-gated .bv-toolbar, #bv-ui.bv-gated .bv-picbar,
+#bv-ui.bv-gated .bv-top-wrap, #bv-ui.bv-gated .bv-toolbar, #bv-ui.bv-gated .bv-picbar,
 #bv-ui.bv-gated .bv-banner, #bv-ui.bv-gated .bv-mpbadge, #bv-ui.bv-gated .bv-mission,
 #bv-ui.bv-gated .bv-favs { display: none !important; }
 .bv-splash-sub { text-align: center; color: var(--bv-text); opacity: .8; font-weight: 800; font-size: 15px; margin: 2px 0 14px; }
@@ -1085,7 +1110,51 @@ export function initUI(hooks) {
   mpBtn.addEventListener('click', () => showMultiplayer());
   top.appendChild(mpBtn);
 
-  root.appendChild(top);
+  // Wrap the scrollable top pill with fade + arrow scroll hints so a
+  // crowded toolbar (lots of icons on narrow/mobile screens) doesn't hide
+  // controls like Sound with zero indication there's more to scroll to —
+  // same pattern as the building drawer strip below.
+  const topWrap = el('div', 'bv-top-wrap');
+  const topFadeL = el('span', 'bv-top-fade l');
+  const topFadeR = el('span', 'bv-top-fade r');
+  topFadeL.setAttribute('aria-hidden', 'true');
+  topFadeR.setAttribute('aria-hidden', 'true');
+  const topArrowL = iconBtn('bv-top-arrow l', '‹', 'Scroll left', null, 'arrow-left');
+  const topArrowR = iconBtn('bv-top-arrow r', '›', 'Scroll right', null, 'arrow-right');
+  function scrollTop(dir) {
+    try {
+      const amt = Math.max(100, Math.round(top.clientWidth * 0.7));
+      if (typeof top.scrollBy === 'function') top.scrollBy({ left: dir * amt, behavior: 'smooth' });
+      else top.scrollLeft += dir * amt;
+    } catch (_) { /* ignore */ }
+    setTimeout(updateTopScrollUI, 260);
+  }
+  function updateTopScrollUI() {
+    try {
+      const sl = top.scrollLeft || 0;
+      const overflow = top.scrollWidth - top.clientWidth;
+      const canScroll = overflow > 4;
+      const atStart = sl <= 2;
+      const atEnd = sl >= overflow - 2;
+      topArrowL.classList.toggle('bv-show', canScroll && !atStart);
+      topArrowR.classList.toggle('bv-show', canScroll && !atEnd);
+      topFadeL.classList.toggle('bv-show', canScroll && !atStart);
+      topFadeR.classList.toggle('bv-show', canScroll && !atEnd);
+    } catch (_) { /* ignore */ }
+  }
+  topArrowL.addEventListener('click', () => scrollTop(-1));
+  topArrowR.addEventListener('click', () => scrollTop(1));
+  top.addEventListener('scroll', updateTopScrollUI);
+  try { window.addEventListener('resize', () => setTimeout(updateTopScrollUI, 40)); } catch (_) { /* ignore */ }
+  const topStripWrap = el('div', 'bv-top-strip-wrap');
+  topStripWrap.appendChild(topFadeL);
+  topStripWrap.appendChild(top);
+  topStripWrap.appendChild(topFadeR);
+  topWrap.appendChild(topArrowL);
+  topWrap.appendChild(topStripWrap);
+  topWrap.appendChild(topArrowR);
+  root.appendChild(topWrap);
+  setTimeout(updateTopScrollUI, 40); // measure overflow after layout settles
 
   // ===== MULTIPLAYER BADGE (shown while in a room) =====
   const mpBadge = el('div', 'bv-mpbadge');
