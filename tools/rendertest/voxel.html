@@ -1,0 +1,423 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>voxel.js render test</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #10141b; font: 12px/1.45 ui-monospace, Menlo, monospace; color: #e8eef6; }
+  #hud { position: fixed; left: 10px; top: 10px; z-index: 5; background: rgba(12,16,22,.82); border: 1px solid #2b3644; border-radius: 8px; padding: 10px 12px; min-width: 250px; }
+  #hud h1 { font-size: 12px; margin: 0 0 8px; letter-spacing: .08em; text-transform: uppercase; color: #8fd0f0; }
+  label { display: block; margin: 3px 0; cursor: pointer; }
+  select, button { font: inherit; background: #1b2431; color: #e8eef6; border: 1px solid #33415a; border-radius: 5px; padding: 3px 6px; margin: 2px 2px 2px 0; cursor: pointer; }
+  #stats { margin-top: 8px; padding-top: 8px; border-top: 1px solid #2b3644; white-space: pre; color: #9fb3c8; font-size: 11px; }
+  #banner { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 0; pointer-events: none; }
+  #banner div { padding: 5px 22px; background: rgba(12,16,22,.8); border: 1px solid #2b3644; font-size: 12px; letter-spacing: .06em; }
+  #selftest { position: fixed; right: 10px; bottom: 10px; z-index: 5; max-width: 430px; background: rgba(12,16,22,.82); border: 1px solid #2b3644; border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; font-size: 11px; color: #9fb3c8; }
+  .pass { color: #7ee08a; } .fail { color: #ff7b6b; }
+</style>
+<div id="hud">
+  <h1>voxel.js §3.6</h1>
+  <label><input type="checkbox" id="ao" checked> ambient occlusion</label>
+  <label><input type="checkbox" id="bevel" checked> micro-bevel</label>
+  <label><input type="checkbox" id="aoOnly"> AO-only debug view</label>
+  <label>compare&nbsp;
+    <select id="compare">
+      <option value="none">off (single view)</option>
+      <option value="ao">AO off | AO on</option>
+      <option value="bevel">bevel off | bevel on</option>
+    </select>
+  </label>
+  <label>night&nbsp;<input type="range" id="night" min="0" max="1" step="0.01" value="0" style="width:120px;vertical-align:middle"></label>
+  <div>
+    <button data-cam="all">all</button>
+    <button data-cam="close">close-up</button>
+    <button data-cam="mats">materials</button>
+    <button data-cam="tower">tower</button>
+  </div>
+  <div id="stats">building…</div>
+</div>
+<div id="banner"></div>
+<div id="selftest">selfTest…</div>
+
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { buildVoxelGeometry, materialFor, selfTest, PALETTE_INDEX, VOXEL_DEFAULTS } from '../../src/render/voxel.js';
+import { catalogModel, treeModel, PALETTE } from '../../src/models.js';
+
+// ---------------------------------------------------------------------------
+// renderer / scene
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fc7e8);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.5, 3000);
+
+const hemi = new THREE.HemisphereLight(0xbfe4ff, 0x6f7f5a, 1.05);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff3e0, 2.4);
+sun.position.set(60, 90, 40);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const S = 230;
+sun.shadow.camera.left = -S; sun.shadow.camera.right = S;
+sun.shadow.camera.top = S; sun.shadow.camera.bottom = -S;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 400;
+sun.shadow.bias = -0.0008;
+scene.add(sun);
+scene.add(sun.target);
+
+// procedural HDR equirect env -> PMREM (core three only, no addons).
+// Float data so the sun disc can be genuinely brighter than 1.0 — that is what
+// makes metal read as metal instead of grey plastic.
+function makeEnv() {
+  const W = 128, H = 64;
+  const data = new Float32Array(W * H * 4);
+  // sun direction matched to the directional light below
+  const sunU = 0.30, sunV = 0.22;
+  for (let y = 0; y < H; y++) {
+    const v = y / (H - 1);                 // 0 = zenith, 1 = nadir
+    for (let x = 0; x < W; x++) {
+      const u = x / (W - 1);
+      let r, g, b;
+      if (v < 0.5) {                        // sky
+        const t = v / 0.5;
+        r = 0.16 + 0.72 * t * t; g = 0.34 + 0.60 * t * t; b = 0.72 + 0.28 * t * t;
+      } else {                              // ground bounce
+        const t = (v - 0.5) / 0.5;
+        r = 0.34 - 0.16 * t; g = 0.42 - 0.14 * t; b = 0.24 - 0.10 * t;
+      }
+      // horizon haze band
+      const hz = Math.exp(-Math.pow((v - 0.5) * 14, 2));
+      r += hz * 0.55; g += hz * 0.50; b += hz * 0.40;
+      // sun disc + glow (HDR)
+      let du = Math.abs(u - sunU); if (du > 0.5) du = 1 - du;
+      const d = Math.hypot(du * 2.0, v - sunV);
+      const sunI = 26 * Math.exp(-Math.pow(d / 0.035, 2)) + 1.6 * Math.exp(-Math.pow(d / 0.18, 2));
+      r += sunI; g += sunI * 0.96; b += sunI * 0.86;
+      // a couple of soft cloud bands for reflection interest
+      const cl = Math.max(0, Math.sin(u * 17.0 + 1.3) * Math.exp(-Math.pow((v - 0.28) * 9, 2))) * 0.9;
+      r += cl; g += cl; b += cl;
+      const i = (y * W + x) * 4;
+      data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 1;
+    }
+  }
+  const t = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.FloatType);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.LinearSRGBColorSpace;
+  t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter;
+  t.needsUpdate = true;
+  const pm = new THREE.PMREMGenerator(renderer);
+  const env = pm.fromEquirectangular(t).texture;
+  pm.dispose(); t.dispose();
+  return env;
+}
+scene.environment = makeEnv();
+
+// ground
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(1400, 1400),
+  new THREE.MeshStandardMaterial({ color: 0x7ec850, roughness: 0.95, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ---------------------------------------------------------------------------
+// voxel material — the minimum a consumer must do with our attributes
+// ---------------------------------------------------------------------------
+const uAoOnly = { value: 0 };
+const uNight = { value: 0 };
+// darkest aoT the module emits — lets the debug view use the full 0..1 range
+const uAoMin = { value: 1 - VOXEL_DEFAULTS.aoStrength };
+let shaderWarnings = [];
+
+function inject(src, token, add, where) {
+  if (src.indexOf(token) === -1) { shaderWarnings.push('missing ' + token + ' in ' + where); return src; }
+  return src.replace(token, add);
+}
+
+const voxMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0 });
+voxMat.envMapIntensity = 1.25;
+voxMat.onBeforeCompile = (sh) => {
+  sh.uniforms.uAoOnly = uAoOnly;
+  sh.uniforms.uNight = uNight;
+  sh.uniforms.uAoMin = uAoMin;
+  sh.vertexShader =
+    'attribute float aoT;\nattribute vec2 matParams;\nattribute vec3 glowColor;\nattribute float emissiveT;\n' +
+    'varying float vAoT;\nvarying vec2 vMat;\nvarying vec3 vGlow;\nvarying float vEmi;\n' +
+    inject(sh.vertexShader, '#include <begin_vertex>',
+      '#include <begin_vertex>\n vAoT = aoT;\n vMat = matParams;\n vGlow = glowColor;\n vEmi = emissiveT;', 'vert');
+  sh.fragmentShader =
+    'uniform float uAoOnly;\nuniform float uNight;\nuniform float uAoMin;\n' +
+    'varying float vAoT;\nvarying vec2 vMat;\nvarying vec3 vGlow;\nvarying float vEmi;\n' +
+    inject(inject(inject(inject(inject(sh.fragmentShader,
+      '#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vAoT;', 'frag'),
+      '#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n roughnessFactor = vMat.x;', 'frag'),
+      '#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n metalnessFactor = vMat.y;', 'frag'),
+      '#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vGlow * vEmi * uNight * 2.0;', 'frag'),
+      '#include <colorspace_fragment>',
+      ' if (uAoOnly > 0.5) { float a = clamp((vAoT - uAoMin) / max(1e-4, 1.0 - uAoMin), 0.0, 1.0);' +
+      ' gl_FragColor = vec4(vec3(a), 1.0); }\n#include <colorspace_fragment>', 'frag');
+};
+
+// ---------------------------------------------------------------------------
+// showcase models
+// ---------------------------------------------------------------------------
+function monoCube(n, ci) {
+  const blocks = [];
+  for (let y = 0; y < n; y++) for (let z = 0; z < n; z++) for (let x = 0; x < n; x++) {
+    if (x === 0 || y === 0 || z === 0 || x === n - 1 || y === n - 1 || z === n - 1) blocks.push([x, y, z, ci]);
+  }
+  // a stepped shoulder so AO has corners to bite into
+  for (let z = 0; z < 4; z++) for (let x = 0; x < 4; x++) blocks.push([x, n, z, ci]);
+  for (let z = 0; z < 2; z++) for (let x = 0; x < 2; x++) blocks.push([x, n + 1, z, ci]);
+  return { sx: n, sy: n + 2, sz: n, blocks };
+}
+
+function matBars() {
+  const names = ['metal', 'steel', 'gold', 'metalDark', 'concrete', 'brick', 'wood', 'grassMid'];
+  const blocks = [];
+  const H = 14, W = 3;
+  for (let i = 0; i < names.length; i++) {
+    const ci = names[i] in PALETTE_INDEX ? PALETTE_INDEX[names[i]] : 0;
+    const x0 = i * (W + 1);
+    for (let y = 0; y < H; y++) for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) {
+      blocks.push([x0 + x, y, z, ci]);
+    }
+  }
+  // a glass column + a neon column on the end
+  const x0 = names.length * (W + 1);
+  for (let y = 0; y < H; y++) for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) blocks.push([x0 + x, y, z, 201]);
+  const x1 = x0 + W + 1;
+  for (let y = 0; y < H; y++) for (let z = 0; z < W; z++) for (let x = 0; x < W; x++) blocks.push([x1 + x, y, z, 203]);
+  return { sx: x1 + W, sy: H, sz: W, blocks };
+}
+
+const SHOW = [
+  { label: 'small-house', model: catalogModel('small-house', 0) },
+  { label: 'cottage', model: catalogModel('cottage', 1) },
+  { label: 'big-house', model: catalogModel('big-house', 0) },
+  { label: 'tree', model: treeModel(3) },
+  { label: 'brick-highrise', model: catalogModel('brick-highrise', 0) },
+  { label: 'glass-skyscraper', model: catalogModel('glass-skyscraper', 0) },
+  { label: 'spire-tower', model: catalogModel('spire-tower', 0) },
+  { label: 'city-bank', model: catalogModel('city-bank', 0) },
+  { label: 'stadium', model: catalogModel('stadium', 0) },
+  { label: 'museum', model: catalogModel('museum', 0) },
+  { label: 'mono cube (bevel test)', model: monoCube(8, PALETTE_INDEX.pBlue) },
+  { label: 'material bars', model: matBars() },
+].filter(e => e.model);
+
+const COLS = 4, CELL = 46;
+const meshes = [];
+SHOW.forEach((e, i) => {
+  const cx = (i % COLS - (COLS - 1) / 2) * CELL;
+  const cz = ((i / COLS | 0) - (Math.ceil(SHOW.length / COLS) - 1) / 2) * CELL;
+  const m = new THREE.Mesh(new THREE.BufferGeometry(), voxMat);
+  m.position.set(cx, 0, cz);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  meshes.push(m);
+  e.pos = new THREE.Vector3(cx, 0, cz);
+});
+
+// ---------------------------------------------------------------------------
+// geometry cache per option combo
+// ---------------------------------------------------------------------------
+const cache = new Map();
+function geomsFor(ao, bevel) {
+  const key = (ao ? 'a' : '-') + (bevel ? 'b' : '-');
+  let list = cache.get(key);
+  if (list) return list;
+  const t0 = performance.now();
+  list = SHOW.map(e => buildVoxelGeometry(e.model, { ao, bevel }));
+  const total = performance.now() - t0;
+  list.totalMs = total;
+  cache.set(key, list);
+  return list;
+}
+
+function applyGeoms(list) {
+  for (let i = 0; i < meshes.length; i++) meshes[i].geometry = list[i];
+}
+
+// ---------------------------------------------------------------------------
+// camera / orbit
+// ---------------------------------------------------------------------------
+const target = new THREE.Vector3(0, 12, 0);
+let dist = 250, yaw = 0.7, pitch = 0.8;
+function place() {
+  const sp = Math.sin(pitch), cp = Math.cos(pitch);
+  camera.position.set(
+    target.x + dist * sp * Math.sin(yaw),
+    target.y + dist * cp,
+    target.z + dist * sp * Math.cos(yaw)
+  );
+  camera.lookAt(target);
+  sun.target.position.copy(target);
+  sun.position.set(target.x + 70, target.y + 110, target.z + 55);
+}
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; });
+addEventListener('pointerup', () => { drag = null; });
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  yaw -= (e.clientX - drag.x) * 0.006;
+  pitch = Math.max(0.12, Math.min(1.45, pitch - (e.clientY - drag.y) * 0.005));
+  drag = { x: e.clientX, y: e.clientY };
+  place();
+});
+addEventListener('wheel', e => { dist = Math.max(6, Math.min(600, dist * (1 + Math.sign(e.deltaY) * 0.09))); place(); }, { passive: true });
+
+const CAMS = {
+  all: () => { target.set(0, 14, 0); dist = 250; yaw = 0.75; pitch = 0.80; },
+  close: () => {
+    const e = SHOW.find(s => s.label.startsWith('mono')) || SHOW[0];
+    target.copy(e.pos); target.y = 6; dist = 22; yaw = 0.85; pitch = 1.02;
+  },
+  mats: () => {
+    const e = SHOW.find(s => s.label === 'material bars') || SHOW[0];
+    target.copy(e.pos); target.y = 8; dist = 44; yaw = 0.35; pitch = 1.05;
+  },
+  tower: () => {
+    const e = SHOW.find(s => s.label === 'glass-skyscraper') || SHOW[0];
+    target.copy(e.pos); target.y = 22; dist = 72; yaw = 0.9; pitch = 0.95;
+  },
+};
+for (const b of document.querySelectorAll('[data-cam]')) {
+  b.onclick = () => { CAMS[b.dataset.cam](); place(); };
+}
+
+// ---------------------------------------------------------------------------
+// HUD
+// ---------------------------------------------------------------------------
+const $ao = document.getElementById('ao');
+const $bevel = document.getElementById('bevel');
+const $aoOnly = document.getElementById('aoOnly');
+const $compare = document.getElementById('compare');
+const $night = document.getElementById('night');
+const $stats = document.getElementById('stats');
+const $banner = document.getElementById('banner');
+
+function stats() {
+  const list = geomsFor($ao.checked, $bevel.checked);
+  let tris = 0, verts = 0, worst = null;
+  const lines = [];
+  for (let i = 0; i < list.length; i++) {
+    const u = list[i].userData.voxel;
+    tris += u.triangles; verts += u.vertices;
+    if (!worst || u.voxels > worst.u.voxels) worst = { name: SHOW[i].label, u };
+  }
+  lines.push('models ' + list.length + '   tris ' + tris.toLocaleString() + '   verts ' + verts.toLocaleString());
+  lines.push('all models meshed in ' + list.totalMs.toFixed(2) + ' ms');
+  if (worst) lines.push('largest: ' + worst.name + '  ' + worst.u.voxels + ' vox  ' +
+    worst.u.faces + ' faces  ' + worst.u.ms.toFixed(2) + ' ms');
+  const st = SHOW.find(s => s.label === 'stadium');
+  if (st) {
+    const g = list[SHOW.indexOf(st)].userData.voxel;
+    lines.push('stadium: ' + g.voxels + ' vox  ' + g.triangles + ' tris  ' + g.ms.toFixed(2) + ' ms');
+  }
+  $stats.textContent = lines.join('\n');
+}
+
+function banner(a, b) {
+  $banner.innerHTML = (a && b) ? '<div>' + a + '</div><div>' + b + '</div>' : '';
+}
+
+function refresh() {
+  uAoOnly.value = $aoOnly.checked ? 1 : 0;
+  uNight.value = +$night.value;
+  const mode = $compare.value;
+  if (mode === 'none') banner(null, null);
+  else if (mode === 'ao') banner('AO OFF', 'AO ON');
+  else banner('BEVEL OFF', 'BEVEL ON');
+  stats();
+}
+for (const el of [$ao, $bevel, $aoOnly, $compare, $night]) el.oninput = refresh;
+
+// ---------------------------------------------------------------------------
+// render loop (split-screen compare via scissor)
+// ---------------------------------------------------------------------------
+function renderAll() {
+  const w = innerWidth, h = innerHeight;
+  const mode = $compare.value;
+  if (mode === 'none') {
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    applyGeoms(geomsFor($ao.checked, $bevel.checked));
+    renderer.render(scene, camera);
+    return;
+  }
+  const hw = (w / 2) | 0;
+  camera.aspect = hw / h; camera.updateProjectionMatrix();
+  renderer.setScissorTest(true);
+  const A = mode === 'ao' ? [false, $bevel.checked] : [$ao.checked, false];
+  const B = mode === 'ao' ? [true, $bevel.checked] : [$ao.checked, true];
+  renderer.setViewport(0, 0, hw, h); renderer.setScissor(0, 0, hw, h);
+  applyGeoms(geomsFor(A[0], A[1]));
+  renderer.render(scene, camera);
+  renderer.setViewport(hw, 0, w - hw, h); renderer.setScissor(hw, 0, w - hw, h);
+  applyGeoms(geomsFor(B[0], B[1]));
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// press H to hide the panels for clean screenshots
+addEventListener('keydown', e => {
+  if (e.key === 'h' || e.key === 'H') {
+    for (const id of ['hud', 'selftest']) {
+      const el = document.getElementById(id);
+      el.style.display = el.style.display === 'none' ? '' : 'none';
+    }
+  }
+});
+
+place();
+refresh();
+(function loop() { requestAnimationFrame(loop); renderAll(); })();
+
+// ---------------------------------------------------------------------------
+// selfTest panel
+// ---------------------------------------------------------------------------
+{
+  const r = selfTest();
+  const el = document.getElementById('selftest');
+  el.innerHTML = '<b class="' + (r.pass ? 'pass' : 'fail') + '">selfTest: ' +
+    (r.pass ? 'PASS' : 'FAIL') + '</b>\n' + r.notes.join('\n');
+  console.log('[voxel.selfTest]', r.pass ? 'PASS' : 'FAIL');
+  for (const n of r.notes) console.log('  ' + n);
+  // a couple of material spot checks for the console
+  console.log('[materialFor] metal', materialFor(PALETTE_INDEX.metal),
+    'win200', materialFor(200), 'brick', materialFor(PALETTE_INDEX.brick));
+}
+setTimeout(() => { if (shaderWarnings.length) console.warn('[shader]', shaderWarnings.join(' | ')); }, 400);
+window.__voxel = {
+  buildVoxelGeometry, selfTest, SHOW, geomsFor, CAMS,
+  cam(o) {
+    if (o.model != null) { const e = SHOW.find(s => s.label === o.model); if (e) target.copy(e.pos); }
+    if (o.tx != null) target.x = o.tx;
+    if (o.ty != null) target.y = o.ty;
+    if (o.tz != null) target.z = o.tz;
+    if (o.dist != null) dist = o.dist;
+    if (o.yaw != null) yaw = o.yaw;
+    if (o.pitch != null) pitch = o.pitch;
+    place();
+    return { target: target.toArray(), dist, yaw, pitch };
+  },
+  preset(n) { CAMS[n](); place(); },
+  set(id, v) { const el = document.getElementById(id); if (el.type === 'checkbox') el.checked = !!v; else el.value = v; el.dispatchEvent(new Event('input')); },
+  panels(on) { for (const id of ['hud', 'selftest']) document.getElementById(id).style.display = on ? '' : 'none'; },
+};
+</script>

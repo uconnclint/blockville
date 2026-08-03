@@ -1,0 +1,342 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Blockville — roads.js render test</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#0d1117; font:12px/1.4 ui-monospace, Menlo, monospace; color:#e6edf3; }
+  canvas { display:block; }
+  #hud { position:fixed; left:8px; top:8px; z-index:10; background:rgba(13,17,23,.82); padding:8px 10px; border-radius:6px; max-width:340px; }
+  #hud b { color:#7ee787; }
+  button { font:inherit; background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:3px 7px; margin:1px; cursor:pointer; }
+  button:hover { background:#30363d; }
+  #labels { position:fixed; inset:0; pointer-events:none; z-index:5; }
+  .lbl { position:absolute; transform:translate(-50%,-50%); color:#ffd; text-shadow:0 0 4px #000, 0 0 8px #000; font-size:11px; white-space:nowrap; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div><b>roads.js</b> render test</div>
+  <div id="stats">building…</div>
+  <div style="margin-top:6px">
+    <button onclick="RT.view('ortho')">top-down ortho</button>
+    <button onclick="RT.view('persp')">45° city</button>
+    <button onclick="RT.view('far')">max zoom-out</button>
+  </div>
+  <div>
+    <button onclick="RT.focus('cases')">all 16 masks</button>
+    <button onclick="RT.focus('grid')">downtown</button>
+    <button onclick="RT.focus('straight')">straights</button>
+  </div>
+  <div>
+    <button onclick="RT.rain()">rain toggle</button>
+    <button onclick="RT.labels()">labels</button>
+    <button onclick="RT.quality()">quality</button>
+    <button onclick="RT.wire()">wireframe</button>
+    <button onclick="RT.test()">selfTest</button>
+    <button onclick="RT.anchors()">anchors</button>
+    <button onclick="RT.toggleBuildings()">buildings</button>
+  </div>
+  <div style="margin-top:4px;opacity:.7">drag = orbit · wheel = zoom · shift-drag = pan</div>
+</div>
+<div id="labels"></div>
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { Roads, selfTest, topologyState } from '../../src/render/roads.js';
+import { TILE, N } from '../../src/constants.js';
+
+const W = () => innerWidth, H = () => innerHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(W(), H());
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd0ef);
+scene.fog = new THREE.Fog(0xaad4ef, 500, 1500);
+
+// ---- lights ---------------------------------------------------------------
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.5);
+sun.position.set(180, 260, 120);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const sc = sun.shadow.camera;
+sc.left = -360; sc.right = 360; sc.top = 360; sc.bottom = -360; sc.near = 1; sc.far = 900;
+scene.add(sun);
+// kept low because the PMREM env below already supplies the ambient term
+scene.add(new THREE.HemisphereLight(0xbfe0ff, 0x5a6a4a, 0.30));
+
+// A cheap sky/ground IBL so wet asphalt has something to reflect (the game's
+// sky.js supplies the real PMREM env).
+{
+  const pm = new THREE.PMREMGenerator(renderer);
+  const envScene = new THREE.Scene();
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(50, 24, 16),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: 'varying vec3 vP; void main(){ float t = normalize(vP).y*0.5+0.5; vec3 c = mix(vec3(0.30,0.34,0.24), mix(vec3(0.85,0.90,1.0), vec3(0.22,0.42,0.95), smoothstep(0.5,1.0,t)), smoothstep(0.46,0.56,t)); gl_FragColor = vec4(c,1.0); }',
+    }));
+  envScene.add(sky);
+  const env = pm.fromScene(envScene, 0.04);
+  scene.environment = env.texture;
+  pm.dispose();
+}
+
+// ---- state: every topology case -------------------------------------------
+const state = topologyState();
+// a couple of hand-placed extras the exported fixture does not cover
+const R = (x, z) => { state.map[z * N + x] = 3; };
+// an S-curve so the arc markings can be checked meeting each other
+R(30, 34); R(31, 34); R(32, 34); R(32, 35); R(32, 36); R(33, 36); R(34, 36); R(34, 37); R(34, 38);
+// a bridge tile inside a straight run (must be skipped by roads.js)
+for (let x = 28; x < 38; x++) R(x, 44);
+state.bridge[44 * N + 33] = 1;
+
+// ---- ground ---------------------------------------------------------------
+{
+  const g = new THREE.PlaneGeometry(N * TILE, N * TILE, 1, 1);
+  g.rotateX(-Math.PI / 2);
+  g.translate(N * TILE / 2, 0, N * TILE / 2);
+  const m = new THREE.MeshStandardMaterial({ color: 0x74a94a, roughness: 0.95 });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+
+// ---- roads ----------------------------------------------------------------
+// pass the renderer so the aggregate atlas gets renderer.capabilities.getMaxAnisotropy()
+const roads = new Roads(scene, { renderer });
+const t0 = performance.now();
+const anchors = roads.build(state);
+const buildMs = performance.now() - t0;
+
+// time a refreshTile
+let refreshMs = 0;
+{
+  // scribble in an empty corner of the map so the fixture is not disturbed
+  const samples = [];
+  const TX = 60, TZ = 20;
+  for (let i = 0; i < 40; i++) {
+    const x = TX + (i % 6), z = TZ + ((i / 6) | 0);
+    state.map[z * N + x] = 3;
+    const a = performance.now();
+    roads.refreshTile(state, x, z);
+    samples.push(performance.now() - a);
+  }
+  samples.sort((a, b) => a - b);
+  refreshMs = samples[samples.length >> 1];
+  for (let i = 0; i < 40; i++) { const x = TX + (i % 6), z = TZ + ((i / 6) | 0); state.map[z * N + x] = 0; }
+  roads.build(state);
+}
+
+// ---- boxes for buildings (so shadows/contact can be judged) ---------------
+const buildings = new THREE.Group();
+scene.add(buildings);
+{
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  geo.translate(0, 0.5, 0);
+  const mats = [0xe8d8c0, 0xd9b8a8, 0xc9d6e8, 0xe4c98f].map(
+    (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const inst = [];
+  for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+    if (state.map[z * N + x] !== 0) continue;
+    // only next to a road, so the downtown blocks fill in
+    let near = false;
+    for (let d = 0; d < 4 && !near; d++) {
+      const nx = x + [0, 1, 0, -1][d], nz = z + [-1, 0, 1, 0][d];
+      if (nx >= 0 && nz >= 0 && nx < N && nz < N && state.map[nz * N + nx] === 3) near = true;
+    }
+    if (!near || rnd() > 0.75) continue;
+    const h = 6 + rnd() * 34;
+    const m = new THREE.Mesh(geo, mats[(rnd() * 4) | 0]);
+    m.scale.set(6, h, 6);
+    m.position.set(x * TILE + TILE / 2, 0, z * TILE + TILE / 2);
+    m.castShadow = true; m.receiveShadow = true;
+    buildings.add(m);
+    inst.push(m);
+  }
+}
+
+// ---- anchor markers (debug only — roads.js does NOT place props) ----------
+const anchorGroup = new THREE.Group();
+{
+  const COL = { lamp: 0xffe27a, trafficlight: 0xff5555, sign_stop: 0xff8844, hydrant: 0x66ccff, bin: 0x88ff88, bench: 0xcc88ff };
+  const cyl = new THREE.CylinderGeometry(0.18, 0.18, 2.4, 6);
+  cyl.translate(0, 1.2, 0);
+  const arrow = new THREE.ConeGeometry(0.28, 0.9, 6);
+  arrow.rotateX(Math.PI / 2);
+  arrow.translate(0, 2.2, 0.85);
+  const cache = {};
+  for (const a of anchors) {
+    const col = COL[a.kind] || 0xffffff;
+    if (!cache[col]) cache[col] = new THREE.MeshStandardMaterial({ color: col, roughness: 0.6, emissive: col, emissiveIntensity: 0.25 });
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(cyl, cache[col]));
+    g.add(new THREE.Mesh(arrow, cache[col]));
+    g.position.set(a.x, 0.17, a.z);
+    g.rotation.y = a.yaw;
+    anchorGroup.add(g);
+  }
+  anchorGroup.visible = false;
+  scene.add(anchorGroup);
+}
+
+// ---- camera / controls ----------------------------------------------------
+let cam = new THREE.PerspectiveCamera(40, W() / H(), 1, 3000);
+const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 3000);
+let usingOrtho = false;
+const target = new THREE.Vector3(320, 0, 320);
+let dist = 260, az = 0.7, polar = 0.85, orthoSpan = 220;
+
+function applyCam() {
+  if (usingOrtho) {
+    const a = W() / H();
+    orthoCam.left = -orthoSpan * a; orthoCam.right = orthoSpan * a;
+    orthoCam.top = orthoSpan; orthoCam.bottom = -orthoSpan;
+    orthoCam.position.set(target.x, 600, target.z + 0.001);
+    orthoCam.lookAt(target);
+    orthoCam.updateProjectionMatrix();
+  } else {
+    const sp = Math.sin(polar), cp = Math.cos(polar);
+    cam.position.set(target.x + dist * sp * Math.sin(az), target.y + dist * cp, target.z + dist * sp * Math.cos(az));
+    cam.lookAt(target);
+    cam.aspect = W() / H();
+    cam.updateProjectionMatrix();
+  }
+}
+applyCam();
+
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, shift: e.shiftKey }; });
+addEventListener('pointerup', () => { drag = null; });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.shift || usingOrtho) {
+    const s = (usingOrtho ? orthoSpan : dist) * 0.0025;
+    target.x -= dx * s * Math.cos(az) - dy * s * Math.sin(az) * 0;
+    target.z += dx * s * Math.sin(az) * 0 + dy * s;
+    if (!usingOrtho) { target.x += 0; }
+  } else {
+    az -= dx * 0.006; polar = Math.max(0.05, Math.min(1.45, polar - dy * 0.005));
+  }
+  applyCam();
+});
+addEventListener('wheel', (e) => {
+  if (usingOrtho) orthoSpan = Math.max(20, Math.min(400, orthoSpan * (1 + Math.sign(e.deltaY) * 0.12)));
+  else dist = Math.max(20, Math.min(900, dist * (1 + Math.sign(e.deltaY) * 0.12)));
+  applyCam();
+}, { passive: true });
+addEventListener('resize', () => { renderer.setSize(W(), H()); applyCam(); });
+
+// ---- labels for each mask cluster ----------------------------------------
+const labelEl = document.getElementById('labels');
+const LABEL_NAMES = ['isolated', 'dead-end N', 'dead-end E', 'corner N+E', 'dead-end S', 'straight N-S',
+  'corner E+S', 'T (no W)', 'dead-end W', 'corner W+N', 'straight E-W', 'T (no S)',
+  'corner S+W', 'T (no E)', 'T (no N)', '4-way'];
+const labelPts = [];
+for (let m = 0; m < 16; m++) {
+  const x = 4 + (m % 4) * 7, z = 4 + ((m / 4) | 0) * 7;
+  labelPts.push({ p: new THREE.Vector3(x * TILE + 4, 3, z * TILE - 6), t: m + ' ' + LABEL_NAMES[m] });
+}
+let labelsOn = false;
+const labelDivs = labelPts.map((l) => { const d = document.createElement('div'); d.className = 'lbl'; d.textContent = l.t; labelEl.appendChild(d); return d; });
+function updateLabels() {
+  const c = usingOrtho ? orthoCam : cam;
+  const v = new THREE.Vector3();
+  labelPts.forEach((l, i) => {
+    if (!labelsOn) { labelDivs[i].style.display = 'none'; return; }
+    v.copy(l.p).project(c);
+    const vis = v.z < 1 && Math.abs(v.x) < 1.2 && Math.abs(v.y) < 1.2;
+    labelDivs[i].style.display = vis ? '' : 'none';
+    labelDivs[i].style.left = ((v.x * 0.5 + 0.5) * W()) + 'px';
+    labelDivs[i].style.top = ((-v.y * 0.5 + 0.5) * H()) + 'px';
+  });
+}
+
+// ---- HUD / API ------------------------------------------------------------
+const statsEl = document.getElementById('stats');
+let rain = 0, quality = 2, wire = false;
+function hud(extra) {
+  const s = roads.getStats();
+  statsEl.innerHTML =
+    'build ' + buildMs.toFixed(1) + ' ms &nbsp; refreshTile(med) ' + refreshMs.toFixed(2) + ' ms<br>' +
+    s.tris.toLocaleString() + ' tris &nbsp; ' + roads._chunks.size + ' chunk meshes<br>' +
+    anchors.length + ' anchors &nbsp; rain ' + rain + ' &nbsp; quality ' + quality +
+    (extra ? '<br>' + extra : '');
+}
+hud();
+
+const ctx = { time: 0, dt: 0.016, nightT: 0, nightEff: 0, weather: { rain: 0, snow: 0, tint: [1, 1, 1] }, camera: cam, camDist: dist, sunDir: new THREE.Vector3(0.5, 0.7, 0.4).normalize(), quality: 2 };
+
+window.RT = {
+  view(v) {
+    if (v === 'ortho') { usingOrtho = true; }
+    else if (v === 'persp') { usingOrtho = false; polar = 0.78; az = 0.7; dist = 200; }
+    else if (v === 'far') { usingOrtho = false; polar = 0.95; az = 0.7; dist = 720; target.set(320, 0, 320); }
+    applyCam();
+  },
+  focus(where) {
+    if (where === 'cases') { target.set(4 * TILE + 10 * TILE, 0, 4 * TILE + 10 * TILE); orthoSpan = 130; dist = 200; }
+    else if (where === 'grid') { target.set(57 * TILE, 0, 66 * TILE); orthoSpan = 110; dist = 180; }
+    else if (where === 'straight') { target.set(14 * TILE, 0, 44 * TILE); orthoSpan = 90; dist = 140; }
+    applyCam();
+  },
+  rain() { rain = rain ? 0 : 1; ctx.weather.rain = rain; hud(); },
+  quality() { quality = (quality + 2) % 3; ctx.quality = quality; hud(); },
+  labels() { labelsOn = !labelsOn; },
+  wire() { wire = !wire; roads.material.wireframe = wire; },
+  anchors() { anchorGroup.visible = !anchorGroup.visible; },
+  test() {
+    const r = selfTest(renderer);
+    console.log('%c selfTest ' + (r.pass ? 'PASS' : 'FAIL'), 'font-weight:bold');
+    r.notes.forEach((n) => console.log('  ' + n));
+    hud((r.pass ? '<b>selfTest PASS</b>' : '<span style="color:#f88">selfTest FAIL</span>') + ' (see console)');
+    return r;
+  },
+  cam(o) {
+    if (o.ortho != null) usingOrtho = !!o.ortho;
+    if (o.span != null) orthoSpan = o.span;
+    if (o.dist != null) dist = o.dist;
+    if (o.az != null) az = o.az;
+    if (o.polar != null) polar = o.polar;
+    if (o.x != null) target.set(o.x, 0, o.z);
+    applyCam();
+  },
+  showAnchors(v) { anchorGroup.visible = !!v; },
+  showBuildings(v) { buildings.visible = !!v; },
+  toggleBuildings() { buildings.visible = !buildings.visible; },
+  roads, scene, renderer, state, anchors,
+};
+
+// fast wetness ramp for screenshots
+roads.uniforms.uBvWet.value = 0;
+
+let last = performance.now();
+function frame() {
+  const t = performance.now();
+  const dt = Math.min(0.05, (t - last) / 1000); last = t;
+  ctx.time += dt; ctx.dt = dt; ctx.camDist = dist;
+  roads.update(dt, ctx);
+  renderer.render(scene, usingOrtho ? orthoCam : cam);
+  updateLabels();
+  requestAnimationFrame(frame);
+}
+frame();
+
+// expose a "ready" flag for scripted screenshots
+setTimeout(() => { window.RT_READY = true; }, 300);
+</script>
+</body>
+</html>

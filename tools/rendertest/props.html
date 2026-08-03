@@ -1,0 +1,458 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Blockville — props.js render test</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#0d1117; font:12px/1.4 ui-monospace, Menlo, monospace; color:#e6edf3; }
+  canvas { display:block; }
+  #hud { position:fixed; left:8px; top:8px; z-index:10; background:rgba(13,17,23,.84); padding:8px 10px; border-radius:6px; max-width:360px; }
+  #hud b { color:#7ee787; }
+  #stats { white-space:pre; font-size:11px; }
+  button { font:inherit; background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:4px; padding:3px 7px; margin:1px; cursor:pointer; }
+  button:hover { background:#30363d; }
+  button.on { background:#1f6feb; border-color:#388bfd; }
+  label { display:inline-block; margin:2px 6px 2px 0; }
+  input[type=range] { vertical-align:middle; width:110px; }
+  #log { position:fixed; right:8px; top:8px; z-index:10; background:rgba(13,17,23,.9); padding:8px 10px;
+         border-radius:6px; max-width:430px; max-height:88vh; overflow:auto; white-space:pre-wrap; display:none; font-size:11px; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div><b>props.js</b> — street furniture + natural scatter</div>
+  <div id="stats">building…</div>
+  <div style="margin-top:6px">
+    <button onclick="RT.shot('street')">street (62)</button>
+    <button onclick="RT.shot('hero')">hero (150)</button>
+    <button onclick="RT.shot('region')">region (340)</button>
+    <button onclick="RT.shot('macro')">macro (22)</button>
+  </div>
+  <div>
+    go to:
+    <button onclick="RT.goto('lamp')">lamp</button>
+    <button onclick="RT.goto('trafficlight')">signal</button>
+    <button onclick="RT.goto('sign_stop')">stop</button>
+    <button onclick="RT.goto('hydrant')">hydrant</button>
+    <button onclick="RT.goto('bin')">bin</button>
+    <button onclick="RT.goto('bench')">bench</button>
+    <button onclick="RT.anchorStats()">kinds</button>
+  </div>
+  <div>
+    <button onclick="RT.quality(0)" id="q0">Q0</button>
+    <button onclick="RT.quality(1)" id="q1">Q1</button>
+    <button onclick="RT.quality(2)" id="q2">Q2</button>
+    <button onclick="RT.toggle('furn')" id="bFurn">furniture</button>
+    <button onclick="RT.toggle('veg')" id="bVeg">vegetation</button>
+    <button onclick="RT.toggle('lod')" id="bLod">LOD colours</button>
+    <button onclick="RT.toggle('wire')" id="bWire">wireframe</button>
+  </div>
+  <div>
+    <label>night <input type="range" id="sNight" min="0" max="1" step="0.01" value="0"></label>
+    <label>wind <input type="range" id="sWind" min="0" max="4" step="0.05" value="1"></label>
+  </div>
+  <div>
+    <button onclick="RT.reseed()">reseed map</button>
+    <button onclick="RT.stress()">stress (x3 density)</button>
+    <button onclick="RT.bench()">bench</button>
+    <button onclick="RT.test()">selfTest</button>
+    <button onclick="RT.closeLog()">close log</button>
+  </div>
+  <div style="margin-top:4px;opacity:.7">drag = orbit · wheel = zoom</div>
+</div>
+<div id="log"></div>
+
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { Props, selfTest } from '../../src/render/props.js';
+import { Roads } from '../../src/render/roads.js';
+import { TILE, N, T } from '../../src/constants.js';
+
+const MAP_W = TILE * N, C = MAP_W / 2;
+const W = () => innerWidth, H = () => innerHeight;
+
+// ---------------------------------------------------------------------------
+// Renderer / scene
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(W(), H());
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd0ef);
+scene.fog = new THREE.Fog(0xaad4ef, 700, 1900);
+
+const camera = new THREE.PerspectiveCamera(40, W() / H(), 1, 3000);
+
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.6);
+sun.position.set(240, 320, 160);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+{
+  const sc = sun.shadow.camera;
+  sc.left = -300; sc.right = 300; sc.top = 300; sc.bottom = -300; sc.near = 1; sc.far = 1100;
+  sun.shadow.normalBias = 0.04; sun.shadow.bias = -0.0004;
+}
+scene.add(sun);
+const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x5a6a4a, 0.55);
+scene.add(hemi);
+const amb = new THREE.AmbientLight(0xffffff, 0.18);
+scene.add(amb);
+
+// Cheap sky/ground IBL so metal furniture has something to reflect.
+{
+  const pm = new THREE.PMREMGenerator(renderer);
+  const es = new THREE.Scene();
+  const dome = new THREE.Mesh(
+    new THREE.SphereGeometry(500, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0xa8d8f2, side: THREE.BackSide }));
+  es.add(dome);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400),
+    new THREE.MeshBasicMaterial({ color: 0x6fae4a }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = -30;
+  es.add(floor);
+  scene.environment = pm.fromScene(es).texture;
+  pm.dispose();
+}
+
+// ---------------------------------------------------------------------------
+// Stand-in world: the real 640x640 tile map, with ocean, a road grid,
+// mountains, ambient TREE tiles and a block of "buildings" (occ != 0).
+// ---------------------------------------------------------------------------
+let seed = 20240601;
+let state = null;
+
+function mulberry32(a) {
+  return function () {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function makeState(s) {
+  const rng = mulberry32(s);
+  const map = new Uint8Array(N * N), occ = new Int32Array(N * N);
+  const level = new Uint8Array(N * N), bridge = new Uint8Array(N * N);
+  const variant = new Uint8Array(N * N);
+  const noise = (x, z, f) => Math.sin((x * 0.21 + s * 0.013) * f) * Math.cos((z * 0.17 + s * 0.007) * f);
+
+  for (let z = 0; z < N; z++) {
+    for (let x = 0; x < N; x++) {
+      const i = z * N + x;
+      let t = T.GRASS;
+      const shore = 8 + Math.round(noise(0, z, 1.7) * 4);
+      if (x < shore) t = T.WATER;
+      else if (x < shore + 3) t = T.SAND;
+      else if (x > 62 && z > 54 && noise(x, z, 0.9) > -0.4) { t = T.MOUNTAIN; variant[i] = 4 + ((rng() * 10) | 0); }
+      map[i] = t;
+    }
+  }
+  // road grid over the middle third
+  for (let z = 14; z < 60; z++) {
+    for (let x = 18; x < 58; x++) {
+      if (x % 6 === 0 || z % 7 === 0) { const i = z * N + x; if (map[i] === T.GRASS) map[i] = T.ROAD; }
+    }
+  }
+  // building plots inside the blocks
+  let bid = 1;
+  for (let z = 15; z < 59; z++) {
+    for (let x = 19; x < 57; x++) {
+      const i = z * N + x;
+      if (map[i] !== T.GRASS) continue;
+      if (x % 6 === 0 || z % 7 === 0) continue;
+      if (rng() < 0.42) { occ[i] = bid++; level[i] = 1; }
+    }
+  }
+  // ambient TREE tiles (props.js must NOT double up on these)
+  for (let i = 0; i < N * N; i++) if (map[i] === T.GRASS && !occ[i] && rng() < 0.03) map[i] = T.TREE;
+  return { map, occ, level, bridge, variant, seed: s, buildings: [] };
+}
+
+// ---- ground / water / mountains / building blocks (stand-in terrain) -------
+const ground = new THREE.Group();
+scene.add(ground);
+
+function buildTerrain() {
+  while (ground.children.length) {
+    const m = ground.children.pop();
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) m.material.dispose();
+  }
+  const mk = (color, rough) => new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
+  const kinds = [
+    { m: mk(0x6fb63f, 0.95), test: (t) => t === T.GRASS || t === T.TREE, y: 0.0 },
+    { m: mk(0xe6d3a3, 0.92), test: (t) => t === T.SAND, y: 0.0 },
+    { m: mk(0x3a3d42, 0.95), test: (t) => t === T.ROAD, y: 0.01 },
+    { m: mk(0x2f8fc0, 0.25), test: (t) => t === T.WATER, y: -0.35 },
+    { m: mk(0x8a8f96, 0.95), test: (t) => t === T.MOUNTAIN, y: 0.0 },
+  ];
+  for (const k of kinds) {
+    const cells = [];
+    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) if (k.test(state.map[z * N + x])) cells.push([x, z]);
+    if (!cells.length) continue;
+    const isMtn = k.test(T.MOUNTAIN) && k.m.color.getHex() === 0x8a8f96;
+    const geo = isMtn ? new THREE.BoxGeometry(TILE, 1, TILE) : new THREE.PlaneGeometry(TILE, TILE);
+    if (!isMtn) geo.rotateX(-Math.PI / 2);
+    const mesh = new THREE.InstancedMesh(geo, k.m, cells.length);
+    mesh.receiveShadow = true; mesh.castShadow = isMtn;
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < cells.length; i++) {
+      const [x, z] = cells[i];
+      const h = isMtn ? Math.max(2, state.variant[z * N + x]) : 1;
+      m4.makeScale(1, h, 1);
+      m4.setPosition((x + 0.5) * TILE, isMtn ? h / 2 : k.y, (z + 0.5) * TILE);
+      mesh.setMatrixAt(i, m4);
+    }
+    ground.add(mesh);
+  }
+  // buildings as plain grey boxes — they only need to occlude and cast
+  const plots = [];
+  for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) if (state.occ[z * N + x]) plots.push([x, z]);
+  if (plots.length) {
+    const g = new THREE.BoxGeometry(TILE * 0.86, 1, TILE * 0.86);
+    const m = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.7 });
+    const mesh = new THREE.InstancedMesh(g, m, plots.length);
+    mesh.castShadow = mesh.receiveShadow = true;
+    const m4 = new THREE.Matrix4();
+    const rng = mulberry32(seed ^ 0x5f3a);
+    for (let i = 0; i < plots.length; i++) {
+      const h = 8 + Math.floor(rng() * 34);
+      m4.makeScale(1, h, 1);
+      m4.setPosition((plots[i][0] + 0.5) * TILE, h / 2, (plots[i][1] + 0.5) * TILE);
+      mesh.setMatrixAt(i, m4);
+    }
+    ground.add(mesh);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Modules under test
+// ---------------------------------------------------------------------------
+let roads = null, props = null, anchors = [];
+
+function buildWorld() {
+  state = makeState(seed);
+  buildTerrain();
+  if (roads) roads.dispose();
+  roads = new Roads(scene, { quality: 2 });
+  anchors = roads.build(state);
+  if (props) props.dispose();
+  props = new Props(scene, { quality: qLevel, density: densityMul });
+  props.setAnchors(anchors);
+  props.scatter(state);
+  applyToggles();
+}
+
+// ---------------------------------------------------------------------------
+// Camera / controls
+// ---------------------------------------------------------------------------
+const target = new THREE.Vector3(C, 0, C);
+let dist = 150, polar = 0.85, az = Math.PI * 0.25;
+function place() {
+  const sp = Math.sin(polar), cp = Math.cos(polar);
+  camera.position.set(target.x + Math.sin(az) * dist * sp, target.y + dist * cp, target.z + Math.cos(az) * dist * sp);
+  camera.lookAt(target);
+  camera.updateMatrixWorld(true);
+}
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; });
+addEventListener('pointerup', () => { drag = null; });
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  az -= (e.clientX - drag.x) * 0.005;
+  polar = Math.max(0.20, Math.min(1.45, polar + (e.clientY - drag.y) * 0.004));
+  drag = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('wheel', (e) => {
+  dist = Math.max(14, Math.min(600, dist * (1 + Math.sign(e.deltaY) * 0.1)));
+  e.preventDefault();
+}, { passive: false });
+addEventListener('resize', () => {
+  renderer.setSize(W(), H());
+  camera.aspect = W() / H(); camera.updateProjectionMatrix();
+});
+
+// ---------------------------------------------------------------------------
+// Controls / toggles
+// ---------------------------------------------------------------------------
+let qLevel = 2, densityMul = 1, nightT = 0, windMul = 1;
+const show = { furn: true, veg: true };
+let lodColours = false, wire = false;
+
+function applyToggles() {
+  if (!props) return;
+  props.material.wireframe = wire;
+  scene.traverse((o) => {
+    if (!o.name || o.name.indexOf('props:') !== 0) return;
+    const veg = /oak|pine|blossom|shrub|hedge|rock|path/.test(o.name);
+    o.visible = veg ? show.veg : show.furn;
+  });
+  document.getElementById('bFurn').className = show.furn ? 'on' : '';
+  document.getElementById('bVeg').className = show.veg ? 'on' : '';
+  document.getElementById('bLod').className = lodColours ? 'on' : '';
+  document.getElementById('bWire').className = wire ? 'on' : '';
+  for (let q = 0; q <= 2; q++) document.getElementById('q' + q).className = q === qLevel ? 'on' : '';
+}
+
+// LOD false-colour: tint every LOD1 instance magenta so the handover distance
+// and any popping are obvious.
+let lodSaved = null;
+function applyLodColours() {
+  if (!props) return;
+  scene.traverse((o) => {
+    if (!o.name || o.name.indexOf('props:') !== 0 || !o.instanceColor) return;
+    const isL1 = /:L1$/.test(o.name);
+    if (lodColours) {
+      if (!o.userData._lodSave) o.userData._lodSave = o.instanceColor.array.slice();
+      const a = o.instanceColor.array;
+      for (let i = 0; i < a.length; i += 3) {
+        if (isL1) { a[i] = 2.2; a[i + 1] = 0.25; a[i + 2] = 1.6; }
+      }
+      o.instanceColor.needsUpdate = true;
+    } else if (o.userData._lodSave) {
+      o.instanceColor.array.set(o.userData._lodSave);
+      o.instanceColor.needsUpdate = true;
+      o.userData._lodSave = null;
+    }
+  });
+}
+
+const SHOTS = {
+  macro: { dist: 22, polar: 1.25 },
+  street: { dist: 62, polar: 1.12 },
+  hero: { dist: 150, polar: 0.85 },
+  region: { dist: 340, polar: 1.16 },
+};
+
+window.RT = {
+  shot(n) { const s = SHOTS[n]; dist = s.dist; polar = s.polar; },
+  /** Fly to a world position (or `RT.goto('bench')` for the first prop of a kind). */
+  goto(x, z) {
+    if (typeof x === 'string') {
+      const a = anchors.find((k) => k.kind === x);
+      if (!a) { log('no anchor of kind ' + x); return; }
+      target.set(a.x, 1.5, a.z); az = a.yaw + Math.PI; dist = 20; polar = 1.15;
+      log('at ' + x + ' (' + a.x.toFixed(1) + ', ' + a.z.toFixed(1) + ') yaw ' + a.yaw.toFixed(2));
+      return;
+    }
+    target.set(x, 1.5, z);
+  },
+  /** Histogram of the anchor kinds roads.js handed us. */
+  anchorStats() {
+    const h = {};
+    for (const a of anchors) h[a.kind] = (h[a.kind] || 0) + 1;
+    log('roads.js anchors (' + anchors.length + ')\n' +
+      Object.keys(h).sort().map((k) => '  ' + k.padEnd(14) + h[k]).join('\n'));
+  },
+  quality(q) { qLevel = q; props.setQuality(q); applyToggles(); },
+  toggle(k) {
+    if (k === 'wire') wire = !wire;
+    else if (k === 'lod') { lodColours = !lodColours; }
+    else show[k] = !show[k];
+    applyToggles();
+  },
+  reseed() { seed = (seed * 1664525 + 1013904223) >>> 0; buildWorld(); },
+  stress() { densityMul = densityMul >= 3 ? 1 : 3; buildWorld(); },
+  bench() {
+    const gl = renderer.getContext(), px = new Uint8Array(4);
+    const sync = () => { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
+    const run = () => {
+      for (let i = 0; i < 5; i++) renderer.render(scene, camera); sync();
+      const t0 = performance.now();
+      for (let i = 0; i < 40; i++) renderer.render(scene, camera); sync();
+      return (performance.now() - t0) / 40;
+    };
+    renderer.info.reset(); renderer.render(scene, camera);
+    const withT = renderer.info.render.triangles, withC = renderer.info.render.calls;
+    const a = run();
+    const vis = [];
+    scene.traverse((o) => { if (o.name && o.name.indexOf('props:') === 0) { vis.push([o, o.visible]); o.visible = false; } });
+    renderer.info.reset(); renderer.render(scene, camera);
+    const woT = renderer.info.render.triangles, woC = renderer.info.render.calls;
+    const b = run();
+    vis.forEach(([o, v]) => { o.visible = v; });
+    log([
+      'BENCH  dist ' + dist.toFixed(0) + '  quality ' + qLevel,
+      '  scene pass with props : ' + withT.toLocaleString() + ' tris, ' + withC + ' calls, ' + a.toFixed(2) + ' ms',
+      '  scene pass no props   : ' + woT.toLocaleString() + ' tris, ' + woC + ' calls, ' + b.toFixed(2) + ' ms',
+      '  props cost            : +' + (withT - woT).toLocaleString() + ' tris, +' + (withC - woC) +
+      ' calls, +' + (a - b).toFixed(2) + ' ms',
+    ].join('\n'));
+  },
+  test() {
+    const r = selfTest(renderer);
+    log((r.pass ? 'selfTest PASS' : 'selfTest FAIL') + '\n' + r.notes.join('\n'));
+  },
+  closeLog() { document.getElementById('log').style.display = 'none'; },
+};
+
+function log(s) {
+  const el = document.getElementById('log');
+  el.style.display = 'block';
+  el.textContent = s;
+}
+
+document.getElementById('sNight').addEventListener('input', (e) => { nightT = +e.target.value; });
+document.getElementById('sWind').addEventListener('input', (e) => { windMul = +e.target.value; });
+
+// ---------------------------------------------------------------------------
+// Frame
+// ---------------------------------------------------------------------------
+buildWorld();
+place();
+
+const ctx = { time: 0, dt: 0, nightT: 0, nightEff: 0, weather: { rain: 0, snow: 0, tint: [1, 1, 1] }, camera, camDist: dist, sunDir: new THREE.Vector3(), quality: 2 };
+let last = performance.now(), fps = 0, lastLod = false;
+
+function frame() {
+  requestAnimationFrame(frame);
+  const t = performance.now();
+  const dt = Math.min(0.05, (t - last) / 1000);
+  last = t;
+  fps += ((1 / Math.max(1e-3, dt)) - fps) * 0.08;
+
+  place();
+  ctx.time += dt; ctx.dt = dt;
+  ctx.nightT = ctx.nightEff = nightT;
+  ctx.camDist = dist; ctx.quality = qLevel;
+
+  // day/night on the stand-in rig, so the emissive lamp bulbs have something to
+  // be brighter than
+  const k = 1 - nightT;
+  sun.intensity = 2.6 * Math.max(0.02, k * k);
+  hemi.intensity = 0.10 + 0.45 * k;
+  amb.intensity = 0.05 + 0.13 * k;
+  scene.background.setHex(nightT > 0.5 ? 0x0d1730 : 0x9fd0ef);
+
+  roads.update(dt, ctx);
+  props._wind = windMul;
+  props.update(dt, ctx);
+  if (lodColours !== lastLod) { applyLodColours(); lastLod = lodColours; }
+  else if (lodColours) applyLodColours();
+
+  renderer.info.reset();
+  renderer.render(scene, camera);
+
+  const s = props.getStats();
+  document.getElementById('stats').textContent =
+    'fps ' + fps.toFixed(0) + '   dist ' + dist.toFixed(0) + '   Q' + qLevel + (densityMul > 1 ? ' x' + densityMul : '') + '\n' +
+    'anchors    ' + s.anchors + '  (roads emitted ' + anchors.length + ')\n' +
+    'scattered  ' + s.scatter + '   baked ' + s.instances + '\n' +
+    'drawn      ' + s.drawn + ' instances in ' + s.meshes + ' draws\n' +
+    'prop tris  ' + s.tris.toLocaleString() + '\n' +
+    'scene      ' + renderer.info.render.triangles.toLocaleString() + ' tris, ' + renderer.info.render.calls + ' calls\n' +
+    'cpu        bake ' + s.bakeMs.toFixed(1) + ' ms · scatter ' + s.scatterMs.toFixed(1) +
+    ' ms · cull ' + s.refreshMs.toFixed(2) + ' ms';
+}
+frame();
+</script>
+</body>
+</html>

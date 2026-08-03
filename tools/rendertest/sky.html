@@ -1,0 +1,335 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>rendertest — sky.js</title>
+<style>
+  html,body { margin:0; height:100%; background:#000; overflow:hidden;
+              font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#eee; }
+  canvas { display:block; }
+  #ui { position:fixed; left:10px; top:10px; z-index:10; background:rgba(12,14,20,.78);
+        padding:10px 12px; border-radius:10px; width:250px; backdrop-filter:blur(6px); }
+  #ui h1 { font-size:12px; margin:0 0 8px; letter-spacing:.08em; text-transform:uppercase; opacity:.7; }
+  .row { display:flex; align-items:center; gap:8px; margin:6px 0; }
+  .row label { width:72px; opacity:.8; }
+  .row input[type=range] { flex:1; }
+  .row .v { width:40px; text-align:right; font-variant-numeric:tabular-nums; opacity:.9; }
+  button { background:#2a3550; color:#eee; border:1px solid #445; border-radius:6px;
+           padding:4px 9px; cursor:pointer; font:inherit; }
+  button.on { background:#3d6ea8; }
+  #stats { position:fixed; right:10px; top:10px; z-index:10; background:rgba(12,14,20,.78);
+           padding:8px 10px; border-radius:8px; font-variant-numeric:tabular-nums; white-space:pre; }
+  #shots { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+  #shots button { padding:2px 6px; font-size:11px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>sky.js harness</h1>
+  <div class="row"><label>nightT</label><input id="night" type="range" min="0" max="1" step="0.001" value="0"><span class="v" id="nightV">0.00</span></div>
+  <div class="row"><label>rain</label><input id="rain" type="range" min="0" max="1" step="0.01" value="0"><span class="v" id="rainV">0.00</span></div>
+  <div class="row"><label>snow</label><input id="snow" type="range" min="0" max="1" step="0.01" value="0"><span class="v" id="snowV">0.00</span></div>
+  <div class="row"><label>quality</label><input id="qual" type="range" min="0" max="2" step="1" value="2"><span class="v" id="qualV">2</span></div>
+  <div class="row"><label>city glow</label><input id="glow" type="range" min="0" max="1" step="0.01" value="0"><span class="v" id="glowV">0.00</span></div>
+  <div class="row"><label>cam polar</label><input id="polar" type="range" min="0.35" max="1.55" step="0.01" value="1.28"><span class="v" id="polarV">1.28</span></div>
+  <div class="row"><button id="play">▶ auto-cycle</button><button id="selftest">selfTest()</button></div>
+  <div id="shots">
+    <button data-t="0">noon</button>
+    <button data-t="0.45">golden</button>
+    <button data-t="0.5">sunset</button>
+    <button data-t="0.75">0.75</button>
+    <button data-t="1">midnight</button>
+    <button id="overcastBtn">overcast rain</button>
+    <button id="gameCam">game max polar (1.20)</button>
+    <button id="wfCam">waterfront (1.28)</button>
+    <button id="horizonTest">horizon vs fog</button>
+  </div>
+</div>
+<div id="stats"></div>
+<canvas id="c"></canvas>
+
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { Sky, selfTest } from '../../src/render/sky.js';
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+const MAP_W = 640, CENTER = 320;
+
+// Fog, exactly like engine.js — proves the dome is fog-exempt.
+const fog = new THREE.Fog(0x9fd0ff, MAP_W * 0.55, MAP_W * 1.85);
+scene.fog = fog;
+
+const camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
+let freeLook = null;   // set by window.__look() for sky-only inspection shots
+let camDist = 240, camAz = Math.PI * 0.25, camPolar = 1.40;
+const camTarget = new THREE.Vector3(CENTER, 0, CENTER);
+function place() {
+  if (freeLook) {
+    camera.position.set(CENTER, 40, CENTER);
+    const ce = Math.cos(freeLook.e);
+    camera.lookAt(CENTER + ce * Math.sin(freeLook.a) * 100,
+                  40 + Math.sin(freeLook.e) * 100,
+                  CENTER + ce * Math.cos(freeLook.a) * 100);
+    camera.updateMatrixWorld();
+    return;
+  }
+  const sp = Math.sin(camPolar), cp = Math.cos(camPolar);
+  camera.position.set(camTarget.x + camDist * sp * Math.sin(camAz),
+                      camTarget.y + camDist * cp,
+                      camTarget.z + camDist * sp * Math.cos(camAz));
+  camera.lookAt(camTarget);
+  camera.updateMatrixWorld();
+}
+place();
+
+// ---- lights (driven entirely by sky.update()'s return) ---------------------
+const hemi = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6); scene.add(hemi);
+const amb  = new THREE.AmbientLight(0xffffff, 0.18); scene.add(amb);
+const sun  = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const sc = sun.shadow.camera, sHalf = MAP_W * 0.55;
+sc.left = -sHalf; sc.right = sHalf; sc.top = sHalf; sc.bottom = -sHalf;
+sc.near = 1; sc.far = MAP_W * 2.6; sc.updateProjectionMatrix();
+sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.9;
+scene.add(sun);
+const sunTarget = new THREE.Object3D();
+sunTarget.position.set(CENTER, 0, CENTER); scene.add(sunTarget);
+sun.target = sunTarget;
+
+// ---- ground + boxes --------------------------------------------------------
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(MAP_W * 1.7, MAP_W * 1.7),
+  new THREE.MeshStandardMaterial({ color: 0x5fa04a, roughness: 0.95, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.set(CENTER, 0, CENTER);
+ground.receiveShadow = true;
+scene.add(ground);
+
+const boxColors = [0xd94f4f, 0xf0c24a, 0x4f8fd9, 0xe8e4d8, 0x8a6a4a, 0x6ac2a0];
+let rs = 12345;
+const rnd = () => (rs = (rs * 1664525 + 1013904223) >>> 0) / 4294967296;
+for (let i = 0; i < 34; i++) {
+  const w = 6 + rnd() * 12, h = 8 + rnd() * 52, d = 6 + rnd() * 12;
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({
+      color: boxColors[(rnd() * boxColors.length) | 0],
+      roughness: 0.35 + rnd() * 0.55, metalness: rnd() < 0.25 ? 0.85 : 0.04,
+    })
+  );
+  m.position.set(CENTER + (rnd() - 0.5) * 260, h / 2, CENTER + (rnd() - 0.5) * 260);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+}
+
+// IBL probes: chrome + rough metal + dielectric.
+const chrome = new THREE.Mesh(new THREE.SphereGeometry(16, 48, 32),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.04 }));
+chrome.position.set(CENTER - 46, 17, CENTER + 96);
+chrome.castShadow = true; scene.add(chrome);
+
+const roughBall = new THREE.Mesh(new THREE.SphereGeometry(16, 48, 32),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.42 }));
+roughBall.position.set(CENTER + 2, 17, CENTER + 96);
+roughBall.castShadow = true; scene.add(roughBall);
+
+const diel = new THREE.Mesh(new THREE.SphereGeometry(16, 48, 32),
+  new THREE.MeshStandardMaterial({ color: 0xf2f2f2, metalness: 0, roughness: 0.25 }));
+diel.position.set(CENTER + 50, 17, CENTER + 96);
+diel.castShadow = true; scene.add(diel);
+
+// ---- sky -------------------------------------------------------------------
+const sky = new Sky(scene, { renderer, quality: 2 });
+scene.environment = sky.getEnvironment(renderer);
+sky.onEnvironmentUpdate = (t) => { scene.environment = t; };
+
+// ---- UI --------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const nightEl = $('night'), rainEl = $('rain'), snowEl = $('snow'), qualEl = $('qual');
+const glowEl = $('glow'), polarEl = $('polar');
+let playing = false;
+$('play').onclick = e => { playing = !playing; e.target.classList.toggle('on', playing); };
+$('overcastBtn').onclick = () => { rainEl.value = 1; nightEl.value = 0.18; sync(); };
+// The game's orbit camera stops at polar 1.2 and the demo waterfront shot sits
+// at 1.28. With a 40 deg vertical FOV that puts the TOP of the frame only
+// about -1 deg / +3 deg from the horizon, so everything the sky is asked to
+// show has to live in the first few degrees above the horizon line. These two
+// buttons frame exactly that, and are the shots that actually matter.
+$('gameCam').onclick = () => { polarEl.value = 1.20; sync(); };
+$('wfCam').onclick = () => { polarEl.value = 1.28; sync(); };
+$('horizonTest').onclick = () => { const r = window.__horizonTest(); console.log(r); alert(JSON.stringify(r, null, 1)); };
+document.querySelectorAll('#shots button[data-t]').forEach(b => {
+  b.onclick = () => { nightEl.value = b.dataset.t; playing = false;
+                      $('play').classList.remove('on'); sync(); };
+});
+$('selftest').onclick = () => {
+  const r = selfTest(renderer);
+  console.log('[selfTest]', r.pass ? 'PASS' : 'FAIL');
+  r.notes.forEach(n => console.log('  ' + n));
+  alert((r.pass ? 'PASS' : 'FAIL') + '\n\n' + r.notes.join('\n'));
+};
+function sync() {
+  $('nightV').textContent = (+nightEl.value).toFixed(2);
+  $('rainV').textContent = (+rainEl.value).toFixed(2);
+  $('snowV').textContent = (+snowEl.value).toFixed(2);
+  $('qualV').textContent = qualEl.value;
+  $('glowV').textContent = (+glowEl.value).toFixed(2);
+  $('polarV').textContent = (+polarEl.value).toFixed(2);
+  camPolar = +polarEl.value;
+  sky.setCityGlow({ x: CENTER, z: CENTER, amount: +glowEl.value });
+}
+[nightEl, rainEl, snowEl, qualEl, glowEl, polarEl].forEach(e => e.addEventListener('input', sync));
+sync();
+
+// drag to orbit, wheel to zoom
+let drag = null;
+canvas.addEventListener('pointerdown', e => drag = { x: e.clientX, y: e.clientY });
+addEventListener('pointerup', () => drag = null);
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  camAz -= (e.clientX - drag.x) * 0.005;
+  camPolar = Math.min(1.55, Math.max(0.12, camPolar - (e.clientY - drag.y) * 0.004));
+  polarEl.value = camPolar; $('polarV').textContent = camPolar.toFixed(2);
+  drag = { x: e.clientX, y: e.clientY };
+});
+canvas.addEventListener('wheel', e => {
+  camDist = Math.min(600, Math.max(30, camDist * (1 + Math.sign(e.deltaY) * 0.1)));
+  e.preventDefault();
+}, { passive: false });
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  sky.setSize(w, h, renderer.getPixelRatio());
+}
+addEventListener('resize', resize); resize();
+
+// ---- loop ------------------------------------------------------------------
+const ctx = {
+  time: 0, dt: 0, nightT: 0, nightEff: 0,
+  weather: { rain: 0, snow: 0, tint: [1, 1, 1] },
+  camera, camDist, sunDir: new THREE.Vector3(), quality: 2,
+};
+let last = performance.now(), fps = 60;
+
+// Deterministic hook for screenshots: window.__setSky(nightT, rain, snow)
+window.__setSky = (t, rain, snow) => {
+  playing = false; $('play').classList.remove('on');
+  nightEl.value = t; rainEl.value = rain || 0; snowEl.value = snow || 0; sync();
+  // Settle the eased overcast + PMREM immediately.
+  sky.setWeather({ rain: +rainEl.value, snow: +snowEl.value });
+  sky._overcast = sky._overcastTarget;
+  sky.invalidateEnvironment();
+  for (let i = 0; i < 3; i++) frame(0.016);
+  return 'ok';
+};
+window.__selfTest = () => selfTest(renderer);
+window.__sky = sky;   // dev handle: poke uniforms from the console
+// Does the dome actually DRAW the fogColor it hands back? Rendering a fully
+// fogged quad next to the dome's horizon pixel is the only honest check.
+window.__horizonTest = () => {
+  const out = {};
+  const n0 = fog.near, f0 = fog.far;
+  for (const [name, t] of [['noon', 0], ['golden', 0.42], ['dusk', 0.55], ['midnight', 0.95]]) {
+    nightEl.value = t; sync();
+    camPolar = 1.42; frame(0.016);
+    fog.near = 0.01; fog.far = 0.02;          // every ground pixel == fogColor
+    frame(0.016);
+    const gl = renderer.getContext();
+    const W = renderer.domElement.width, H = renderer.domElement.height;
+    const x = W >> 1;
+    let lo = 0, hi = H - 1;
+    const d = new THREE.Vector3();
+    const dirY = (py) => d.set(0, (py + 0.5) / H * 2 - 1, 0.5).unproject(camera).sub(camera.position).normalize().y;
+    for (let i = 0; i < 20; i++) { const m = (lo + hi) >> 1; if (dirY(m) < 0) lo = m + 1; else hi = m; }
+    const px = new Uint8Array(4 * 40);
+    gl.readPixels(x, lo - 20, 1, 40, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const below = [0, 0, 0], above = [0, 0, 0];
+    for (let i = 0; i < 14; i++) for (let c = 0; c < 3; c++) { below[c] += px[i * 4 + c]; above[c] += px[(26 + i) * 4 + c]; }
+    out[name] = { groundAtFullFog: below.map(v => +(v / 14).toFixed(1)),
+                  domeAtHorizon: above.map(v => +(v / 14).toFixed(1)),
+                  delta: [0, 1, 2].map(c => +((above[c] - below[c]) / 14).toFixed(1)) };
+    fog.near = n0; fog.far = f0;
+  }
+  return out;
+};
+// Free-look straight at a direction (for inspecting the moon / zenith).
+window.__look = (elevDeg, azRad) => {
+  freeLook = { e: elevDeg * Math.PI / 180, a: azRad };
+  frame(0.016); return 'ok';
+};
+window.__orbit = () => { freeLook = null; frame(0.016); return 'ok'; };
+window.__fov = (f) => { camera.fov = f; camera.updateProjectionMatrix(); frame(0.016); return 'ok'; };
+window.__cam = (polar, dist, az) => {
+  if (polar != null) camPolar = polar;
+  if (dist != null) camDist = dist;
+  if (az != null) camAz = az;
+  frame(0.016); return 'ok';
+};
+
+function frame(dt) {
+  ctx.dt = dt; ctx.time += dt;
+  ctx.nightT = ctx.nightEff = +nightEl.value;
+  ctx.weather.rain = +rainEl.value;
+  ctx.weather.snow = +snowEl.value;
+  ctx.quality = +qualEl.value;
+  ctx.camDist = camDist;
+
+  place();
+  const L = sky.update(dt, ctx);
+
+  sun.color.copy(L.sunColor);
+  sun.intensity = L.intensity;
+  // keyDir, not sunDir: at night the sun is 20+ deg BELOW the horizon and the
+  // moon is the only body in the sky. lighting.js should do the same.
+  sun.position.set(CENTER + L.keyDir.x * 500, L.keyDir.y * 500, CENTER + L.keyDir.z * 500);
+  hemi.color.copy(L.skyColor);
+  hemi.groundColor.copy(L.groundColor);
+  hemi.intensity = L.hemiIntensity;
+  amb.color.copy(L.ambientColor);
+  amb.intensity = L.ambientIntensity;
+  fog.color.copy(L.fogColor);
+
+  renderer.render(scene, camera);
+  return L;
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  fps = fps * 0.92 + (1 / Math.max(dt, 1e-4)) * 0.08;
+  if (playing) {
+    let t = +nightEl.value + dt * 0.06;
+    if (t > 1) t -= 1;
+    nightEl.value = t; sync();
+  }
+  const L = frame(dt);
+  $('stats').textContent =
+    'fps        ' + fps.toFixed(0) +
+    '\nnightT     ' + (+nightEl.value).toFixed(3) +
+    '\nsun elev   ' + (L.sunElevation * 57.2958).toFixed(1) + '°' +
+    '\nintensity  ' + L.intensity.toFixed(3) +
+    '\nnight      ' + L.nightAmount.toFixed(3) +
+    '\novercast   ' + L.overcast.toFixed(3) +
+    '\nsunCol     ' + L.sunColor.getHexString() +
+    '\nskyCol     ' + L.skyColor.getHexString() +
+    '\nfogCol     ' + L.fogColor.getHexString() +
+    '\nenv bakes  ' + sky._envBuilds;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+console.log('[sky harness] ready');
+</script>
+</body>
+</html>

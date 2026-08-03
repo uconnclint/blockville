@@ -5,6 +5,15 @@
 
 import * as THREE from '../vendor/three.module.js';
 import { TILE, N, CHUNK } from './constants.js';
+import { buildVoxelGeometry } from './render/voxel.js';
+import { MaterialLib } from './render/materials.js';
+import { PostFX } from './render/post.js';
+import { Sky } from './render/sky.js';
+import { Terrain } from './render/terrain.js';
+import { Roads } from './render/roads.js';
+import { WaterFX } from './render/water.js';
+import { LightingRig } from './render/lighting.js';
+import { Props } from './render/props.js';
 
 const MAP_W = N * TILE;               // world width of the map (640 at N=80)
 const CENTER = MAP_W / 2;             // world center (320 at N=80)
@@ -34,6 +43,12 @@ const ROAD_C = 0x40454d;
 const MTN_GRASS = 0x5a9e3f;   // low ~1/3
 const MTN_ROCK = 0x8b9098;    // middle
 const MTN_SNOW = 0xf4f8ff;    // top ~2 voxels on tall peaks
+
+// Key-to-fill balance. sky.js returns a physically-plausible but fill-dominant
+// solution; these push it toward the sun so cast shadows read as shapes rather
+// than a tint. See _applySkyLighting().
+const SUN_GAIN = 1.85;
+const FILL_GAIN = 0.70;
 
 const clamp = THREE.MathUtils.clamp;
 
@@ -78,13 +93,18 @@ export class Engine {
     const sc = this.sun.shadow.camera;
     // Ortho frustum sized to the whole map (±0.75·MAP_W ≈ ±384 at N=64) so
     // shadows don't clip at the edges of the bigger world.
-    const sHalf = MAP_W * 0.75;
+    const sHalf = MAP_W * 0.30;   // was 0.75 — 2.5x the shadow texel density
     sc.left = -sHalf; sc.right = sHalf; sc.top = sHalf; sc.bottom = -sHalf;
     // near/far span the map comfortably from the raised sun position.
     sc.near = MAP_W * 0.08; sc.far = MAP_W * 2.6;
     sc.updateProjectionMatrix();
-    this.sun.shadow.bias = -0.0006;
-    this.sun.shadow.normalBias = 0.9;
+    // STOPGAP (superseded once src/render/lighting.js lands): normalBias was
+    // 0.9 — nearly a full voxel — which offset the shadow lookup so far off
+    // every caster that the city cast no visible shadow at all. Combined with
+    // a +/-480 frustum at 3072px (~0.31 world units per texel, coarser than one
+    // voxel) nothing survived. Tighten both.
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.035;
     this.scene.add(this.sun);
     this._sunTarget = new THREE.Object3D();
     this._sunTarget.position.set(CENTER, 0, CENTER);
@@ -109,18 +129,158 @@ export class Engine {
     this._seasonUniform = { value: new THREE.Vector3(1, 1, 1) }; // weather tint multiplier for ground
 
     // ---- Materials ---------------------------------------------------------
-    this._voxMat = this._makeVoxelMaterial(false);
-    this._ghostMat = this._makeVoxelMaterial(true);
-    this._ghostMat.transparent = true;
-    this._ghostMat.opacity = 0.55;
-    this._ghostMat.depthWrite = false;
-    this._groundMat = this._makeGroundMaterial();
+    // Render quality: 0 low, 1 medium, 2 high. Drives PostFX, shadow cascades
+    // and voxel bevelling. See CONTRACTS-RENDER.md §6.
+    this._quality = 2;
+    // Micro-bevelling costs a measured 5.00x triangles (1.12M -> 5.60M for a
+    // 500-building city, before shadow passes re-submit it). Off by default;
+    // the per-vertex AO term carries block separation on its own.
+    this._bevel = false;
+
+    this._matLib = new MaterialLib(this.renderer, {
+      uniforms: { uNight: this._nightUniform, uSeason: this._seasonUniform },
+      quality: this._quality,
+      // The scene already carries a hemisphere + ambient fill from the sky's
+      // analytic solution. Full-strength IBL *on top* of that double-counts
+      // ambient and washes every facade out to near-white.
+      params: { envIntensity: 0.38 },
+    });
+    this._voxMat = this._matLib.voxel;
+    this._ghostMat = this._matLib.ghost;
+
+    // ---- Sky / ground modules ----------------------------------------------
+    // Sky owns scene.background (it sets it to null and draws a dome instead)
+    // and is the authority on sun direction/colour; setNight() feeds it.
+    this._sky = new Sky(this.scene, {
+      renderer: this.renderer,
+      quality: this._quality,
+      applyEnvironment: true,
+      // sky.js was authored against NoToneMapping; PostFX applies ACES
+      // downstream, which eats roughly 15% — pay it back here.
+      exposure: 0.052,
+      // 0.52 rad = 30deg, matching lighting.js's moon key floor. The default
+      // 4.3deg put the disc barely above the horizon while the key lit from 30.
+      moonElevation: 0.52,
+      horizonLift: 1.0,   // must track terrain's uHorizonLift exactly
+    });
+    this._terrain = new Terrain(this.scene, {
+      uniforms: { uNight: this._nightUniform, uSeason: this._seasonUniform },
+      quality: this._quality,
+      envIntensity: 0.40,
+      aniso: this.renderer.capabilities.getMaxAnisotropy(),
+    });
+    if (this._terrain.uniforms && this._terrain.uniforms.uHorizonLift) {
+      // terrain's lift existed only to compensate for sky.js converging just
+      // 62% of the way to fogColor. sky.js now converges properly, so any lift
+      // is a 1:N radiance MISMATCH between the dome and the ground skirt — and
+      // that mismatch, measured at exactly 2.20x, WAS the frame-wide horizon
+      // seam. Both sides now converge on plain fogColor. This also matches
+      // buildings/props/water, which fog to 1.0x via three's stock chunk.
+      this._terrain.uniforms.uHorizonLift.value = 1.0;
+    }
+    this._roads = new Roads(this.scene, { quality: this._quality });
+    // seabed:false — terrain.js already draws an opaque sculpted seabed
+    // (-1.15 at shore to -2.30 offshore). Two seabeds would z-fight.
+    this._water = new WaterFX(this.scene, { seabed: false, quality: this._quality });
+    this._roadAnchors = [];
+    this._lampsDirty = false;
+    this._glowsDirty = false;
+    this._glowsLit = false;
+
+    // ---- Lighting / cascaded shadows ---------------------------------------
+    // LightingRig REPLACES three's shadow system wholesale. three's
+    // MeshDepthMaterial round-trips depth at only ~9 effective bits on this
+    // stack, which is why the old code needed normalBias 0.9 (≈2 voxels of
+    // offset) to hide the acne — and thereby deleted every shadow. The rig
+    // packs 24-bit depth into its own caster material and casts back faces, so
+    // the bias drops to ~0.09 world units. Turn three's shadow pass off; it
+    // would be a pure waste of a geometry pass now.
+    this.renderer.shadowMap.enabled = false;
+    this._lighting = new LightingRig(this.renderer, this.scene, this.camera, {
+      quality: this._quality,
+      sunSource: 'external',      // sky.js is the authority on sun direction
+      skylightWarmth: 0.62,       // full strength read as orange paint (R/B 1.82 on asphalt)
+      // Must clear the TALLEST THING IN THE SCENE, not the tallest model:
+      // buildings sit on terrain and the seeded city reaches y=56.3, so a 40
+      // cap clipped the top ~30% of every skyscraper out of the shadow map and
+      // downtown rendered shadowless. Keep headroom over stadium + mountains.
+      maxCasterHeight: 80,
+    });
+    // The rig brings its own sun/hemi/ambient and needs its sun to be
+    // directional light index 0 — retire the engine's originals and adopt the
+    // rig's so the rest of this file (and _applySkyLighting) keeps working.
+    this.scene.remove(this.sun);
+    this.scene.remove(this.hemi);
+    this.scene.remove(this.ambient);
+    this.scene.remove(this._sunTarget);
+    this.sun = this._lighting.sun;
+    this.hemi = this._lighting.hemi;
+    this.ambient = this._lighting.ambient;
+    this._sunTarget = this._lighting.sunTarget;
+
+    // Every lit material must sample the rig's cascade atlas. patchMaterial
+    // CHAINS onBeforeCompile, so each module's own shader injection survives.
+    this._lighting.patchMaterial(this._matLib.voxel);
+    this._lighting.patchMaterial(this._terrain.material);
+    // Street furniture + natural scatter. roads.js has been emitting ~306
+    // anchors (lamp/trafficlight/sign/hydrant/bin/bench) since it shipped and
+    // nothing consumed them — every critic named the bare sidewalks as the
+    // single biggest "not a real city" tell.
+    this._propFX = new Props(this.scene, {
+      quality: this._quality,
+      uniforms: { uNight: this._nightUniform },
+    });
+    this._lighting.patchMaterial(this._propFX.material);   // required for CSM shadows
+    this._propFX.material.envMapIntensity = 0.38;
+
+    if (this._roads.material) {
+      this._lighting.patchMaterial(this._roads.material);
+      this._roads.material.envMapIntensity = 0.38;   // same key/fill rebalance
+    }
+
+    // ---- Post-processing ---------------------------------------------------
+    // PostFX owns the scene pass: render() below calls it INSTEAD of
+    // renderer.render(). Sized by resize() at the end of the constructor.
+    this._post = new PostFX(this.renderer, this.scene, this.camera, {
+      quality: this._quality,
+      // Art direction lives here, at the integration point — post.js ships
+      // neutral defaults. Cities:Skylines' tilt-shift is a *hint* of miniature,
+      // not a macro lens: keep a wide in-focus band and blur only the far
+      // periphery, or the city reads as an out-of-focus photograph.
+      params: {
+        // Measured Laplacian energy showed the DISTANT half of the frame was
+        // marginally sharper than the near half — the tilt ramp started too
+        // high and the peak CoC was too small to survive the half-res DoF
+        // buffer, so the miniature read was absent entirely.
+        dof: { maxBlur: 0.40, rangeScale: 1.6, tilt: 0.22, tiltStart: 0.55, tiltEnd: 0.94 },
+        // Bright saturated voxel colours cross a 0.85 threshold constantly,
+        // which made rooftops and white props blow out into halos.
+        bloom: { threshold: 0.58, strength: 0.30, radius: 0.85 },
+        // saturation 1.3 + punch 0.5 pushed already-strong palette greens to
+        // 0.88 saturation with no filmic shoulder — grass read as astroturf.
+        grade: { exposure: 1.12, saturation: 1.24, contrast: 1.05, vignette: 0.16, punch: 0.50 },
+        // bias 0.13 rejected exactly the near-range samples that produce
+        // contact occlusion: measured only a ~9% luma dip over 5px at building
+        // bases, where Cities:Skylines puts 35-55% into the first metre.
+        ssao: { bias: 0.025, radius: 4.5, contactIntensity: 2.8, contactRadius: 0.7 },
+        atmo: { strength: 0.18 },
+        // CAS ran after FXAA and re-hardened the edges FXAA had just resolved.
+        sharpen: { amount: 0.12, beforeAA: true },
+      },
+    });
+    // Reused per-frame context handed to every render module (never retained).
+    this._ctx = {
+      time: 0, dt: 0, nightT: 0, nightEff: 0,
+      weather: { rain: 0, snow: 0, tint: [1, 1, 1] },
+      camera: this.camera, camDist: this._camDist,
+      sunDir: new THREE.Vector3(), quality: this._quality,
+    };
+    this._elapsed = 0;
 
     // ---- Caches / registries ----------------------------------------------
     this._geoCache = new WeakMap();        // model -> BufferGeometry
     this._buildings = new Map();           // id -> Mesh
     this._props = new Map();               // "kind:x:z" -> Mesh
-    this._groundChunks = new Map();        // "cx,cz" -> Mesh
     this._ghostMesh = null;
 
     // Palette lookups (linear rgb triples). Filled by setPalette().
@@ -200,6 +360,8 @@ export class Engine {
       Math.min(1, base[1] * 1.7 + 0.1),
       Math.min(1, base[2] * 1.7 + 0.1),
     ];
+    // The PBR material library derives roughness/metalness from the same palette.
+    if (this._matLib) this._matLib.setPalette(paletteArray);
   }
 
   _linTriple(hex) {
@@ -230,56 +392,6 @@ export class Engine {
   // Materials (custom shader injection)
   // ---------------------------------------------------------------------------
 
-  _makeVoxelMaterial() {
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-    const nightU = this._nightUniform;
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uNight = nightU;
-      shader.vertexShader =
-        'attribute float emissiveT;\nattribute vec3 glowColor;\nvarying float vEmi;\nvarying vec3 vGlow;\n' +
-        shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          '#include <begin_vertex>\nvEmi = emissiveT;\nvGlow = glowColor;'
-        );
-      shader.fragmentShader =
-        'uniform float uNight;\nvarying float vEmi;\nvarying vec3 vGlow;\n' +
-        shader.fragmentShader.replace(
-          '#include <opaque_fragment>',
-          '#include <opaque_fragment>\ngl_FragColor.rgb = mix(gl_FragColor.rgb, vGlow, clamp(vEmi * uNight, 0.0, 1.0));'
-        );
-    };
-    return mat;
-  }
-
-  _makeGroundMaterial() {
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    const timeU = this._waterUniform;
-    const seasonU = this._seasonUniform;
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = timeU;
-      shader.uniforms.uSeason = seasonU;
-      shader.vertexShader =
-        'attribute float wave;\nvarying float vWave;\nvarying vec3 vWPos;\nuniform float uTime;\n' +
-        shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          '#include <begin_vertex>\n' +
-          'vWave = wave;\n' +
-          'transformed.y += sin(uTime * 1.6 + transformed.x * 0.35 + transformed.z * 0.35) * 0.12 * wave;\n' +
-          'vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n'
-        );
-      shader.fragmentShader =
-        'varying float vWave;\nvarying vec3 vWPos;\nuniform float uTime;\nuniform vec3 uSeason;\n' +
-        shader.fragmentShader.replace(
-          '#include <opaque_fragment>',
-          '#include <opaque_fragment>\n' +
-          'gl_FragColor.rgb *= uSeason;\n' +
-          'float shim = 0.5 + 0.5 * sin(uTime * 2.2 + vWPos.x * 0.25 + vWPos.z * 0.2);\n' +
-          'gl_FragColor.rgb += vWave * 0.10 * shim;'
-        );
-    };
-    return mat;
-  }
-
   // ---------------------------------------------------------------------------
   // Voxel meshing (cached by model reference)
   // ---------------------------------------------------------------------------
@@ -288,7 +400,14 @@ export class Engine {
     if (!model || !Array.isArray(model.blocks)) return this._emptyGeometry();
     let geo = this._geoCache.get(model);
     if (geo) return geo;
-    geo = this._buildVoxelGeometry(model);
+    // Upgraded mesher: adds per-vertex voxel AO (`aoT`) and per-palette
+    // roughness/metalness (`matParams`), which MaterialLib's shader reads.
+    geo = buildVoxelGeometry(model, {
+      ao: true,
+      bevel: this._bevel,
+      palette: this._palLin,
+      glowPalette: this._glowLin,
+    });
     this._geoCache.set(model, geo);
     return geo;
   }
@@ -383,7 +502,7 @@ export class Engine {
     const geo = this._getGeometry(model);
     const mesh = new THREE.Mesh(geo, this._voxMat);
     mesh.castShadow = true;
-    mesh.receiveShadow = false;
+    mesh.receiveShadow = true;   // self-shadowing + tower-onto-tower
     // (x,z) is the NW anchor tile of the EFFECTIVE footprint; rot k swaps
     // the model's tw×td when odd. rot 0 fronts +Z(S), 1 +X(E), 2 −Z(N), 3 −X(W).
     const tw = model.tw || 1, td = model.td || 1;
@@ -414,7 +533,7 @@ export class Engine {
     const geo = this._getGeometry(model);
     const mesh = new THREE.Mesh(geo, this._voxMat);
     mesh.castShadow = true;
-    mesh.receiveShadow = false;
+    mesh.receiveShadow = true;
     mesh.position.set((x + 0.5) * TILE, 0, (z + 0.5) * TILE);
     this.scene.add(mesh);
     this._props.set(key, mesh);
@@ -639,167 +758,79 @@ export class Engine {
   // Ground
   // ---------------------------------------------------------------------------
 
+  // Ground is now three cooperating modules (see CONTRACTS-RENDER.md):
+  //   terrain -> grass/sand/rock/banks + the opaque seabed under water
+  //   roads   -> asphalt, markings, sidewalks, curbs (covers ROAD tiles at y>=0.02)
+  //   water   -> the translucent surface at y=-0.35 over WATER/bridge tiles
   buildGround(state) {
-    // Dispose any previous chunks.
-    for (const mesh of this._groundChunks.values()) {
-      this.scene.remove(mesh);
-      if (mesh.geometry) mesh.geometry.dispose();
-    }
-    this._groundChunks.clear();
-    for (let cz = 0; cz < CHUNKS; cz++) {
-      for (let cx = 0; cx < CHUNKS; cx++) {
-        this._buildChunk(state, cx, cz);
-      }
+    this._terrain.build(state);
+    this._roadAnchors = this._roads.build(state);
+    this._water.buildSurface(state);
+    this._propFX.setAnchors(this._roadAnchors);
+    this._propFX.scatter(state);
+    if (this._lighting && this._lighting.setLampAnchors) {
+      this._lighting.setLampAnchors(this._roadAnchors.filter((a) => a.kind === 'lamp'));
     }
   }
 
   refreshTile(state, x, z) {
-    const cx = Math.floor(x / CHUNK);
-    const cz = Math.floor(z / CHUNK);
-    const key = cx + ',' + cz;
-    const old = this._groundChunks.get(key);
-    if (old) {
-      this.scene.remove(old);
-      if (old.geometry) old.geometry.dispose();
-      this._groundChunks.delete(key);
-    }
-    this._buildChunk(state, cx, cz);
+    this._terrain.refreshTile(state, x, z);
+    this._roadAnchors = this._roads.refreshTile(state, x, z) || this._roadAnchors;
+    this._water.refreshTiles(state, x, z);
+    // Roads are almost always painted tile-by-tile through here, not through
+    // buildGround (which only runs at reseed, when there are zero road tiles).
+    // Without this the lighting rig was fed an empty lamp list forever and the
+    // streets rendered pitch black at night despite 88 lamp anchors existing.
+    this._lampsDirty = true;
   }
 
-  _tileTopY(state, x, z) {
-    if (x < 0 || z < 0 || x >= N || z >= N) return null; // out of bounds (border)
-    const i = z * N + x;
-    // Bridge tiles are ROAD in the map but render as (lower) water.
-    const water = state.map[i] === 1 /* WATER */ || (state.bridge && state.bridge[i] === 1);
-    return water ? -0.35 : 0;
-  }
-
-  _tileGroundColor(type, x, z) {
-    switch (type) {
-      case 1: return this._linTriple(WATER_C);
-      case 2: return this._linTriple(SAND_C);
-      case 3: return this._linTriple(ROAD_C);
-      default: {
-        // grass: hash for a two-tone checker with slight variation
-        const h = ((x * 73856093) ^ (z * 19349663)) & 1;
-        return this._linTriple(h ? GRASS_A : GRASS_B);
-      }
-    }
-  }
-
-  _buildChunk(state, cx, cz) {
-    const baseY = -1.6;
-    const x0t = cx * CHUNK, z0t = cz * CHUNK;
-    const x1t = Math.min(N, x0t + CHUNK), z1t = Math.min(N, z0t + CHUNK);
-
-    const pos = [], nor = [], col = [], wav = [];
-
-    const quad = (ax, ay, az, bx, by, bz, cx2, cy, cz2, dx, dy, dz, nx, ny, nz, c, w) => {
-      const px = [ax, ay, az, bx, by, bz, cx2, cy, cz2, ax, ay, az, cx2, cy, cz2, dx, dy, dz];
-      for (let k = 0; k < 18; k += 3) {
-        pos.push(px[k], px[k + 1], px[k + 2]);
-        nor.push(nx, ny, nz);
-        col.push(c[0], c[1], c[2]);
-        wav.push(w);
-      }
+  // Emissive windows were decoration only — a tower with a blazing facade lit
+  // nothing around it, because LightingRig.setWindowGlows() had no callers.
+  // materials.js can mirror its own shader hash on the CPU and tell us exactly
+  // which panes it lit; recomputing costs ~26ms for 467 glows, so only redo it
+  // when the building set changes or we cross into/out of night.
+  _syncWindowGlows(ctx) {
+    if (!this._lighting.setWindowGlows || !this._matLib.windowGlowsFor) return;
+    const lit = ctx.nightEff > 0.25;
+    if (!this._glowsDirty && lit === this._glowsLit) return;
+    this._glowsDirty = false;
+    this._glowsLit = lit;
+    const glows = lit ? this._matLib.windowGlowsFor(this.scene) : [];
+    // CONTRACT MISMATCH between two modules, bridged here (the integration
+    // point) rather than in either of them: materials.js emits `color` as a
+    // LINEAR [r,g,b] array, lighting.js consumes it with setHex(). An array
+    // coerces to 0, so all 467 window glows rendered pure black and additive
+    // blending of black is a no-op — the lights were "wired" but dead.
+    // lighting.js decodes the hex with SRGBColorSpace, so the linear values
+    // must be sRGB-ENCODED on the way in or they round-trip too dark.
+    const enc = (c) => {
+      c = clamp(c, 0, 1);
+      const s = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+      return Math.round(s * 255);
     };
-
-    // Mountain band colours (linear triples), precomputed once per chunk.
-    const MG = this._linTriple(MTN_GRASS);
-    const MR = this._linTriple(MTN_ROCK);
-    const MS = this._linTriple(MTN_SNOW);
-    // Neighbour mountain height (0 = ground/water/border/non-mountain).
-    const mtnH = (nx, nz) => {
-      if (nx < 0 || nz < 0 || nx >= N || nz >= N) return 0;
-      const ni = nz * N + nx;
-      if (state.map[ni] !== 15 /* MOUNTAIN */) return 0;
-      const hv = state.variant ? state.variant[ni] : 0;
-      return hv > 0 ? hv : 4;
-    };
-
-    for (let z = z0t; z < z1t; z++) {
-      for (let x = x0t; x < x1t; x++) {
-        let type = state.map[z * N + x];
-
-        // MOUNTAIN: solid raised column (y=0..h), height-banded colour, with
-        // neighbour-culled side walls. Does NOT emit the flat grass slab.
-        if (type === 15 /* MOUNTAIN */) {
-          const hv = state.variant ? state.variant[z * N + x] : 0;
-          const h = hv > 0 ? hv : 4;                 // voxel height (default 4)
-          const wx0 = x * TILE, wx1 = wx0 + TILE;
-          const wz0 = z * TILE, wz1 = wz0 + TILE;
-          const snowy = h >= 8;
-          const snowLine = h - 2;                    // top ~2 voxels get snow
-          const third = h / 3;
-          // Colour of the voxel at level L (spanning y=L..L+1).
-          const band = (L) => {
-            if (snowy && L >= snowLine) return MS;
-            if (L < third) return MG;
-            return MR;
-          };
-          // Top cap (always emitted), coloured by the peak voxel.
-          const cTop = band(h - 1);
-          quad(wx0, h, wz0, wx0, h, wz1, wx1, h, wz1, wx1, h, wz0, 0, 1, 0, cTop, 0);
-          // Exposed side walls: for each side emit only the voxel band above the
-          // neighbour's height (buried faces against equal/taller mountains skip).
-          const hE = mtnH(x + 1, z), hW = mtnH(x - 1, z),
-                hN = mtnH(x, z - 1), hS = mtnH(x, z + 1);
-          for (let L = hE; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // East +X
-            quad(wx1, y0, wz1, wx1, y0, wz0, wx1, y1, wz0, wx1, y1, wz1, 1, 0, 0, c, 0); }
-          for (let L = hW; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // West -X
-            quad(wx0, y0, wz0, wx0, y0, wz1, wx0, y1, wz1, wx0, y1, wz0, -1, 0, 0, c, 0); }
-          for (let L = hN; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // North -Z
-            quad(wx1, y0, wz0, wx0, y0, wz0, wx0, y1, wz0, wx1, y1, wz0, 0, 0, -1, c, 0); }
-          for (let L = hS; L < h; L++) { const c = band(L), y0 = L, y1 = L + 1; // South +Z
-            quad(wx0, y0, wz1, wx1, y0, wz1, wx1, y1, wz1, wx0, y1, wz1, 0, 0, 1, c, 0); }
-          continue;
-        }
-
-        // Bridge tile: map says ROAD, but render it as animated WATER (the wooden
-        // deck is drawn separately as a prop by main.js).
-        if (state.bridge && state.bridge[z * N + x] === 1) type = 1 /* WATER */;
-        const topY = type === 1 ? -0.35 : 0;
-        const isWater = type === 1 ? 1 : 0;
-        const c = this._tileGroundColor(type, x, z);
-        const wx0 = x * TILE, wx1 = wx0 + TILE;
-        const wz0 = z * TILE, wz1 = wz0 + TILE;
-
-        // Top face
-        quad(wx0, topY, wz0, wx0, topY, wz1, wx1, topY, wz1, wx1, topY, wz0, 0, 1, 0, c, isWater);
-
-        // Side skirts only where the neighbour is lower (water step) or the map border.
-        const nE = this._tileTopY(state, x + 1, z);
-        const nW = this._tileTopY(state, x - 1, z);
-        const nN = this._tileTopY(state, x, z - 1);
-        const nS = this._tileTopY(state, x, z + 1);
-        const lowE = nE === null ? baseY : nE;
-        const lowW = nW === null ? baseY : nW;
-        const lowN = nN === null ? baseY : nN;
-        const lowS = nS === null ? baseY : nS;
-
-        if (lowE < topY) // East +X
-          quad(wx1, lowE, wz1, wx1, lowE, wz0, wx1, topY, wz0, wx1, topY, wz1, 1, 0, 0, c, 0);
-        if (lowW < topY) // West -X
-          quad(wx0, lowW, wz0, wx0, lowW, wz1, wx0, topY, wz1, wx0, topY, wz0, -1, 0, 0, c, 0);
-        if (lowN < topY) // North -Z
-          quad(wx1, lowN, wz0, wx0, lowN, wz0, wx0, topY, wz0, wx1, topY, wz0, 0, 0, -1, c, 0);
-        if (lowS < topY) // South +Z
-          quad(wx0, lowS, wz1, wx1, lowS, wz1, wx1, topY, wz1, wx0, topY, wz1, 0, 0, 1, c, 0);
+    for (const g of glows) {
+      if (Array.isArray(g.color)) {
+        g.color = (enc(g.color[0]) << 16) | (enc(g.color[1]) << 8) | enc(g.color[2]);
       }
     }
+    this._lighting.setWindowGlows(glows);
+    // Feed the same data to the sky as a horizon sodium glow, so a big lit city
+    // actually brightens the night sky above it.
+    if (this._sky.setCityGlow) {
+      let gx = 0, gz = 0, w = 0;
+      for (const g of glows) { const i = g.intensity || 1; gx += g.x * i; gz += g.z * i; w += i; }
+      this._sky.setCityGlow(w > 0
+        ? { x: gx / w, z: gz / w, amount: Math.min(1, glows.length / 900) }
+        : { x: CENTER, z: CENTER, amount: 0 });
+    }
+  }
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    geo.setAttribute('wave', new THREE.Float32BufferAttribute(wav, 1));
-    geo.computeBoundingSphere();
-
-    const mesh = new THREE.Mesh(geo, this._groundMat);
-    mesh.castShadow = false;
-    mesh.receiveShadow = true;
-    this.scene.add(mesh);
-    this._groundChunks.set(cx + ',' + cz, mesh);
+  // Coalesced to once per frame — a road drag calls refreshTile per tile.
+  _syncLampAnchors() {
+    if (!this._lampsDirty || !this._lighting.setLampAnchors) return;
+    this._lampsDirty = false;
+    this._propFX.setAnchors(this._roadAnchors);
+    this._lighting.setLampAnchors(this._roadAnchors.filter((a) => a.kind === 'lamp'));
   }
 
   // ---------------------------------------------------------------------------
@@ -849,7 +880,7 @@ export class Engine {
         const rotate = (p.button === 2) || e.ctrlKey;
         if (rotate) {
           this._camAz -= (e.clientX - px) * 0.006;
-          this._camPolar = clamp(this._camPolar - (e.clientY - py) * 0.006, 0.35, 1.2);
+          this._camPolar = clamp(this._camPolar - (e.clientY - py) * 0.006, 0.35, 1.35);
         } else {
           this._panBy(px, py, e.clientX, e.clientY);
         }
@@ -937,25 +968,54 @@ export class Engine {
     // Effective darkness: capped when "Always bright" is locked.
     const te = this._daylightLock ? Math.min(t, 0.12) : t;
     this._nightUniform.value = te;
+    // The sky module is the authority on sun position/colour, fog and fill
+    // light — it recomputes them from ctx.nightEff during render(). Nothing
+    // more to do here; _applySkyLighting() below consumes its output.
+  }
 
-    // Sky / fog colour: day -> night, with a warm sunset bump around te=0.5.
-    this._skyCol.copy(this._dayColor).lerp(this._nightColor, te);
-    const sunset = Math.max(0, 1 - Math.abs(te - 0.5) / 0.2);
-    if (sunset > 0) this._skyCol.lerp(this._sunsetColor, sunset * 0.5);
-    // Rain grays the sky (composes with day/night so night+rain works). When
-    // locked, reduce the gray contribution so "Always bright" stays legible.
-    const gray = this._daylightLock ? this._weatherGray * 0.35 : this._weatherGray;
-    if (gray > 0) this._skyCol.lerp(this._weatherGrayColor, gray);
-    this.scene.background.copy(this._skyCol);
-    this.fog.color.copy(this._skyCol);
-
-    // Sun dims and cools toward moonlight.
-    this.sun.intensity = 1.1 + (0.18 - 1.1) * te;
-    this.sun.color.copy(this._sunDayColor).lerp(this._moonColor, te);
-
-    // Fill lights dim at night.
-    this.hemi.intensity = 0.6 + (0.28 - 0.6) * te;
-    this.ambient.intensity = 0.18 + (0.15 - 0.18) * te;
+  // Copy one frame of the sky's analytic lighting solution onto the scene's
+  // lights and fog. `s` is sky.update()'s return value — it is reused every
+  // frame by sky.js, so read it immediately and never retain it.
+  _applySkyLighting(s) {
+    if (!s) return;
+    // Follow the camera target so the (now much tighter) shadow frustum stays
+    // over whatever the player is looking at instead of the fixed map centre.
+    const fx = this._sTarget.x, fz = this._sTarget.z;
+    this._sunTarget.position.set(fx, 0, fz);
+    // MUST be keyDir, not sunDir. sunDir is the true SOLAR vector, which at
+    // night is ~60 degrees BELOW the map — positioning the scene's directional
+    // light from it buried the key light 430 units underground and contributed
+    // exactly nothing (measured: zeroing sun.intensity changed the night frame
+    // mean by 0.009/255). keyDir is the sun by day and the MOON by night.
+    // This also runs after _lighting.update(), so it overwrites the rig's own
+    // correct placement — it has to be right here.
+    const k = s.keyDir || s.sunDir;
+    this.sun.position.set(fx + k.x * 500, k.y * 500, fz + k.z * 500);
+    this.sun.color.copy(s.sunColor);
+    this.hemi.color.copy(s.skyColor);
+    this.hemi.groundColor.copy(s.groundColor);
+    this.ambient.color.copy(s.ambientColor);
+    // sky.js's own mix is fill-dominant, which flattens cast shadows into a
+    // faint tint: measured light budget at noon was sun ~10%, hemi+ambient
+    // ~13%, sky env ~44%. Rebalance toward the key light so shadows read as
+    // shapes. Mean frame luminance barely moves (90.7 -> 84.9), so the city
+    // stays as bright — the shadows just get their form back.
+    this.sun.intensity = s.intensity * SUN_GAIN;
+    this.hemi.intensity = s.hemiIntensity * FILL_GAIN;
+    this.ambient.intensity = s.ambientIntensity * FILL_GAIN;
+    // Horizon sample, so terrain never fades to a colour the sky isn't.
+    this.fog.color.copy(s.fogColor);
+    // Fog was fixed at near=352/far=1184 while the hero camera sits at 150 —
+    // nothing in frame was ever beyond `near`, so aerial perspective was
+    // mathematically inactive at every shot distance. Scale it to the orbit so
+    // distance always reads as distance.
+    const d = this._sDist;
+    this.fog.near = d * 0.55;
+    this.fog.far = clamp(d * 2.6 + MAP_W * 0.45, MAP_W * 1.05, MAP_W * 1.7);
+    // Water reflects the sky it actually sits under.
+    this._water.setSky({
+      skyTop: s.skyColor, skyHorizon: s.fogColor, sunColor: s.sunColor,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -979,6 +1039,12 @@ export class Engine {
     // Rain grays the sky; re-apply the day/night+weather sky composition.
     this._weatherGray = rain * 0.35;
     this.setNight(this._nightT);
+    this._ctx.weather.rain = rain;
+    this._ctx.weather.snow = snow;
+    if (Array.isArray(tint)) this._ctx.weather.tint = tint;
+    this._sky.setWeather({ rain, snow });
+    this._terrain.setWeather({ tint, rain, snow });
+    this._roads.setWeather({ tint, rain, snow });
 
     // Only one precipitation mode active at a time.
     let mode = null, intensity = 0;
@@ -1111,7 +1177,72 @@ export class Engine {
     // Placement-feedback quad fades (no-op when none active).
     this._animateFlash(d);
 
-    this.renderer.render(this.scene, this.camera);
+    // ---- Shared per-frame context (see CONTRACTS-RENDER.md §2) -------------
+    this._elapsed += d;
+    const ctx = this._ctx;
+    ctx.time = this._elapsed;
+    ctx.dt = d;
+    ctx.nightT = this._nightT;
+    ctx.nightEff = this._daylightLock ? Math.min(this._nightT, 0.12) : this._nightT;
+    ctx.camDist = this._sDist;
+    ctx.quality = this._quality;
+
+    // Sky first — it owns the sun, so everything downstream reads a settled
+    // sunDir. Then push its solution onto the lights/fog/water.
+    const skyOut = this._sky.update(d, ctx);
+    if (skyOut) ctx.sunDir.copy(skyOut.sunDir);
+    else ctx.sunDir.copy(this.sun.position).sub(this._sunTarget.position).normalize();
+
+    // Cascaded shadows. This renders depth passes, so it must not run inside
+    // another render — it is deliberately before post.render() below.
+    this._syncLampAnchors();
+    this._propFX.update(d, ctx);
+    if (skyOut && skyOut.keyDir) ctx.sunDir.copy(skyOut.keyDir);
+    if (skyOut && skyOut.skylightWarmth != null && this._lighting.setParams) {
+      // One source of truth for the low-sun warm ramp, shared by sky and lights.
+      this._lighting.setParams({ skylightWarmth: skyOut.skylightWarmth * 0.62 });
+    }
+    this._lighting.setSunDirection(ctx.sunDir);
+    this._lighting.update(d, ctx);
+
+    // Apply the sky's analytic colours AFTER the rig, so the light that hits
+    // the city matches the dome the player can actually see.
+    if (skyOut) this._applySkyLighting(skyOut);
+
+    // Feed the material library the sky's own solution: without this its
+    // rim/fill uniforms stay a fixed daytime blue even at midnight.
+    if (this._matLib.setSkyLight) {
+      this._matLib.setSkyLight({
+        skyColor: this.hemi.color,
+        groundColor: this.hemi.groundColor,
+      });
+    }
+    this._syncWindowGlows(ctx);
+
+    this._terrain.update(d, ctx);
+    this._roads.update(d, ctx);
+    this._water.update(d, ctx);
+    this._matLib.update(d, ctx);
+
+    // PostFX owns the scene pass — it renders the scene into its own HDR target
+    // and composites to the canvas, so we must NOT call renderer.render() here.
+    this._post.render(d, ctx);
+  }
+
+  // Render quality 0 (low) / 1 (medium) / 2 (high). See CONTRACTS-RENDER.md §6.
+  setQuality(level) {
+    const q = clamp(Math.round(level), 0, 2);
+    if (q === this._quality) return;
+    this._quality = q;
+    this._ctx.quality = q;
+    this._post.setQuality(q);
+    this._matLib.setQuality(q);
+    this._lighting.setQuality(q);
+    this._sky.setQuality(q);
+    this._terrain.setQuality(q);
+    this._roads.setQuality(q);
+    this._propFX.setQuality(q);
+    this._water.setQuality(q);
   }
 
   resize() {
@@ -1121,5 +1252,6 @@ export class Engine {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    if (this._post) this._post.setSize(w, h, this.renderer.getPixelRatio());
   }
 }

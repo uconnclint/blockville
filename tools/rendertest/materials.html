@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blockville — MaterialLib render test</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#0b0e14; overflow:hidden;
+    font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:#dbe3ef; }
+  canvas { display:block; }
+  #ui { position:fixed; top:10px; left:10px; width:268px; max-height:calc(100% - 20px);
+    overflow:auto; background:rgba(12,16,24,.86); border:1px solid #24304a; border-radius:10px;
+    padding:10px 12px; backdrop-filter:blur(8px); z-index:10; }
+  #ui h1 { font-size:12px; margin:0 0 8px; letter-spacing:.08em; text-transform:uppercase; color:#7fd4ff; }
+  #ui h2 { font-size:10px; margin:12px 0 4px; letter-spacing:.1em; text-transform:uppercase; color:#6d7f9c; }
+  .row { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .row label { flex:0 0 92px; color:#9fb0c8; }
+  .row input[type=range] { flex:1; min-width:0; }
+  .row .val { flex:0 0 34px; text-align:right; color:#ffd98a; }
+  button { background:#1b2740; color:#cfe0f5; border:1px solid #2d3d5e; border-radius:6px;
+    padding:5px 9px; cursor:pointer; font:inherit; }
+  button:hover { background:#25355a; }
+  button.on { background:#2b6cb0; border-color:#4d9be6; color:#fff; }
+  #legend { font-size:10px; color:#8fa3bf; }
+  #legend b { color:#e8f0ff; font-weight:600; }
+  #stat { margin-top:8px; font-size:10px; color:#7f92ad; white-space:pre-wrap; }
+  #selftest { margin-top:6px; font-size:10px; max-height:130px; overflow:auto;
+    background:#0a0f18; border:1px solid #1e2a40; border-radius:6px; padding:6px; display:none; }
+  .pass { color:#8ce99a; } .fail { color:#ff8787; }
+  #labels { position:fixed; inset:0; pointer-events:none; z-index:5; }
+  #labels div { position:absolute; transform:translate(-50%,0); font-size:10px; color:#eaf2ff;
+    text-shadow:0 1px 3px #000, 0 0 8px #000; white-space:nowrap; }
+</style>
+</head>
+<body>
+<div id="labels"></div>
+<div id="ui">
+  <h1>MaterialLib test</h1>
+  <div class="row"><label>Night</label><input id="night" type="range" min="0" max="1" step="0.01" value="0"><span class="val" id="nightV">0</span></div>
+  <div class="row">
+    <button id="bDay">Day</button><button id="bDusk">Dusk</button><button id="bNight">Night</button>
+  </div>
+  <h2>Scene</h2>
+  <div class="row">
+    <button id="bScene" class="on">City</button><button id="bInspect">Inspector</button><button id="bSpin" class="on">Spin</button>
+  </div>
+  <div class="row"><label>Quality</label><input id="quality" type="range" min="0" max="2" step="1" value="2"><span class="val" id="qualityV">2</span></div>
+  <div class="row"><label>Rain</label><input id="rain" type="range" min="0" max="1" step="0.05" value="0"><span class="val" id="rainV">0</span></div>
+
+  <h2>Material params</h2>
+  <div class="row"><label>AO</label><input id="ao" type="range" min="0" max="1" step="0.01" value="0.95"><span class="val" id="aoV">.95</span></div>
+  <div class="row"><label>AO direct</label><input id="aod" type="range" min="0" max="1" step="0.01" value="0.38"><span class="val" id="aodV">.38</span></div>
+  <div class="row"><label>Saturation</label><input id="sat" type="range" min="0.6" max="1.8" step="0.01" value="1.16"><span class="val" id="satV">1.16</span></div>
+  <div class="row"><label>Rim</label><input id="rim" type="range" min="0" max="0.6" step="0.01" value="0.16"><span class="val" id="rimV">.16</span></div>
+  <div class="row"><label>Sky fill</label><input id="fill" type="range" min="0" max="0.6" step="0.01" value="0.16"><span class="val" id="fillV">.16</span></div>
+  <div class="row"><label>Neon HDR</label><input id="neon" type="range" min="0" max="8" step="0.1" value="3.4"><span class="val" id="neonV">3.4</span></div>
+  <div class="row"><label>Window HDR</label><input id="winb" type="range" min="0" max="4" step="0.05" value="0.7"><span class="val" id="winbV">.7</span></div>
+  <div class="row"><label>Grain</label><input id="grain" type="range" min="0" max="2" step="0.05" value="1"><span class="val" id="grainV">1</span></div>
+  <div class="row"><label>Env IBL</label><input id="env" type="range" min="0" max="3" step="0.05" value="1"><span class="val" id="envV">1</span></div>
+
+  <h2>Post (harness stand-in)</h2>
+  <div class="row"><label>Bloom</label><input id="bloom" type="range" min="0" max="2" step="0.05" value="0.75"><span class="val" id="bloomV">.75</span></div>
+  <div class="row"><label>Exposure</label><input id="expo" type="range" min="0.3" max="2.5" step="0.05" value="1.15"><span class="val" id="expoV">1.15</span></div>
+  <div class="row"><button id="bGhost">Ghost: OK</button><button id="bTest">selfTest()</button></div>
+  <div id="selftest"></div>
+
+  <h2>Inspector legend</h2>
+  <div id="legend"></div>
+  <div id="stat"></div>
+</div>
+
+<script>
+window.__errs = [];
+window.addEventListener('error', e => { window.__errs.push((e.message || '') + ' @' + (e.filename || '') + ':' + (e.lineno || '') + (e.error && e.error.stack ? '\n' + e.error.stack : '')); });
+window.addEventListener('unhandledrejection', e => { window.__errs.push('promise: ' + (e.reason && e.reason.stack ? e.reason.stack : e.reason)); });
+</script>
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { MaterialLib, materialParamsFor, selfTest, ATTR } from '../../src/render/materials.js';
+import { PALETTE, catalogModel, buildingModel, serviceModel, treeModel, carModel } from '../../src/models.js';
+import { makePaletteTables, buildVoxelGeometry, slabModel } from './mesher.js';
+
+const TILE = 8;
+
+// ---------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+// The material must author HDR; the composite below does the ACES grade, just
+// like src/render/post.js will.
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87c9f0);
+scene.fog = new THREE.Fog(0x87c9f0, 180, 620);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 1, 2000);
+
+// ---------------------------------------------------------------------------
+// Lights (mirrors src/engine.js)
+// ---------------------------------------------------------------------------
+const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x4a7a3a, 0.6);
+scene.add(hemi);
+const ambient = new THREE.AmbientLight(0xffffff, 0.18);
+scene.add(ambient);
+const sun = new THREE.DirectionalLight(0xfff2d8, 1.1);
+sun.position.set(70, 110, 45);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const sc = sun.shadow.camera;
+sc.left = -110; sc.right = 110; sc.top = 110; sc.bottom = -110; sc.near = 10; sc.far = 420;
+sc.updateProjectionMatrix();
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.6;
+scene.add(sun);
+scene.add(sun.target);
+
+// ---------------------------------------------------------------------------
+// MaterialLib — uNight / uSeason are ENGINE-OWNED objects. Shared, not cloned.
+// ---------------------------------------------------------------------------
+const engineUniforms = {
+  uNight: { value: 0 },
+  uSeason: { value: new THREE.Vector3(1, 1, 1) },
+};
+const lib = new MaterialLib(renderer, { uniforms: engineUniforms, palette: PALETTE, quality: 2 });
+
+// ---------------------------------------------------------------------------
+// Procedural HDR environment (equirect Float DataTexture -> PMREM)
+// ---------------------------------------------------------------------------
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+let envRT = null, envSrc = null, envNightBaked = -1;
+
+function buildEnvTexture(night) {
+  const W = 256, H = 128;
+  if (!envSrc) {
+    envSrc = new THREE.DataTexture(new Float32Array(W * H * 4), W, H, THREE.RGBAFormat, THREE.FloatType);
+    envSrc.mapping = THREE.EquirectangularReflectionMapping;
+    envSrc.colorSpace = THREE.LinearSRGBColorSpace;
+    envSrc.minFilter = THREE.LinearFilter;
+    envSrc.magFilter = THREE.LinearFilter;
+  }
+  const d = envSrc.image.data;
+  // Sun direction in the same frame as the directional light.
+  const sd = sun.position.clone().normalize();
+  const dayZen = [0.12, 0.30, 0.78], dayHor = [0.62, 0.80, 0.98];
+  const nitZen = [0.010, 0.020, 0.062], nitHor = [0.035, 0.055, 0.115];
+  const dayGnd = [0.16, 0.26, 0.10], nitGnd = [0.014, 0.020, 0.030];
+  const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  const zen = mix3(dayZen, nitZen, night);
+  const hor = mix3(dayHor, nitHor, night);
+  const gnd = mix3(dayGnd, nitGnd, night);
+  const sunPow = 34 * (1 - night) + 0.9 * night;      // moon keeps a small disc
+  const sunCol = [1.0, 0.93 * (1 - night) + 0.98 * night, 0.78 * (1 - night) + 1.0 * night];
+  // Warm sunset band around night ~0.5
+  const dusk = Math.max(0, 1 - Math.abs(night - 0.5) / 0.28);
+
+  for (let y = 0; y < H; y++) {
+    const v = (y + 0.5) / H;
+    const theta = v * Math.PI;              // 0 = up
+    const cy = Math.cos(theta);
+    for (let x = 0; x < W; x++) {
+      const u = (x + 0.5) / W;
+      const phi = u * Math.PI * 2 - Math.PI;
+      const dx = Math.sin(theta) * Math.sin(phi);
+      const dy = cy;
+      const dz = Math.sin(theta) * Math.cos(phi);
+      let r, g, b;
+      if (dy >= 0) {
+        const t = Math.pow(1 - dy, 2.1);
+        r = zen[0] + (hor[0] - zen[0]) * t;
+        g = zen[1] + (hor[1] - zen[1]) * t;
+        b = zen[2] + (hor[2] - zen[2]) * t;
+        if (dusk > 0) {
+          const band = Math.pow(Math.max(0, 1 - dy * 3.0), 2.0) * dusk;
+          r += band * 0.85; g += band * 0.30; b += band * 0.16;
+        }
+      } else {
+        const t = Math.min(1, -dy * 2.2);
+        r = hor[0] + (gnd[0] - hor[0]) * t;
+        g = hor[1] + (gnd[1] - hor[1]) * t;
+        b = hor[2] + (gnd[2] - hor[2]) * t;
+      }
+      // Sun/moon disc + Mie glow.
+      const cd = dx * sd.x + dy * sd.y + dz * sd.z;
+      if (cd > 0) {
+        const disc = Math.pow(Math.max(0, cd), 4200) * sunPow;
+        const glow = Math.pow(Math.max(0, cd), 26) * sunPow * 0.05;
+        r += (disc + glow) * sunCol[0];
+        g += (disc + glow) * sunCol[1];
+        b += (disc + glow) * sunCol[2];
+      }
+      const i = (y * W + x) * 4;
+      d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 1;
+    }
+  }
+  envSrc.needsUpdate = true;
+  if (envRT) envRT.dispose();
+  envRT = pmrem.fromEquirectangular(envSrc);
+  scene.environment = envRT.texture;
+  lib.setEnvironment(envRT.texture);
+  envNightBaked = night;
+}
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
+const tables = makePaletteTables(PALETTE);
+const geoCache = new Map();
+function geoFor(key, model) {
+  let g = geoCache.get(key);
+  if (!g) { g = buildVoxelGeometry(model, tables); geoCache.set(key, g); }
+  return g;
+}
+
+// Ground
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x5fae3a, roughness: 0.95, metalness: 0 });
+groundMat.color.setHex(0x5fae3a, THREE.SRGBColorSpace);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+// A dark asphalt strip so contact darkening is visible.
+const roadMat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
+roadMat.color.setHex(0x3a3d42, THREE.SRGBColorSpace);
+const road = new THREE.Mesh(new THREE.PlaneGeometry(1400, TILE), roadMat);
+road.rotation.x = -Math.PI / 2;
+road.position.set(0, 0.02, TILE * 1.15);
+road.receiveShadow = true;
+scene.add(road);
+
+const cityGroup = new THREE.Group();
+const inspectGroup = new THREE.Group();
+inspectGroup.visible = false;
+scene.add(cityGroup, inspectGroup);
+
+// ---- City row -------------------------------------------------------------
+const CITY = [
+  ['condo-tower', 0], ['apartment', 1], ['arcade', 0], ['cinema', 0],
+  ['mall', 1], ['rocket-lab', 0], ['tall-apartment', 2], ['barber', 0],
+];
+const cityLabels = [];
+let cx = 0;
+for (const [id, v] of CITY) {
+  const m = catalogModel(id, v);
+  if (!m) continue;
+  const mesh = new THREE.Mesh(geoFor(id + ':' + v, m), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  const w = (m.tw || 1);
+  cx += w * TILE * 0.5;
+  mesh.position.set(cx - 130, 0, 0);
+  cx += w * TILE * 0.5 + 3;
+  cityGroup.add(mesh);
+  cityLabels.push({ obj: mesh, text: id, y: (m.sy || 8) + 2 });
+}
+// Zone buildings + service + props in front, so windows/neon read at night.
+let fx = -132;
+for (const spec of [['R', 3, 1], ['C', 3, 2], ['I', 2, 3], ['C', 2, 4], ['R', 2, 5]]) {
+  const m = buildingModel(spec[0], spec[1], spec[2]);
+  const mesh = new THREE.Mesh(geoFor('b' + spec.join(''), m), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.position.set(fx, 0, 26);
+  fx += 13;
+  cityGroup.add(mesh);
+}
+for (const [k, v, x] of [['fire', 0, -60], ['school', 0, -30], ['power', 0, 8], ['stadium', 0, 60]]) {
+  const m = serviceModel(k, v);
+  const mesh = new THREE.Mesh(geoFor('s' + k, m), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.position.set(x, 0, 30);
+  cityGroup.add(mesh);
+}
+for (let i = 0; i < 9; i++) {
+  const m = treeModel(i);
+  const mesh = new THREE.Mesh(geoFor('t' + i, m), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.position.set(-120 + i * 30, 0, -22);
+  cityGroup.add(mesh);
+}
+for (let i = 0; i < 6; i++) {
+  const m = carModel(i);
+  const mesh = new THREE.Mesh(geoFor('c' + i, m), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.position.set(-90 + i * 34, 0, TILE * 1.15);
+  mesh.rotation.y = Math.PI / 2;
+  cityGroup.add(mesh);
+}
+
+// Centre the whole city row on the origin so the default framing is sane.
+{
+  const bb = new THREE.Box3().setFromObject(cityGroup);
+  cityGroup.position.x = -(bb.min.x + bb.max.x) * 0.5;
+}
+
+// ---- Material inspector row ----------------------------------------------
+// One slab per material class so their light response can be compared blind.
+const INSPECT = [
+  ['metal', 'metal'], ['steel', 'brushed steel'], ['gold', 'gold'],
+  ['concrete', 'concrete'], ['brick', 'brick'], ['plank', 'painted wood'],
+  ['pBlue', 'painted plaster'], ['asphalt', 'asphalt'],
+];
+// Resolve palette indices by matching the known hexes from src/models.js.
+const HEXES = {
+  metal: 0xaab0b6, steel: 0x8b9096, gold: 0xe8b83a, concrete: 0xcfd2d6,
+  brick: 0xc0533f, plank: 0xd8a45c, pBlue: 0xa9d6e5, asphalt: 0x3a3d42,
+};
+function indexOfHex(hex) { for (let i = 0; i < PALETTE.length; i++) if (PALETTE[i] === hex) return i; return 0; }
+
+const legendEl = document.getElementById('legend');
+const inspectLabels = [];
+let ix = -((INSPECT.length - 1) * 11) / 2;
+let legendHTML = '';
+for (const [key, name] of INSPECT) {
+  const ci = indexOfHex(HEXES[key]);
+  const mp = materialParamsFor(ci, HEXES[key]);
+  const mesh = new THREE.Mesh(geoFor('slab' + key, slabModel(ci, 8, 9, 3)), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.position.set(ix, 0, 0);
+  inspectGroup.add(mesh);
+  inspectLabels.push({ obj: mesh, text: name, y: 11 });
+  ix += 11;
+  legendHTML += `<b>${name}</b> r=${mp.roughness.toFixed(2)} m=${mp.metalness.toFixed(2)}<br>`;
+}
+// Glass + neon + windows slabs behind.
+let gx = -22;
+for (const [ci, name] of [[200, 'warm window'], [201, 'cool window'], [202, 'lamp'], [203, 'NEON']]) {
+  const mesh = new THREE.Mesh(geoFor('slab' + ci, slabModel(ci, 8, 9, 3)), lib.voxel);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.position.set(gx, 0, -18);
+  inspectGroup.add(mesh);
+  inspectLabels.push({ obj: mesh, text: name, y: 11 });
+  gx += 14;
+  const mp = materialParamsFor(ci);
+  legendHTML += `<b>${name}</b> r=${mp.roughness.toFixed(2)} m=${mp.metalness.toFixed(2)}<br>`;
+}
+legendEl.innerHTML = legendHTML;
+
+// ---- Ghost preview --------------------------------------------------------
+const ghostModel = catalogModel('mansion', 0) || buildingModel('R', 3, 1);
+const ghostMesh = new THREE.Mesh(geoFor('ghost', ghostModel), lib.ghost);
+ghostMesh.position.set(110, 0.02, 24);
+scene.add(ghostMesh);
+let ghostOk = true;
+lib.ghost.color.setHex(0x66ff88);
+
+// ---------------------------------------------------------------------------
+// Harness post stack: HDR target -> bright pass -> blur -> ACES composite
+// (a stand-in for src/render/post.js, just enough to prove neon feeds bloom)
+// ---------------------------------------------------------------------------
+const fsGeo = new THREE.PlaneGeometry(2, 2);
+const fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const fsScene = new THREE.Scene();
+const fsMesh = new THREE.Mesh(fsGeo, null);
+fsScene.add(fsMesh);
+function blit(mat, target) { fsMesh.material = mat; renderer.setRenderTarget(target); renderer.render(fsScene, fsCam); }
+
+const rtOpts = { type: THREE.HalfFloatType, colorSpace: THREE.LinearSRGBColorSpace,
+  minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true };
+let sceneRT = new THREE.WebGLRenderTarget(2, 2, rtOpts);
+sceneRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
+let bloomA = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, depthBuffer: false });
+let bloomB = new THREE.WebGLRenderTarget(2, 2, { type: THREE.HalfFloatType, depthBuffer: false });
+bloomA.texture.colorSpace = THREE.LinearSRGBColorSpace;
+bloomB.texture.colorSpace = THREE.LinearSRGBColorSpace;
+
+const VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+
+const brightMat = new THREE.RawShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms: { tSrc: { value: null }, uThresh: { value: 1.0 }, uKnee: { value: 0.6 } },
+  vertexShader: `in vec3 position; in vec2 uv; out vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }`,
+  fragmentShader: `precision highp float; in vec2 vUv; out vec4 oCol;
+    uniform sampler2D tSrc; uniform float uThresh, uKnee;
+    void main(){ vec3 c = texture(tSrc, vUv).rgb;
+      float l = max(c.r, max(c.g, c.b));
+      float k = smoothstep(uThresh, uThresh + uKnee, l);
+      oCol = vec4(c * k, 1.0); }`,
+});
+const blurMat = new THREE.RawShaderMaterial({
+  glslVersion: THREE.GLSL3,
+  uniforms: { tSrc: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uTexel: { value: new THREE.Vector2() } },
+  vertexShader: `in vec3 position; in vec2 uv; out vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }`,
+  fragmentShader: `precision highp float; in vec2 vUv; out vec4 oCol;
+    uniform sampler2D tSrc; uniform vec2 uDir, uTexel;
+    void main(){
+      vec2 s = uDir * uTexel;
+      vec3 c = texture(tSrc, vUv).rgb * 0.227027;
+      c += texture(tSrc, vUv + s*1.3846).rgb * 0.316216;
+      c += texture(tSrc, vUv - s*1.3846).rgb * 0.316216;
+      c += texture(tSrc, vUv + s*3.2308).rgb * 0.070270;
+      c += texture(tSrc, vUv - s*3.2308).rgb * 0.070270;
+      oCol = vec4(c, 1.0); }`,
+});
+const compMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tScene: { value: null }, tBloom: { value: null },
+    uBloom: { value: 0.75 }, uExposure: { value: 1.15 }, uSat: { value: 1.06 },
+  },
+  vertexShader: VS,
+  fragmentShader: `varying vec2 vUv;
+    uniform sampler2D tScene, tBloom; uniform float uBloom, uExposure, uSat;
+    vec3 aces(vec3 x){ const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
+      return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0); }
+    void main(){
+      vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * uBloom;
+      c = aces(c * uExposure);
+      float l = dot(c, vec3(0.2126,0.7152,0.0722));
+      c = mix(vec3(l), c, uSat);
+      // vignette
+      vec2 q = vUv - 0.5;
+      c *= 1.0 - dot(q, q) * 0.55;
+      gl_FragColor = vec4(c, 1.0);
+      #include <colorspace_fragment>
+    }`,
+});
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  const pr = Math.min(devicePixelRatio, 2);
+  renderer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  const W = Math.max(2, Math.floor(w * pr)), H = Math.max(2, Math.floor(h * pr));
+  sceneRT.setSize(W, H);
+  bloomA.setSize(Math.max(2, W >> 1), Math.max(2, H >> 1));
+  bloomB.setSize(Math.max(2, W >> 1), Math.max(2, H >> 1));
+  blurMat.uniforms.uTexel.value.set(1 / (W >> 1), 1 / (H >> 1));
+}
+addEventListener('resize', resize);
+
+// ---------------------------------------------------------------------------
+// Camera orbit
+// ---------------------------------------------------------------------------
+let az = 0.55, polar = 0.95, dist = 175, target = new THREE.Vector3(0, 8, 4);
+let spin = true;
+function applyCam() {
+  const sp = Math.sin(polar), cp = Math.cos(polar);
+  camera.position.set(target.x + dist * sp * Math.sin(az), target.y + dist * cp, target.z + dist * sp * Math.cos(az));
+  camera.lookAt(target);
+}
+let drag = null;
+renderer.domElement.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; spin = false; syncSpinBtn(); });
+addEventListener('pointerup', () => drag = null);
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  az -= (e.clientX - drag.x) * 0.005;
+  polar = Math.min(1.35, Math.max(0.18, polar - (e.clientY - drag.y) * 0.004));
+  drag = { x: e.clientX, y: e.clientY };
+});
+renderer.domElement.addEventListener('wheel', e => {
+  dist = Math.min(500, Math.max(25, dist * (1 + Math.sign(e.deltaY) * 0.09)));
+  e.preventDefault();
+}, { passive: false });
+
+// ---------------------------------------------------------------------------
+// Day / night (mirrors engine.setNight)
+// ---------------------------------------------------------------------------
+const dayColor = new THREE.Color().setHex(0x87c9f0, THREE.SRGBColorSpace);
+const nightColor = new THREE.Color().setHex(0x0b1430, THREE.SRGBColorSpace);
+const sunsetColor = new THREE.Color().setHex(0xff9a5c, THREE.SRGBColorSpace);
+const sunDay = new THREE.Color().setHex(0xfff2d8, THREE.SRGBColorSpace);
+const moonCol = new THREE.Color().setHex(0x9fb8ff, THREE.SRGBColorSpace);
+const skyCol = new THREE.Color();
+
+function applyNight(t) {
+  engineUniforms.uNight.value = t;   // shared object — exactly how engine.js does it
+  skyCol.copy(dayColor).lerp(nightColor, t);
+  const dusk = Math.max(0, 1 - Math.abs(t - 0.5) / 0.2);
+  if (dusk > 0) skyCol.lerp(sunsetColor, dusk * 0.5);
+  scene.background.copy(skyCol);
+  scene.fog.color.copy(skyCol);
+  sun.intensity = 1.1 + (0.18 - 1.1) * t;
+  sun.color.copy(sunDay).lerp(moonCol, t);
+  // Harness only: dim the fill harder than engine.js does so the night frame
+  // reads. src/render/sky.js owns the real night ambience.
+  hemi.intensity = 0.6 + (0.10 - 0.6) * t;
+  ambient.intensity = 0.18 + (0.04 - 0.18) * t;
+  hemi.color.copy(skyCol).lerp(new THREE.Color(0.75, 0.88, 1.0), 0.5);
+  // Sun swings low toward night so the sunset band in the env map lines up.
+  sun.position.set(70, 110 * (1 - t * 0.72) + 22, 45);
+  lib.setSkyLight({ skyColor: skyCol });
+}
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+function bind(id, fn, fmt) {
+  const el = $(id), out = $(id + 'V');
+  const run = () => { const v = parseFloat(el.value); if (out) out.textContent = fmt ? fmt(v) : v; fn(v); };
+  el.addEventListener('input', run); run();
+}
+
+let nightT = 0;
+let rainAmt = 0;
+bind('night', v => { nightT = v; applyNight(v); }, v => v.toFixed(2));
+bind('quality', v => lib.setQuality(v), v => String(v | 0));
+bind('rain', v => { rainAmt = v; }, v => v.toFixed(2));
+bind('ao', v => lib.setParams({ ao: v }), v => v.toFixed(2));
+bind('aod', v => lib.setParams({ aoDirect: v }), v => v.toFixed(2));
+bind('sat', v => lib.setParams({ saturation: v }), v => v.toFixed(2));
+bind('rim', v => lib.setParams({ rim: v, rimNight: v * 1.6 }), v => v.toFixed(2));
+bind('fill', v => lib.setParams({ skyFill: v }), v => v.toFixed(2));
+bind('neon', v => lib.setParams({ neonBoost: v }), v => v.toFixed(1));
+bind('winb', v => lib.setParams({ windowBoost: v }), v => v.toFixed(2));
+bind('grain', v => lib.setParams({ grain: v }), v => v.toFixed(2));
+bind('env', v => lib.setParams({ envIntensity: v }), v => v.toFixed(2));
+bind('bloom', v => compMat.uniforms.uBloom.value = v, v => v.toFixed(2));
+bind('expo', v => compMat.uniforms.uExposure.value = v, v => v.toFixed(2));
+
+$('bDay').onclick = () => setNightSlider(0);
+$('bDusk').onclick = () => setNightSlider(0.5);
+$('bNight').onclick = () => setNightSlider(1);
+function setNightSlider(v) { $('night').value = v; $('night').dispatchEvent(new Event('input')); }
+
+$('bScene').onclick = () => setView(false);
+$('bInspect').onclick = () => setView(true);
+function setView(insp) {
+  cityGroup.visible = !insp; inspectGroup.visible = insp;
+  ghostMesh.visible = !insp;
+  $('bScene').classList.toggle('on', !insp);
+  $('bInspect').classList.toggle('on', insp);
+  target.set(0, insp ? 5 : 8, insp ? 0 : 4);
+  dist = insp ? 78 : 175;
+  polar = insp ? 1.05 : 0.95;
+  az = insp ? 0.35 : 0.55;
+}
+$('bSpin').onclick = () => { spin = !spin; syncSpinBtn(); };
+function syncSpinBtn() { $('bSpin').classList.toggle('on', spin); }
+$('bGhost').onclick = () => {
+  ghostOk = !ghostOk;
+  lib.ghost.color.setHex(ghostOk ? 0x66ff88 : 0xff6b6b);
+  $('bGhost').textContent = 'Ghost: ' + (ghostOk ? 'OK' : 'BLOCKED');
+};
+$('bTest').onclick = () => {
+  const el = $('selftest');
+  const r = selfTest(renderer);
+  el.style.display = 'block';
+  el.innerHTML = `<div class="${r.pass ? 'pass' : 'fail'}">selfTest ${r.pass ? 'PASS' : 'FAIL'}</div>` +
+    r.notes.map(n => `<div class="${n.startsWith('FAIL') ? 'fail' : ''}">${n}</div>`).join('');
+  console.log('[materials.selfTest]', r);
+};
+
+applyNight(parseFloat($('night').value) || 0);
+buildEnvTexture(parseFloat($('night').value) || 0);
+
+// ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+const labelsEl = document.getElementById('labels');
+const labelDivs = [];
+function syncLabels(list) {
+  while (labelDivs.length < list.length) { const d = document.createElement('div'); labelsEl.appendChild(d); labelDivs.push(d); }
+  const v = new THREE.Vector3();
+  for (let i = 0; i < labelDivs.length; i++) {
+    const d = labelDivs[i];
+    if (i >= list.length) { d.style.display = 'none'; continue; }
+    const it = list[i];
+    v.set(it.obj.position.x, it.y, it.obj.position.z).project(camera);
+    if (v.z > 1) { d.style.display = 'none'; continue; }
+    d.style.display = 'block';
+    d.textContent = it.text;
+    d.style.left = ((v.x * 0.5 + 0.5) * innerWidth) + 'px';
+    d.style.top = ((-v.y * 0.5 + 0.5) * innerHeight) + 'px';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Loop
+// ---------------------------------------------------------------------------
+const ctx = { time: 0, dt: 0, nightT: 0, nightEff: 0, weather: { rain: 0, snow: 0, tint: [1, 1, 1] },
+  camera, camDist: dist, sunDir: new THREE.Vector3(), quality: 2 };
+const clock = new THREE.Clock();
+resize();
+setView(false);
+
+let frames = 0, acc = 0;
+function tick() {
+  requestAnimationFrame(tick);
+  const dt = Math.min(0.05, clock.getDelta());
+  if (spin) az += dt * 0.12;
+  applyCam();
+
+  ctx.time += dt; ctx.dt = dt;
+  ctx.nightT = nightT; ctx.nightEff = nightT;
+  ctx.weather.rain = rainAmt;
+  ctx.camDist = dist;
+  ctx.quality = parseInt($('quality').value, 10);
+  ctx.sunDir.copy(sun.position).normalize();
+  lib.update(dt, ctx);
+
+  // Re-bake the env map at the sky module's cadence (contract §3.2).
+  if (Math.abs(nightT - envNightBaked) > 0.02) buildEnvTexture(nightT);
+
+  // Scene -> HDR target
+  renderer.setRenderTarget(sceneRT);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  // Bright pass + separable blur
+  brightMat.uniforms.tSrc.value = sceneRT.texture;
+  blit(brightMat, bloomA);
+  for (let i = 0; i < 3; i++) {
+    blurMat.uniforms.tSrc.value = bloomA.texture;
+    blurMat.uniforms.uDir.value.set(1, 0);
+    blit(blurMat, bloomB);
+    blurMat.uniforms.tSrc.value = bloomB.texture;
+    blurMat.uniforms.uDir.value.set(0, 1);
+    blit(blurMat, bloomA);
+  }
+
+  // Composite + ACES + grade to the canvas
+  compMat.uniforms.tScene.value = sceneRT.texture;
+  compMat.uniforms.tBloom.value = bloomA.texture;
+  renderer.setRenderTarget(null);
+  blit(compMat, null);
+
+  syncLabels(inspectGroup.visible ? inspectLabels : cityLabels);
+
+  frames++; acc += dt;
+  if (acc > 0.5) {
+    $('stat').textContent =
+      `${(frames / acc).toFixed(0)} fps  ${renderer.info.render.triangles} tris\n` +
+      `programs ${renderer.info.programs.length}  night ${nightT.toFixed(2)}  env ${envNightBaked.toFixed(2)}`;
+    frames = 0; acc = 0;
+  }
+}
+tick();
+
+// Run the contract self-test once at boot so console errors surface early.
+setTimeout(() => {
+  const r = selfTest(renderer);
+  console.log('[materials.selfTest]', r.pass ? 'PASS' : 'FAIL', r.notes);
+  window.__materialsSelfTest = r;
+}, 400);
+
+// Press H (or call __ui(false)) to hide the panel for clean screenshots.
+window.__ui = (on) => { document.getElementById('ui').style.display = on ? '' : 'none'; };
+addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') {
+  const el = document.getElementById('ui'); el.style.display = el.style.display === 'none' ? '' : 'none';
+} });
+
+window.__lib = lib;
+window.__setNight = setNightSlider;
+window.__setView = setView;
+window.__THREE = THREE;
+window.__cam = (a, p, d, tx, ty, tz) => {
+  if (a !== undefined) az = a;
+  if (p !== undefined) polar = p;
+  if (d !== undefined) dist = d;
+  if (tx !== undefined) target.set(tx, ty, tz);
+  spin = false; syncSpinBtn(); applyCam();
+};
+// Peak HDR luminance in the scene target — proves neon is well above 1.0.
+window.__probeHDR = () => {
+  const w = sceneRT.width, h = sceneRT.height;
+  const buf = new Uint16Array(w * h * 4);
+  renderer.readRenderTargetPixels(sceneRT, 0, 0, w, h, buf);
+  const f = (u) => { // half float -> float
+    const s = (u >> 15) & 1, e = (u >> 10) & 0x1f, m = u & 0x3ff;
+    if (e === 0) return (s ? -1 : 1) * Math.pow(2, -14) * (m / 1024);
+    if (e === 31) return m ? NaN : (s ? -Infinity : Infinity);
+    return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + m / 1024);
+  };
+  let max = 0, over1 = 0, over2 = 0;
+  for (let i = 0; i < w * h; i++) {
+    const l = Math.max(f(buf[i * 4]), f(buf[i * 4 + 1]), f(buf[i * 4 + 2]));
+    if (l > max) max = l;
+    if (l > 1) over1++;
+    if (l > 2) over2++;
+  }
+  return { maxLuminance: +max.toFixed(3), pixelsOver1: over1, pixelsOver2: over2, total: w * h };
+};
+</script>
+</body>
+</html>

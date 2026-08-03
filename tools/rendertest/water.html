@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>WaterFX render test</title>
+<style>
+  html, body { margin:0; height:100%; background:#0a0d12; overflow:hidden; font:12px/1.4 system-ui, sans-serif; color:#e8eef5; }
+  canvas { display:block; }
+  #ui { position:fixed; top:8px; left:8px; z-index:10; background:rgba(12,18,26,.82); padding:10px 12px;
+        border-radius:10px; width:230px; backdrop-filter:blur(6px); box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  #ui h3 { margin:0 0 8px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; opacity:.8; }
+  .row { display:flex; align-items:center; gap:6px; margin:5px 0; }
+  .row label { flex:0 0 76px; opacity:.75; }
+  .row input[type=range] { flex:1; min-width:0; }
+  .row .v { flex:0 0 34px; text-align:right; font-variant-numeric:tabular-nums; opacity:.9; }
+  #stats { position:fixed; bottom:8px; left:8px; z-index:10; background:rgba(12,18,26,.75);
+           padding:6px 10px; border-radius:8px; font-variant-numeric:tabular-nums; }
+  .btns { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+  button { background:#1e2a38; color:#dce7f2; border:1px solid #2f4256; border-radius:6px;
+           padding:4px 7px; cursor:pointer; font-size:11px; }
+  button:hover { background:#2a3a4c; }
+</style>
+<div id="ui">
+  <h3>WaterFX</h3>
+  <div class="row"><label>sun elev</label><input id="sunEl" type="range" min="-5" max="90" value="52" step="1"><span class="v" id="sunElV">52</span></div>
+  <div class="row"><label>sun azim</label><input id="sunAz" type="range" min="0" max="360" value="140" step="1"><span class="v" id="sunAzV">140</span></div>
+  <div class="row"><label>rain</label><input id="rain" type="range" min="0" max="100" value="0" step="1"><span class="v" id="rainV">0</span></div>
+  <div class="row"><label>time ×</label><input id="tspd" type="range" min="0" max="300" value="100" step="5"><span class="v" id="tspdV">1.0</span></div>
+  <div class="row"><label>quality</label><input id="qual" type="range" min="0" max="2" value="2" step="1"><span class="v" id="qualV">2</span></div>
+  <div class="row"><label>night</label><input id="night" type="range" min="0" max="100" value="0" step="1"><span class="v" id="nightV">0</span></div>
+  <div class="btns">
+    <button onclick="__wt.view('high')">high orbit</button>
+    <button onclick="__wt.view('graze')">grazing</button>
+    <button onclick="__wt.view('beach')">beach</button>
+    <button onclick="__wt.view('lake')">lake</button>
+    <button onclick="__wt.runSelfTest()">selfTest</button>
+  </div>
+</div>
+<div id="stats">booting…</div>
+
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { WaterFX, selfTest } from '../../src/render/water.js';
+
+const TILE = 8, N = 80, WORLD = N * TILE;
+const T = { GRASS:0, WATER:1, SAND:2, ROAD:3, MOUNTAIN:15 };
+
+// ---------------------------------------------------------------------------
+// Synthetic world: ocean on -Z with a wavy coast, an inland lake, a winding
+// river, sandy beaches, plus a couple of road/bridge tiles.
+// ---------------------------------------------------------------------------
+function hash01(ix, iz, salt) {
+  let h = (Math.imul(ix|0,0x27d4eb2d) ^ Math.imul(iz|0,0x165667b1) ^ Math.imul(salt|0,0x9e3779b1)) >>> 0;
+  h ^= h>>>15; h = Math.imul(h,0x85ebca6b)>>>0; h ^= h>>>13; h = Math.imul(h,0xc2b2ae35)>>>0; h ^= h>>>16;
+  return (h>>>0)/4294967296;
+}
+function vn(x, z, f, salt) {
+  const gx=x*f, gz=z*f, x0=Math.floor(gx), z0=Math.floor(gz);
+  const fx=gx-x0, fz=gz-z0, sx=fx*fx*(3-2*fx), sz=fz*fz*(3-2*fz);
+  const a = hash01(x0,z0,salt) + (hash01(x0+1,z0,salt)-hash01(x0,z0,salt))*sx;
+  const b = hash01(x0,z0+1,salt) + (hash01(x0+1,z0+1,salt)-hash01(x0,z0+1,salt))*sx;
+  return a + (b-a)*sz;
+}
+function fbm(x,z,f,oct,salt){ let a=1,ff=f,s=0,n=0; for(let o=0;o<oct;o++){ s+=a*vn(x,z,ff,salt+o*131); n+=a; a*=.5; ff*=2;} return s/n; }
+
+const map = new Uint8Array(N*N);
+const bridge = new Uint8Array(N*N);
+const variant = new Uint8Array(N*N);
+const setW = (x,z) => { if (x>=0&&z>=0&&x<N&&z<N) map[z*N+x] = T.WATER; };
+
+// ocean on the -Z edge, wavy coastline
+for (let z=0; z<N; z++) for (let x=0; x<N; x++) {
+  const wave = 5.0*(vn(x, 11, 0.09, 2222)*2-1) + 3.0*(vn(x, 71, 0.21, 811)*2-1);
+  if (z < 13 + wave) setW(x,z);
+}
+// a small bay biting further inland
+for (let z=0; z<N; z++) for (let x=0; x<N; x++) {
+  const dx=x-58, dz=z-8; if (dx*dx*0.55+dz*dz < 150) setW(x,z);
+}
+// inland lake
+for (let z=0; z<N; z++) for (let x=0; x<N; x++) {
+  const dx=x-60, dz=z-58, d=Math.sqrt(dx*dx+dz*dz);
+  const wob = 5.5*(vn(x,z,0.28,3300)*2-1);
+  if (d < 9 + wob) setW(x,z);
+}
+// winding river from the lake to the sea
+{
+  let x=57, z=50;
+  for (let s=0; s<200 && z>2; s++) {
+    for (let dz=-1; dz<=1; dz++) for (let dx=-1; dx<=1; dx++)
+      if (Math.abs(dx)+Math.abs(dz) <= 1) setW(x+dx, z+dz);
+    z -= 1;
+    x += Math.round((vn(z*3, 7, 0.16, 4400)-0.5)*3.2);
+    x = Math.max(3, Math.min(N-4, x));
+  }
+}
+// mountains in a corner for scale/context
+for (let z=0; z<N; z++) for (let x=0; x<N; x++) {
+  const i=z*N+x; if (map[i]!==T.GRASS) continue;
+  const dx=x-6, dz=z-72, d=Math.sqrt(dx*dx/1.6+dz*dz);
+  if (d<13) { const h=Math.round(13*(1-d/13)) + Math.round((vn(x,z,0.16,99)-0.5)*2); if (h>=2){ map[i]=T.MOUNTAIN; variant[i]=Math.min(16,h);} }
+}
+// beaches: sand next to water (wide on the ocean side, thin inland)
+const isW = (x,z) => x>=0&&z>=0&&x<N&&z<N && map[z*N+x]===T.WATER;
+{
+  const sand = [];
+  for (let z=0; z<N; z++) for (let x=0; x<N; x++) {
+    const i=z*N+x; if (map[i]!==T.GRASS) continue;
+    let r = (z < 34) ? 2 : 1;                       // wider beaches on the coast
+    if (x>20 && x<44 && z<30) r = 3;                // one big sandy beach
+    let near=false;
+    for (let dz=-r; dz<=r && !near; dz++) for (let dx=-r; dx<=r; dx++)
+      if (dx*dx+dz*dz <= r*r+0.5 && isW(x+dx,z+dz)) { near=true; break; }
+    if (near) sand.push(i);
+  }
+  for (const i of sand) map[i] = T.SAND;
+}
+// a road with a bridge over the river
+for (let x=8; x<N-8; x++) {
+  const i = 40*N+x;
+  if (map[i]===T.WATER) { map[i]=T.ROAD; bridge[i]=1; }
+  else if (map[i]!==T.MOUNTAIN) map[i]=T.ROAD;
+}
+const state = { map, bridge, variant };
+
+// ---------------------------------------------------------------------------
+// Renderer / scene
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.98;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xbfe0f5, 520, 2100);
+const camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 1, 6000);
+
+const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x6f8a52, 1.05);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff0d8, 1.55);
+scene.add(sun);
+
+// --- simple sky dome so fresnel reflections have something to agree with ----
+const SKY_TOP = 0x1f6ecb, SKY_HOR = 0xa9d8f5;
+const skyU = {
+  uTop:{ value:new THREE.Color().setHex(SKY_TOP, THREE.SRGBColorSpace) },
+  uHor:{ value:new THREE.Color().setHex(SKY_HOR, THREE.SRGBColorSpace) },
+  uSun:{ value:new THREE.Vector3(0.4,0.6,0.6) },
+  uSunCol:{ value:new THREE.Color(1,0.95,0.85) },
+  uNight:{ value:0 },
+};
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1800, 40, 24),
+  new THREE.ShaderMaterial({
+    uniforms: skyU, side: THREE.BackSide, depthWrite:false, fog:false,
+    vertexShader:`varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`
+      uniform vec3 uTop,uHor,uSunCol; uniform vec3 uSun; uniform float uNight; varying vec3 vD;
+      void main(){
+        vec3 d = normalize(vD);
+        float up = d.y;
+        // above the horizon: horizon -> zenith. below: fade to a hazy ground band.
+        vec3 c = mix(uHor, uTop, pow(clamp(up,0.0,1.0), 0.42));
+        c = mix(c, uHor*0.62 + vec3(0.05,0.06,0.05), clamp(-up*2.6,0.0,1.0));
+        float sd = max(dot(d, normalize(uSun)),0.0);
+        c += uSunCol * (pow(sd, 4200.0)*22.0 + pow(sd, 260.0)*0.60 + pow(sd,10.0)*0.14);
+        c = mix(c, c*vec3(0.10,0.14,0.30)+vec3(0.005,0.008,0.020), uNight*0.92);
+        gl_FragColor = vec4(c,1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  })
+);
+sky.frustumCulled = false;
+scene.add(sky);
+
+// --- ground (grass / sand / road / mountains), NO water quads ---------------
+const GRASS_A=0x86c95a, GRASS_B=0x76bd4d, SAND=0xe6d49a, ROAD=0x555a63,
+      MG=0x6ea84c, MR=0x8b8378, MS=0xf2f6fa;
+function lin(hex){ const c=new THREE.Color().setHex(hex, THREE.SRGBColorSpace); return [c.r,c.g,c.b]; }
+function buildGround() {
+  const pos=[], nor=[], col=[];
+  const quad=(ax,ay,az,bx,by,bz,cx,cy,cz,dx,dy,dz,nx,ny,nz,c)=>{
+    const p=[ax,ay,az,bx,by,bz,cx,cy,cz,ax,ay,az,cx,cy,cz,dx,dy,dz];
+    for(let k=0;k<18;k+=3){ pos.push(p[k],p[k+1],p[k+2]); nor.push(nx,ny,nz); col.push(c[0],c[1],c[2]); }
+  };
+  const CG=[lin(GRASS_A),lin(GRASS_B)], CS=lin(SAND), CR=lin(ROAD);
+  const CMG=lin(MG), CMR=lin(MR), CMS=lin(MS);
+  const topY=(x,z)=>{ if(x<0||z<0||x>=N||z>=N) return null;
+    const i=z*N+x; return (map[i]===T.WATER||bridge[i]===1) ? -0.35 : 0; };
+  const mtnH=(x,z)=>{ if(x<0||z<0||x>=N||z>=N) return 0; const i=z*N+x;
+    return map[i]===T.MOUNTAIN ? (variant[i]||4) : 0; };
+  for (let z=0; z<N; z++) for (let x=0; x<N; x++) {
+    const i=z*N+x, t=map[i];
+    const wx0=x*TILE, wx1=wx0+TILE, wz0=z*TILE, wz1=wz0+TILE;
+    if (t===T.MOUNTAIN) {
+      const h=variant[i]||4, snowLine=h-2, third=h/3;
+      const band=(L)=> (h>=8&&L>=snowLine)?CMS : (L<third?CMG:CMR);
+      quad(wx0,h,wz0, wx0,h,wz1, wx1,h,wz1, wx1,h,wz0, 0,1,0, band(h-1));
+      const hE=mtnH(x+1,z),hW=mtnH(x-1,z),hN=mtnH(x,z-1),hS=mtnH(x,z+1);
+      for(let L=hE;L<h;L++) quad(wx1,L,wz1, wx1,L,wz0, wx1,L+1,wz0, wx1,L+1,wz1, 1,0,0, band(L));
+      for(let L=hW;L<h;L++) quad(wx0,L,wz0, wx0,L,wz1, wx0,L+1,wz1, wx0,L+1,wz0, -1,0,0, band(L));
+      for(let L=hN;L<h;L++) quad(wx1,L,wz0, wx0,L,wz0, wx0,L+1,wz0, wx1,L+1,wz0, 0,0,-1, band(L));
+      for(let L=hS;L<h;L++) quad(wx0,L,wz1, wx1,L,wz1, wx1,L+1,wz1, wx0,L+1,wz1, 0,0,1, band(L));
+      continue;
+    }
+    const isWater = (t===T.WATER) || bridge[i]===1;
+    if (isWater) continue;                       // <-- WaterFX owns these tiles
+    const c = t===T.SAND ? CS : t===T.ROAD ? CR : CG[((x*73856093)^(z*19349663))&1];
+    quad(wx0,0,wz0, wx0,0,wz1, wx1,0,wz1, wx1,0,wz0, 0,1,0, c);
+    const lows=[topY(x+1,z),topY(x-1,z),topY(x,z-1),topY(x,z+1)].map(v=>v===null?-1.6:v);
+    if(lows[0]<0) quad(wx1,lows[0],wz1, wx1,lows[0],wz0, wx1,0,wz0, wx1,0,wz1, 1,0,0, c);
+    if(lows[1]<0) quad(wx0,lows[1],wz0, wx0,lows[1],wz1, wx0,0,wz1, wx0,0,wz0, -1,0,0, c);
+    if(lows[2]<0) quad(wx1,lows[2],wz0, wx0,lows[2],wz0, wx0,0,wz0, wx1,0,wz0, 0,0,-1, c);
+    if(lows[3]<0) quad(wx0,lows[3],wz1, wx1,lows[3],wz1, wx1,0,wz1, wx0,0,wz1, 0,0,1, c);
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor,3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col,3));
+  g.computeBoundingSphere();
+  return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors:true }));
+}
+scene.add(buildGround());
+
+// a few boxes for scale
+{
+  const mat = new THREE.MeshLambertMaterial({ color:0xe8e2d6 });
+  const g = new THREE.BoxGeometry(6,14,6);
+  for (let k=0; k<14; k++) {
+    const x = 26 + k*3, z = 46 + (k%4)*3;
+    if (map[z*N+x] !== T.GRASS) continue;
+    const m = new THREE.Mesh(g, mat);
+    m.position.set(x*TILE+4, 7, z*TILE+4);
+    scene.add(m);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WaterFX
+// ---------------------------------------------------------------------------
+const water = new WaterFX(scene, { n:N });
+const tBuild0 = performance.now();
+water.buildSurface(state);
+const buildMs = performance.now() - tBuild0;
+
+// ---------------------------------------------------------------------------
+// Camera / orbit
+// ---------------------------------------------------------------------------
+const cam = { az: 0.7, polar: 0.85, dist: 420, tx: 320, ty: 0, tz: 300 };
+function place() {
+  const sp = Math.sin(cam.polar), cp = Math.cos(cam.polar);
+  camera.position.set(cam.tx + Math.sin(cam.az)*sp*cam.dist, cam.ty + cp*cam.dist, cam.tz + Math.cos(cam.az)*sp*cam.dist);
+  camera.lookAt(cam.tx, cam.ty, cam.tz);
+}
+let drag=null;
+renderer.domElement.addEventListener('pointerdown', e=>{ drag={x:e.clientX,y:e.clientY,b:e.button}; renderer.domElement.setPointerCapture(e.pointerId); });
+renderer.domElement.addEventListener('pointerup', ()=>drag=null);
+renderer.domElement.addEventListener('pointermove', e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if (drag.b===2 || e.shiftKey) {
+    const s = cam.dist*0.0018;
+    cam.tx -= (Math.cos(cam.az)*dx - Math.sin(cam.az)*dy)*s;
+    cam.tz += (Math.sin(cam.az)*dx + Math.cos(cam.az)*dy)*s;
+  } else {
+    cam.az -= dx*0.006;
+    cam.polar = Math.max(0.03, Math.min(1.55, cam.polar - dy*0.005));
+  }
+});
+renderer.domElement.addEventListener('contextmenu', e=>e.preventDefault());
+addEventListener('wheel', e=>{ cam.dist = Math.max(20, Math.min(1400, cam.dist*(1+Math.sign(e.deltaY)*0.1))); });
+addEventListener('resize', ()=>{
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  water.setSize(innerWidth, innerHeight, renderer.getPixelRatio());
+});
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+const el = id => document.getElementById(id);
+const P = { sunEl:52, sunAz:140, rain:0, tspd:1, qual:2, night:0 };
+function bind(id, key, fmt, apply) {
+  const i = el(id), v = el(id+'V');
+  const upd = () => { P[key] = +i.value * (key==='tspd'?0.01:(key==='rain'||key==='night'?0.01:1));
+    v.textContent = fmt(P[key]); if (apply) apply(); };
+  i.addEventListener('input', upd); upd();
+}
+bind('sunEl','sunEl', v=>v.toFixed(0));
+bind('sunAz','sunAz', v=>v.toFixed(0));
+bind('rain','rain', v=>(v*100).toFixed(0));
+bind('tspd','tspd', v=>v.toFixed(1));
+bind('qual','qual', v=>v.toFixed(0), ()=>water.setQuality(P.qual));
+bind('night','night', v=>(v*100).toFixed(0));
+
+const sunDir = new THREE.Vector3();
+const ctx = {
+  time:0, dt:0.016, nightT:0, nightEff:0,
+  weather:{ rain:0, snow:0, tint:[1,1,1] },
+  camera, camDist:cam.dist, sunDir, quality:2,
+};
+
+function view(name) {
+  if (name==='high')  Object.assign(cam, { az:0.35, polar:0.70, dist:820, tx:320, ty:0, tz:280 });
+  if (name==='graze') Object.assign(cam, { az:1.15, polar:1.46, dist:260, tx:300, ty:0, tz:45 });
+  if (name==='beach') Object.assign(cam, { az:0.20, polar:1.30, dist:150, tx:280, ty:0, tz:105 });
+  if (name==='lake')  Object.assign(cam, { az:2.10, polar:1.30, dist:210, tx:480, ty:0, tz:465 });
+}
+view('high');
+
+// ---------------------------------------------------------------------------
+// Loop
+// ---------------------------------------------------------------------------
+let t = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, fps = 0;
+function frame() {
+  const nowMs = performance.now();
+  const dt = Math.min(0.05, (nowMs-last)/1000); last = nowMs;
+  t += dt * P.tspd;
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc > 0.5) { fps = fpsN/fpsAcc; fpsAcc=0; fpsN=0; }
+
+  const el0 = P.sunEl*Math.PI/180, az0 = P.sunAz*Math.PI/180;
+  sunDir.set(Math.cos(el0)*Math.sin(az0), Math.sin(el0), Math.cos(el0)*Math.cos(az0)).normalize();
+  sun.position.copy(sunDir).multiplyScalar(600);
+  sun.intensity = 1.6 * Math.max(0.05, Math.pow(Math.max(0,sunDir.y),0.5)) * (1-P.rain*0.5) * (1-P.night*0.85);
+  hemi.intensity = 1.05 * (1-P.night*0.8) * (1-P.rain*0.25);
+
+  // sky colours track the sun a little so the reflection reads correctly
+  const warm = Math.pow(1-Math.max(0,sunDir.y), 4.0);
+  skyU.uTop.value.setHex(SKY_TOP, THREE.SRGBColorSpace).lerp(new THREE.Color(0.30,0.20,0.42), warm*0.75);
+  skyU.uHor.value.setHex(SKY_HOR, THREE.SRGBColorSpace).lerp(new THREE.Color(1.0,0.44,0.18), warm*0.9);
+  skyU.uHor.value.lerp(new THREE.Color(0.62,0.66,0.70), P.rain*0.75);
+  skyU.uTop.value.lerp(new THREE.Color(0.38,0.42,0.46), P.rain*0.75);
+  skyU.uSun.value.copy(sunDir);
+  skyU.uNight.value = P.night;
+  water.setSky({ skyTop: skyU.uTop.value.clone(), skyHorizon: skyU.uHor.value.clone() });
+
+  ctx.time = t; ctx.dt = dt; ctx.nightT = P.night; ctx.nightEff = P.night;
+  ctx.weather.rain = P.rain; ctx.quality = P.qual; ctx.camDist = cam.dist;
+  water.update(dt, ctx);
+
+  place();
+  sky.position.copy(camera.position);
+  renderer.render(scene, camera);
+  const s = water.stats();
+  el('stats').textContent =
+    `${fps.toFixed(0)} fps · build ${buildMs.toFixed(1)} ms · ${s.waterTiles} water tiles · ` +
+    `${s.triangles} tris · ${s.chunks} chunks · shore ${s.shoreField} · q${s.quality} · ` +
+    `cam d${cam.dist.toFixed(0)} p${cam.polar.toFixed(2)}`;
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ---------------------------------------------------------------------------
+// Scripting hook (used by the screenshot harness)
+// ---------------------------------------------------------------------------
+window.__wt = {
+  water, scene, camera, cam, state, P, view,
+  setCam(o){ Object.assign(cam, o); },
+  setSun(elev, azim){ P.sunEl=elev; el('sunEl').value=elev; el('sunElV').textContent=elev;
+                      if(azim!=null){P.sunAz=azim; el('sunAz').value=azim; el('sunAzV').textContent=azim;} },
+  setRain(r){ P.rain=r; el('rain').value=r*100; el('rainV').textContent=(r*100)|0; },
+  setNight(n){ P.night=n; el('night').value=n*100; el('nightV').textContent=(n*100)|0; },
+  setTime(v){ t=v; },
+  setSpeed(v){ P.tspd=v; el('tspd').value=v*100; el('tspdV').textContent=v.toFixed(1); },
+  stats(){ return water.stats(); },
+  runSelfTest(){ const r = selfTest(); console.log('[selfTest]', r.pass ? 'PASS' : 'FAIL'); r.notes.forEach(n=>console.log('  '+n)); window.__selfTest = r; return r; },
+};
+window.__ready = true;
+console.log('[water.html] ready — build', buildMs.toFixed(1), 'ms', water.stats());
+</script>

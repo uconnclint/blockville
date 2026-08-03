@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blockville — PostFX test harness</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #14171c; color: #dfe4ea;
+               font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #wrap { display: flex; height: 100%; }
+  #panel { width: 274px; flex: none; overflow-y: auto; padding: 10px 12px 40px;
+           background: #1b1f26; border-right: 1px solid #2c323c; }
+  #view { flex: 1; position: relative; min-width: 0; background: #0c0e12; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  h1 { font-size: 13px; margin: 2px 0 10px; letter-spacing: .04em; text-transform: uppercase; color: #8ec7ff; }
+  h2 { font-size: 11px; margin: 14px 0 6px; letter-spacing: .08em; text-transform: uppercase;
+       color: #7d8798; border-bottom: 1px solid #2c323c; padding-bottom: 3px; }
+  label.row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  label.row span.n { flex: 1; }
+  label.row span.v { width: 44px; text-align: right; color: #9fb0c6; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 108px; }
+  .chk { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-weight: 600; }
+  button { background: #2a3140; color: #dfe4ea; border: 1px solid #3a4354; border-radius: 4px;
+           padding: 5px 9px; cursor: pointer; font: inherit; margin: 2px 2px 2px 0; }
+  button:hover { background: #354054; }
+  button.on { background: #2f6ea8; border-color: #4a90d0; }
+  select { background: #2a3140; color: #dfe4ea; border: 1px solid #3a4354; border-radius: 4px; padding: 3px; width: 100%; }
+  #hud { position: absolute; top: 8px; left: 10px; background: rgba(10,12,16,.72); padding: 6px 9px;
+         border-radius: 5px; font-variant-numeric: tabular-nums; white-space: pre; pointer-events: none; }
+  #splitlabel { position: absolute; top: 8px; right: 10px; background: rgba(10,12,16,.72);
+                padding: 6px 9px; border-radius: 5px; pointer-events: none; }
+  #log { white-space: pre-wrap; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #12151a; border: 1px solid #2c323c; border-radius: 4px; padding: 6px;
+         max-height: 210px; overflow: auto; margin-top: 6px; }
+  .ok { color: #7ee08a; } .bad { color: #ff8080; }
+  .hint { color: #6d7688; margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="panel">
+    <h1>PostFX harness</h1>
+
+    <h2>Quality</h2>
+    <div><button data-q="0">0 low</button><button data-q="1">1 med</button><button data-q="2" class="on">2 high</button></div>
+    <div style="margin-top:6px"><button id="lock720">Lock 1280×720</button><button id="pr1">1× pixels</button></div>
+
+    <h2>A / B</h2>
+    <label class="row"><span class="n">raw ◀ split</span><input type="range" id="split" min="0" max="1" step="0.005" value="0"><span class="v" id="split_v">0</span></label>
+    <div><button data-split="0">off</button><button data-split="0.5">50 %</button><button data-split="1">all raw</button></div>
+    <div style="margin-top:6px">Debug view
+      <select id="debug">
+        <option value="none">composite</option>
+        <option value="ao">SSAO buffer</option>
+        <option value="bloom">bloom buffer</option>
+        <option value="coc">circle of confusion</option>
+        <option value="depth">depth</option>
+      </select>
+    </div>
+
+    <h2>SSAO</h2>
+    <label class="chk"><input type="checkbox" id="ssao_on" checked>enabled</label>
+    <label class="row"><span class="n">intensity</span><input type="range" id="ssao_intensity" min="0" max="2" step="0.02" value="1.3"><span class="v"></span></label>
+    <label class="row"><span class="n">radius</span><input type="range" id="ssao_radius" min="0.3" max="12" step="0.1" value="5.5"><span class="v"></span></label>
+    <label class="row"><span class="n">bias</span><input type="range" id="ssao_bias" min="0" max="0.6" step="0.005" value="0.13"><span class="v"></span></label>
+    <label class="row"><span class="n">power</span><input type="range" id="ssao_power" min="0.5" max="4" step="0.05" value="1.7"><span class="v"></span></label>
+
+    <h2>Bloom</h2>
+    <label class="chk"><input type="checkbox" id="bloom_on" checked>enabled</label>
+    <label class="row"><span class="n">threshold</span><input type="range" id="bloom_threshold" min="0" max="3" step="0.01" value="0.85"><span class="v"></span></label>
+    <label class="row"><span class="n">strength</span><input type="range" id="bloom_strength" min="0" max="2" step="0.01" value="0.55"><span class="v"></span></label>
+    <label class="row"><span class="n">radius</span><input type="range" id="bloom_radius" min="0.2" max="2" step="0.01" value="0.85"><span class="v"></span></label>
+    <label class="row"><span class="n">softness</span><input type="range" id="bloom_softness" min="0" max="1" step="0.01" value="0.6"><span class="v"></span></label>
+
+    <h2>Tilt-shift DOF</h2>
+    <label class="chk"><input type="checkbox" id="dof_on" checked>enabled</label>
+    <label class="row"><span class="n">strength</span><input type="range" id="dof_strength" min="0" max="2" step="0.02" value="1"><span class="v"></span></label>
+    <label class="row"><span class="n">maxBlur</span><input type="range" id="dof_maxBlur" min="0" max="3" step="0.02" value="1"><span class="v"></span></label>
+    <label class="row"><span class="n">rangeScale</span><input type="range" id="dof_rangeScale" min="0.05" max="1.5" step="0.01" value="0.62"><span class="v"></span></label>
+    <label class="row"><span class="n">tilt</span><input type="range" id="dof_tilt" min="0" max="1" step="0.01" value="0.28"><span class="v"></span></label>
+    <label class="row"><span class="n">tiltStart</span><input type="range" id="dof_tiltStart" min="0" max="1" step="0.01" value="0.45"><span class="v"></span></label>
+
+    <h2>Tonemap + grade</h2>
+    <label class="row"><span class="n">exposure</span><input type="range" id="grade_exposure" min="0.2" max="3" step="0.01" value="1.65"><span class="v"></span></label>
+    <label class="row"><span class="n">saturation</span><input type="range" id="grade_saturation" min="0" max="2" step="0.01" value="1.24"><span class="v"></span></label>
+    <label class="row"><span class="n">contrast</span><input type="range" id="grade_contrast" min="0.4" max="2" step="0.01" value="1.05"><span class="v"></span></label>
+    <label class="row"><span class="n">punch</span><input type="range" id="grade_punch" min="0" max="1" step="0.01" value="0.5"><span class="v"></span></label>
+    <label class="row"><span class="n">warm split</span><input type="range" id="grade_warm" min="0" max="0.3" step="0.005" value="0.08"><span class="v"></span></label>
+    <label class="row"><span class="n">vignette</span><input type="range" id="grade_vignette" min="0" max="1" step="0.01" value="0.28"><span class="v"></span></label>
+    <label class="row"><span class="n">lift</span><input type="range" id="grade_lift" min="-0.2" max="0.3" step="0.005" value="0.035"><span class="v"></span></label>
+    <label class="row"><span class="n">gain</span><input type="range" id="grade_gain" min="0.4" max="2" step="0.01" value="1"><span class="v"></span></label>
+
+    <h2>AA + sharpen</h2>
+    <label class="chk"><input type="checkbox" id="aa_on" checked>FXAA 3.11</label>
+    <label class="row"><span class="n">subpix</span><input type="range" id="aa_subpix" min="0" max="1" step="0.01" value="0.75"><span class="v"></span></label>
+    <label class="chk"><input type="checkbox" id="sharpen_on" checked>CAS sharpen</label>
+    <label class="row"><span class="n">amount</span><input type="range" id="sharpen_amount" min="0" max="1" step="0.01" value="0.4"><span class="v"></span></label>
+
+    <h2>Scene</h2>
+    <div>
+      <button id="night">Night</button>
+      <button id="spin" class="on">Spin</button>
+      <button id="reset">Reset params</button>
+    </div>
+
+    <h2>Tests</h2>
+    <div><button id="selftest">Run selfTest()</button><button id="bench">Benchmark @720p</button></div>
+    <div id="log">ready.</div>
+    <p class="hint">drag = orbit · wheel = zoom · shift-drag = pan</p>
+  </div>
+
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div id="hud"></div>
+    <div id="splitlabel" style="display:none">◀ RAW &nbsp;|&nbsp; POST ▶</div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { PostFX, selfTest } from '../../src/render/post.js';
+
+const canvas = document.getElementById('c');
+const view = document.getElementById('view');
+const logEl = document.getElementById('log');
+
+// ---------------------------------------------------------------------------
+// Renderer / scene — a stand-in for the voxel city at the game's world scale.
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const TILE = 8;
+const scene = new THREE.Scene();
+const SKY_DAY = new THREE.Color().setHex(0x87d4f5, THREE.SRGBColorSpace);
+const SKY_NIGHT = new THREE.Color().setHex(0x0e1836, THREE.SRGBColorSpace);
+scene.background = SKY_DAY.clone();
+scene.fog = new THREE.Fog(scene.background.getHex(), 220, 620);
+
+const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6b8f4e, 0.6);
+scene.add(hemi);
+const amb = new THREE.AmbientLight(0x2a3550, 0.18);
+scene.add(amb);
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
+sun.position.set(-120, 200, -90);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+const sc = sun.shadow.camera;
+sc.left = -220; sc.right = 220; sc.top = 220; sc.bottom = -220;
+sc.near = 10; sc.far = 600; sc.updateProjectionMatrix();
+sun.shadow.bias = -0.0006;
+sun.shadow.normalBias = 0.6;
+scene.add(sun);
+const sunTarget = new THREE.Object3D();
+scene.add(sunTarget);
+sun.target = sunTarget;
+
+// Ground
+const groundMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true });
+{
+  const N = 40, S = TILE;
+  const pos = [], nor = [], col = [];
+  const gA = new THREE.Color().setHex(0x86d94f, THREE.SRGBColorSpace);
+  const gB = new THREE.Color().setHex(0x74c73f, THREE.SRGBColorSpace);
+  const road = new THREE.Color().setHex(0x40454d, THREE.SRGBColorSpace);
+  const sand = new THREE.Color().setHex(0xe6d59a, THREE.SRGBColorSpace);
+  for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+    const isRoad = (x % 5 === 2) || (z % 6 === 3);
+    const isSand = !isRoad && (x + z) % 17 === 0;
+    const c = isRoad ? road : isSand ? sand : (((x * 73856093) ^ (z * 19349663)) & 1 ? gA : gB);
+    const x0 = x * S, x1 = x0 + S, z0 = z * S, z1 = z0 + S;
+    const v = [x0, 0, z0, x0, 0, z1, x1, 0, z1, x0, 0, z0, x1, 0, z1, x1, 0, z0];
+    for (let k = 0; k < 18; k += 3) {
+      pos.push(v[k], v[k + 1], v[k + 2]); nor.push(0, 1, 0); col.push(c.r, c.g, c.b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const m = new THREE.Mesh(g, groundMat);
+  m.receiveShadow = true;
+  scene.add(m);
+}
+
+// Bright saturated "buildings" — deliberately kid-palette, not grey realism.
+const PALETTE = [0xff6b6b, 0xffb44d, 0xffe066, 0x7ee081, 0x4dc4ff, 0x9d7bff,
+                 0xff79c6, 0xf5f0e6, 0xe0533b, 0x35c39a, 0x3d6fe0, 0xffd28a];
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+boxGeo.translate(0, 0.5, 0);
+const buildings = [];
+let seed = 12345;
+const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+const matCache = new Map();
+function palMat(hex) {
+  let m = matCache.get(hex);
+  if (!m) { m = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHex(hex, THREE.SRGBColorSpace) }); matCache.set(hex, m); }
+  return m;
+}
+for (let gz = 1; gz < 39; gz++) {
+  for (let gx = 1; gx < 39; gx++) {
+    if ((gx % 5 === 2) || (gz % 6 === 3)) continue;         // roads
+    if ((gx % 5 === 1) || (gx % 5 === 3) || (gz % 6 === 2) || (gz % 6 === 4)) {
+      if (rnd() > 0.55) continue;                           // sidewalk-ish gaps
+    }
+    if (rnd() > 0.78) continue;
+    // downtown density: taller near the middle of the map
+    const dx = (gx - 20) / 20, dz = (gz - 20) / 20;
+    const core = Math.max(0, 1 - Math.sqrt(dx * dx + dz * dz));
+    const mat = palMat(PALETTE[Math.floor(rnd() * PALETTE.length)]);
+    const h = 4 + Math.pow(rnd(), 1.8) * (10 + core * core * 68);
+    const w = 4.6 + rnd() * 2.6, d = 4.6 + rnd() * 2.6;
+    const m = new THREE.Mesh(boxGeo, mat);
+    m.scale.set(w, h, d);
+    m.position.set(gx * TILE + TILE / 2, 0, gz * TILE + TILE / 2);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    scene.add(m);
+    buildings.push(m);
+    // stacked setbacks so there are real crevices for the AO to find
+    if (h > 22 && rnd() > 0.35) {
+      const m2 = new THREE.Mesh(boxGeo, mat);
+      m2.scale.set(w * 0.64, h * (0.28 + rnd() * 0.3), d * 0.64);
+      m2.position.set(m.position.x, h, m.position.z);
+      m2.castShadow = true; m2.receiveShadow = true;
+      scene.add(m2);
+    }
+  }
+}
+// A few trees for organic silhouettes.
+{
+  const trunkG = new THREE.CylinderGeometry(0.5, 0.7, 4, 6); trunkG.translate(0, 2, 0);
+  const leafG = new THREE.IcosahedronGeometry(3.2, 1); leafG.translate(0, 6, 0);
+  const trunkM = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHex(0x8a6242, THREE.SRGBColorSpace) });
+  const leafM = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHex(0x4fae3d, THREE.SRGBColorSpace) });
+  for (let i = 0; i < 90; i++) {
+    const gx = 1 + Math.floor(rnd() * 38), gz = 1 + Math.floor(rnd() * 38);
+    if ((gx % 5 === 2) || (gz % 6 === 3)) continue;
+    const t = new THREE.Mesh(trunkG, trunkM), l = new THREE.Mesh(leafG, leafM);
+    t.castShadow = l.castShadow = true; t.receiveShadow = l.receiveShadow = true;
+    const px = gx * TILE + 2 + rnd() * 4, pz = gz * TILE + 2 + rnd() * 4;
+    t.position.set(px, 0, pz); l.position.set(px, 0, pz);
+    const s = 0.7 + rnd() * 0.5; t.scale.setScalar(s); l.scale.setScalar(s);
+    scene.add(t); scene.add(l);
+  }
+}
+
+// HDR emitters (neon / windows) so bloom has something legitimate to catch.
+const emitters = [];
+for (let i = 0; i < 30; i++) {
+  const b = buildings[Math.floor(rnd() * buildings.length)];
+  if (!b) continue;
+  const warm = rnd() > 0.5;
+  const mat = new THREE.MeshBasicMaterial({ toneMapped: false });
+  mat.color.setRGB(warm ? 6.0 : 1.2, warm ? 4.4 : 4.0, warm ? 1.6 : 7.0);
+  const m = new THREE.Mesh(boxGeo, mat);
+  m.scale.set(b.scale.x * 1.02, 1.4, b.scale.z * 0.28);
+  m.position.set(b.position.x, b.scale.y * (0.35 + rnd() * 0.5), b.position.z);
+  scene.add(m);
+  emitters.push({ mesh: m, mat, warm });
+}
+// A hot sun-glint puddle, to prove bloom is energy-thresholded not global.
+{
+  const g = new THREE.PlaneGeometry(26, 26);
+  g.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({ toneMapped: false });
+  mat.color.setRGB(9, 8.2, 6.5);
+  const m = new THREE.Mesh(g, mat);
+  m.position.set(14 * TILE, 0.06, 30 * TILE);
+  scene.add(m);
+}
+
+// ---------------------------------------------------------------------------
+// Camera + orbit
+// ---------------------------------------------------------------------------
+const camera = new THREE.PerspectiveCamera(40, 16 / 9, 1, 2000);
+const target = new THREE.Vector3(20 * TILE, 0, 20 * TILE);
+let camDist = 175, camAz = Math.PI * 0.25, camPolar = 0.95;
+sunTarget.position.copy(target);
+
+function applyCamera() {
+  const sp = Math.sin(camPolar), cp = Math.cos(camPolar);
+  camera.position.set(target.x + camDist * sp * Math.sin(camAz),
+                      target.y + camDist * cp,
+                      target.z + camDist * sp * Math.cos(camAz));
+  camera.lookAt(target);
+  camera.updateMatrixWorld();
+}
+
+let dragging = null;
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  dragging = { x: e.clientX, y: e.clientY, pan: e.shiftKey };
+});
+canvas.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
+  dragging.x = e.clientX; dragging.y = e.clientY;
+  if (dragging.pan) {
+    const s = camDist * 0.0016;
+    target.x -= (dx * Math.cos(camAz) - dy * Math.sin(camAz)) * s;
+    target.z += (dx * Math.sin(camAz) + dy * Math.cos(camAz)) * s;
+    sunTarget.position.copy(target);
+  } else {
+    camAz -= dx * 0.006;
+    camPolar = Math.min(1.2, Math.max(0.2, camPolar - dy * 0.006));
+  }
+});
+const endDrag = () => { dragging = null; };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', e => {
+  camDist = Math.min(380, Math.max(30, camDist * Math.pow(1.0015, e.deltaY)));
+  e.preventDefault();
+}, { passive: false });
+
+// ---------------------------------------------------------------------------
+// PostFX
+// ---------------------------------------------------------------------------
+const post = new PostFX(renderer, scene, camera, { quality: 2 });
+window.post = post;   // handy in the console
+
+let lock720 = false, forcePR1 = false;
+function resize() {
+  let w, h;
+  if (lock720) { w = 1280; h = 720; renderer.setPixelRatio(1); }
+  else {
+    w = view.clientWidth; h = view.clientHeight;
+    renderer.setPixelRatio(forcePR1 ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+  }
+  canvas.style.width = lock720 ? w + 'px' : '100%';
+  canvas.style.height = lock720 ? h + 'px' : '100%';
+  renderer.setSize(w, h, !lock720 ? false : true);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  post.setSize(w, h, renderer.getPixelRatio());
+}
+window.addEventListener('resize', resize);
+
+// ---------------------------------------------------------------------------
+// UI wiring
+// ---------------------------------------------------------------------------
+const ctl = {};
+function bindRange(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const out = el.parentElement.querySelector('.v');
+  const [group, key] = id.split('_');
+  const apply = () => {
+    const v = parseFloat(el.value);
+    if (out) out.textContent = v.toFixed(v >= 10 ? 1 : 3).replace(/0+$/, '').replace(/\.$/, '');
+    post.setParams({ [group]: { [key]: v } });
+  };
+  el.addEventListener('input', apply);
+  ctl[id] = { el, apply };
+  apply();
+}
+['ssao_intensity','ssao_radius','ssao_bias','ssao_power',
+ 'bloom_threshold','bloom_strength','bloom_radius','bloom_softness',
+ 'dof_strength','dof_maxBlur','dof_rangeScale','dof_tilt','dof_tiltStart',
+ 'grade_exposure','grade_saturation','grade_contrast','grade_punch','grade_warm',
+ 'grade_vignette','grade_lift','grade_gain','aa_subpix','sharpen_amount'].forEach(bindRange);
+
+function bindCheck(id) {
+  const el = document.getElementById(id);
+  const group = id.replace('_on', '');
+  const apply = () => post.setParams({ [group]: { enabled: el.checked } });
+  el.addEventListener('change', apply);
+  ctl[id] = { el, apply };
+  apply();
+}
+['ssao_on','bloom_on','dof_on','aa_on','sharpen_on'].forEach(bindCheck);
+
+const splitEl = document.getElementById('split');
+const splitLabel = document.getElementById('splitlabel');
+function applySplit() {
+  const v = parseFloat(splitEl.value);
+  document.getElementById('split_v').textContent = v.toFixed(2);
+  post.setParams({ split: v });
+  splitLabel.style.display = v > 0.001 ? '' : 'none';
+}
+splitEl.addEventListener('input', applySplit);
+document.querySelectorAll('[data-split]').forEach(b => b.addEventListener('click', () => {
+  splitEl.value = b.dataset.split; applySplit();
+}));
+
+document.getElementById('debug').addEventListener('change', e => {
+  post.setParams({ debug: e.target.value });
+});
+
+document.querySelectorAll('[data-q]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-q]').forEach(o => o.classList.remove('on'));
+  b.classList.add('on');
+  post.setQuality(parseInt(b.dataset.q, 10));
+}));
+
+document.getElementById('lock720').addEventListener('click', e => {
+  lock720 = !lock720;
+  e.target.classList.toggle('on', lock720);
+  resize();
+});
+document.getElementById('pr1').addEventListener('click', e => {
+  forcePR1 = !forcePR1;
+  e.target.classList.toggle('on', forcePR1);
+  resize();
+});
+
+let spinning = true;
+document.getElementById('spin').addEventListener('click', e => {
+  spinning = !spinning; e.target.classList.toggle('on', spinning);
+});
+
+let night = 0, nightTarget = 0;
+document.getElementById('night').addEventListener('click', e => {
+  nightTarget = nightTarget > 0.5 ? 0 : 1;
+  e.target.classList.toggle('on', nightTarget > 0.5);
+});
+
+document.getElementById('reset').addEventListener('click', () => {
+  location.reload();
+});
+
+function log(html, cls) {
+  logEl.innerHTML = cls ? `<span class="${cls}">${html}</span>` : html;
+}
+
+document.getElementById('selftest').addEventListener('click', () => {
+  log('running selfTest()…');
+  setTimeout(() => {
+    const r = selfTest(renderer);
+    const body = r.notes.map(n => (n.startsWith('FAIL')
+      ? `<span class="bad">${n}</span>` : `<span class="ok">${n}</span>`)).join('\n');
+    logEl.innerHTML = (r.pass ? '<span class="ok">PASS</span>\n' : '<span class="bad">FAIL</span>\n') + body;
+    // selfTest may have resized/disposed its own instance; make sure ours is sane.
+    resize();
+  }, 20);
+});
+
+// GPU-synced per-effect benchmark. WebGL2 fences are the only reliable barrier
+// here: readPixels on the default framebuffer does not stall for our work.
+// A 1x1 readback off an offscreen target is the only barrier that actually
+// round-trips to the GPU process in Chrome (fenceSync busy-waits never signal
+// while JS holds the main thread, and default-framebuffer readPixels doesn't
+// wait for our FBO work).
+const syncPx = new Uint8Array(4);
+function syncGPU() {
+  if (post.rtLDR) renderer.readRenderTargetPixels(post.rtLDR, 0, 0, 1, 1, syncPx);
+  else renderer.getContext().finish();
+}
+function timeFrames(n) {
+  applyCamera();
+  for (let i = 0; i < 12; i++) post.render(0.016, mkCtx());       // warm up + clock ramp
+  syncGPU();
+  const t0 = performance.now();
+  for (let i = 0; i < n; i++) post.render(0.016, mkCtx());
+  syncGPU();
+  return (performance.now() - t0) / n;
+}
+function timeSceneOnly(n) {
+  applyCamera();
+  for (let i = 0; i < 12; i++) renderer.render(scene, camera);
+  syncGPU();
+  const t0 = performance.now();
+  for (let i = 0; i < n; i++) renderer.render(scene, camera);
+  syncGPU();
+  return (performance.now() - t0) / n;
+}
+document.getElementById('bench').addEventListener('click', () => {
+  const wasLocked = lock720;
+  lock720 = true; resize();
+  log('benchmarking…');
+  setTimeout(() => {
+    const P = post.getParams();
+    const save = JSON.parse(JSON.stringify({ ssao: P.ssao, bloom: P.bloom, dof: P.dof, aa: P.aa, sharpen: P.sharpen }));
+    const N = 200;
+    const sceneMs = timeSceneOnly(N);
+    const all = timeFrames(N);
+    // Isolate the post stack: keep the last scene render in rtScene and skip the
+    // geometry pass, otherwise 688 draw calls swamp every measurement.
+    const realScene = post.scene;
+    post.render(0.016, mkCtx());
+    post.scene = null;
+    const postOnly = timeFrames(N);
+    const rows = [];
+    const measure = (name, off) => {
+      post.setParams(off);
+      const t = timeFrames(N);
+      rows.push([name, (postOnly - t)]);
+      post.setParams(save);
+    };
+    measure('SSAO',    { ssao: { enabled: false } });
+    measure('bloom',   { bloom: { enabled: false } });
+    measure('DOF',     { dof: { enabled: false } });
+    measure('FXAA',    { aa: { enabled: false } });
+    measure('CAS',     { sharpen: { enabled: false } });
+    post.setParams({ ssao: { enabled: false }, bloom: { enabled: false }, dof: { enabled: false },
+                     aa: { enabled: false }, sharpen: { enabled: false } });
+    const base = timeFrames(N);
+    post.setParams(save);
+    const postOnly2 = timeFrames(N);   // repeat, to expose drift
+    post.scene = realScene;
+    let out = `1280x720, quality ${post.getQuality()}, ${N} frames, fence-synced\n`;
+    out += `scene geometry only  ${sceneMs.toFixed(3)} ms\n`;
+    out += `scene + full post    ${all.toFixed(3)} ms  (${(1000 / all).toFixed(0)} fps)\n`;
+    out += `POST ONLY full       ${postOnly.toFixed(3)} / ${postOnly2.toFixed(3)} ms\n`;
+    out += `POST ONLY minimal    ${base.toFixed(3)} ms  (lit+grade+output)\n`;
+    for (const [n, d] of rows) out += `  ${n.padEnd(6)} ${d >= 0 ? '+' : ''}${d.toFixed(3)} ms\n`;
+    logEl.textContent = out;
+    lock720 = wasLocked; resize();
+  }, 30);
+});
+
+// ---------------------------------------------------------------------------
+// Loop
+// ---------------------------------------------------------------------------
+const hud = document.getElementById('hud');
+const ctx = { time: 0, dt: 0, nightT: 0, nightEff: 0, weather: { rain: 0, snow: 0, tint: [1, 1, 1] },
+              camera, camDist: 205, sunDir: new THREE.Vector3(), quality: 2 };
+function mkCtx() {
+  ctx.camera = camera;
+  ctx.camDist = camDist;
+  ctx.quality = post.getQuality();
+  return ctx;
+}
+
+let last = performance.now(), acc = 0, frames = 0, fps = 0, msAvg = 16;
+function loop() {
+  requestAnimationFrame(loop);
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  ctx.time += dt;
+
+  if (spinning) camAz += dt * 0.06;
+  applyCamera();
+
+  // Day/night for the bloom demo.
+  night += (nightTarget - night) * Math.min(1, dt * 2.2);
+  scene.background.copy(SKY_DAY).lerp(SKY_NIGHT, night);
+  scene.fog.color.copy(scene.background);
+  sun.intensity = 1.15 + (0.16 - 1.15) * night;
+  hemi.intensity = 0.6 + (0.22 - 0.6) * night;
+  const glow = 0.12 + night * 0.88;
+  for (const e of emitters) {
+    e.mat.color.setRGB((e.warm ? 6.0 : 1.2) * glow, (e.warm ? 4.4 : 4.0) * glow, (e.warm ? 1.6 : 7.0) * glow);
+  }
+
+  const t0 = performance.now();
+  post.render(dt, mkCtx());
+  msAvg += ((performance.now() - t0) - msAvg) * 0.05;
+
+  frames++; acc += dt;
+  if (acc > 0.5) { fps = frames / acc; frames = 0; acc = 0; }
+  hud.textContent =
+    `${fps.toFixed(0)} fps   cpu ${msAvg.toFixed(2)} ms\n` +
+    `${post._w}x${post._h}  q${post.getQuality()}  msaa ${post._samples}x  ` +
+    `${post._hdrOK ? 'RGBA16F' : 'RGBA8'}\n` +
+    `camDist ${camDist.toFixed(0)}  draws ${renderer.info.render.calls}`;
+}
+
+resize();
+applyCamera();
+loop();
+
+// Report shader/GL problems loudly.
+window.addEventListener('error', e => log('ERROR: ' + e.message, 'bad'));
+</script>
+</body>
+</html>

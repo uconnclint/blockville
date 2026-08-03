@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blockville — LightingRig test harness</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#111; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+  canvas { display:block; }
+  #ui {
+    position:fixed; top:10px; left:10px; width:246px; padding:10px 12px 12px;
+    background:rgba(16,18,24,.82); color:#e8eefc; border-radius:10px; font-size:11px;
+    backdrop-filter:blur(8px); box-shadow:0 6px 24px rgba(0,0,0,.5); z-index:10;
+  }
+  #ui h1 { font-size:12px; margin:0 0 8px; letter-spacing:.4px; text-transform:uppercase; opacity:.75; }
+  .row { display:flex; align-items:center; justify-content:space-between; margin:5px 0; gap:8px; }
+  .row label { flex:0 0 82px; opacity:.8; }
+  .row input[type=range] { flex:1; min-width:0; }
+  .row .val { flex:0 0 46px; text-align:right; font-variant-numeric:tabular-nums; opacity:.9; }
+  .btns { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+  button { background:#2a3350; color:#dce6ff; border:1px solid #3d4a72; border-radius:5px;
+           padding:4px 7px; font-size:10.5px; cursor:pointer; }
+  button:hover { background:#38446b; }
+  button.on { background:#4d6fd0; border-color:#6c8bea; }
+  #stats { position:fixed; bottom:10px; left:10px; color:#9fb6e8; font-size:11px; z-index:10;
+           background:rgba(16,18,24,.75); padding:5px 9px; border-radius:6px; font-variant-numeric:tabular-nums; }
+  #err { position:fixed; bottom:10px; right:10px; color:#ff9a9a; font-size:11px; z-index:10; max-width:40vw; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>LightingRig</h1>
+  <div class="row"><label>Time of day</label><input id="tod" type="range" min="0" max="1" step="0.005" value="0.12"><span class="val" id="todv">0.12</span></div>
+  <div class="row"><label>Quality</label><input id="qual" type="range" min="0" max="2" step="1" value="2"><span class="val" id="qualv">2</span></div>
+  <div class="row"><label>Cascades</label><input id="casc" type="range" min="0" max="4" step="1" value="0"><span class="val" id="cascv">auto</span></div>
+  <div class="row"><label>PCF taps</label><input id="taps" type="range" min="1" max="16" step="1" value="16"><span class="val" id="tapsv">16</span></div>
+  <div class="row"><label>Softness</label><input id="soft" type="range" min="0" max="0.16" step="0.005" value="0.055"><span class="val" id="softv">.055</span></div>
+  <div class="row"><label>Zoom</label><input id="dist" type="range" min="30" max="380" step="1" value="150"><span class="val" id="distv">150</span></div>
+  <div class="row"><label>Orbit</label><input id="az" type="range" min="0" max="6.283" step="0.005" value="0.9"><span class="val" id="azv">0.90</span></div>
+  <div class="btns">
+    <button id="bdbg">cascade colours</button>
+    <button id="bspin">orbit</button>
+    <button id="blegacy">legacy bug repro</button>
+    <button id="bself">selfTest</button>
+  </div>
+</div>
+<div id="stats">booting…</div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { LightingRig, selfTest } from '../../src/render/lighting.js';
+
+const MAP = 640, CENTER = 320;
+
+const canvas = document.createElement('canvas');
+document.body.appendChild(canvas);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true;                 // only used by the legacy repro
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd0f5);
+scene.fog = new THREE.Fog(0x9fd0f5, MAP * 0.9, MAP * 2.4);
+
+const camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
+
+// ---------------------------------------------------------------------------
+// Stand-in voxel city
+// ---------------------------------------------------------------------------
+const rig = new LightingRig(renderer, scene, camera, {
+  quality: 2,
+  mapCenter: new THREE.Vector3(CENTER, 0, CENTER),
+  mapSize: MAP,
+  maxCasterHeight: 60,
+});
+
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x76bf52, roughness: 0.94, metalness: 0.0 });
+rig.patchMaterial(groundMat);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(MAP, MAP, 8, 8), groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.set(CENTER, 0, CENTER);
+ground.castShadow = false;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Road strips so raking shadows have something graphic to fall across.
+const roadMat = new THREE.MeshStandardMaterial({ color: 0x45474e, roughness: 0.98 });
+rig.patchMaterial(roadMat);
+for (let i = 0; i <= 16; i++) {
+  const p = 20 + i * 40;
+  for (let k = 0; k < 2; k++) {
+    const g = new THREE.PlaneGeometry(k ? MAP : 12, k ? 12 : MAP);
+    const m = new THREE.Mesh(g, roadMat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(k ? CENTER : p, 0.02, k ? p : CENTER);
+    m.castShadow = false; m.receiveShadow = true;
+    scene.add(m);
+  }
+}
+
+// Buildings: one InstancedMesh per palette colour keeps the harness honest
+// about draw calls, but plain meshes are clearer for shadow debugging.
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+boxGeo.translate(0, 0.5, 0);
+const palette = [0xe8dcc8, 0xd9a074, 0xc4d8e8, 0xefc9a0, 0xb9c9d8, 0xe6b9b0, 0xcfd8b2, 0xf0e2c0];
+const mats = palette.map((c) => {
+  const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.82, metalness: 0.03 });
+  return rig.patchMaterial(m);
+});
+const glassMat = rig.patchMaterial(new THREE.MeshStandardMaterial({ color: 0x7fb6d8, roughness: 0.18, metalness: 0.55 }));
+
+let rnd = 1337;
+function rand() { rnd = (rnd * 1664525 + 1013904223) >>> 0; return rnd / 4294967296; }
+
+const lamps = [];
+const windowGlows = [];
+
+for (let gz = 0; gz < 16; gz++) {
+  for (let gx = 0; gx < 16; gx++) {
+    const cx = 40 + gx * 40, cz = 40 + gz * 40;
+    // 1..3 blocks per cell
+    const n = 1 + (rand() * 3 | 0);
+    for (let b = 0; b < n; b++) {
+      const w = 4 + rand() * 10;
+      const d = 4 + rand() * 10;
+      const h = 2 + Math.pow(rand(), 2.1) * 32;      // 2 .. 34
+      const x = cx + (rand() - 0.5) * 18;
+      const z = cz + (rand() - 0.5) * 18;
+      const mesh = new THREE.Mesh(boxGeo, rand() > 0.86 ? glassMat : mats[(rand() * mats.length) | 0]);
+      mesh.scale.set(w, h, d);
+      mesh.position.set(x, 0, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      if (h > 10 && rand() > 0.4) {
+        windowGlows.push({ x: x + w * 0.5, y: h * 0.55, z, radius: 2.4, intensity: 0.55, color: 0xffd9a0 });
+        windowGlows.push({ x, y: h * 0.75, z: z + d * 0.5, radius: 2.2, intensity: 0.5, color: 0xffe6bb });
+      }
+    }
+    // Street lamps at every cell corner along the road grid.
+    lamps.push({ x: cx - 18, z: cz - 18, radius: 10, intensity: 1.0 });
+  }
+}
+
+// A few very tall thin towers — the shadow-resolution stress test.
+const towers = [
+  [300, 300, 3, 34], [312, 296, 2.4, 30], [292, 312, 2.2, 26],
+  [200, 420, 3, 32], [430, 210, 2.6, 33], [150, 150, 2.5, 28],
+  [470, 470, 3.2, 34], [330, 470, 2.2, 24],
+];
+for (const [x, z, s, h] of towers) {
+  const m = new THREE.Mesh(boxGeo, glassMat);
+  m.scale.set(s, h, s);
+  m.position.set(x, 0, z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+  // a thin flagpole on top for sub-texel detail
+  const p = new THREE.Mesh(boxGeo, mats[0]);
+  p.scale.set(0.6, 8, 0.6);
+  p.position.set(x, h, z);
+  p.castShadow = true; p.receiveShadow = true;
+  scene.add(p);
+}
+
+// A low wide slab to expose peter-panning at contact points.
+for (let i = 0; i < 26; i++) {
+  const m = new THREE.Mesh(boxGeo, mats[2]);
+  m.scale.set(10 + rand() * 14, 1.2 + rand() * 1.4, 10 + rand() * 14);
+  m.position.set(30 + rand() * 580, 0, 30 + rand() * 580);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+}
+
+rig.setLampAnchors(lamps);
+rig.setWindowGlows(windowGlows);
+
+// ---------------------------------------------------------------------------
+// Legacy repro (the shipped engine.js shadow setup, verbatim)
+// ---------------------------------------------------------------------------
+// Reconfigures the rig's own sun to use three's built-in shadow map with the
+// EXACT settings shipped in src/engine.js, and turns the CSM contribution off.
+// This is the A/B that proves the invisible-shadow diagnosis.
+let legacyOn = false;
+function setLegacy(on) {
+  legacyOn = on;
+  const sun = rig.sun;
+  if (on) {
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(3072, 3072);
+    const sc = sun.shadow.camera;
+    const sHalf = MAP * 0.75;
+    sc.left = -sHalf; sc.right = sHalf; sc.top = sHalf; sc.bottom = -sHalf;
+    sc.near = MAP * 0.08; sc.far = MAP * 2.6;
+    sc.updateProjectionMatrix();
+    sun.shadow.bias = -0.0006;
+    sun.shadow.normalBias = 0.9;        // <<< the bug, verbatim from engine.js
+    sun.shadow.needsUpdate = true;
+    rig.opts.shadowStrength = 0;        // CSM contributes nothing
+  } else {
+    sun.castShadow = false;
+    rig.opts.shadowStrength = 0.94;
+  }
+  scene.traverse((o) => { if (o.isMesh) o.receiveShadow = true; });
+}
+
+// ---------------------------------------------------------------------------
+// Camera / UI
+// ---------------------------------------------------------------------------
+const state = { tod: 0.12, dist: 150, az: 0.9, polar: 0.82, spin: false, debug: false };
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  rig.setSize(w, h, renderer.getPixelRatio());
+}
+addEventListener('resize', resize);
+resize();
+
+const $ = (id) => document.getElementById(id);
+function bind(id, vid, fn, fmt) {
+  const el = $(id);
+  const upd = () => { const v = parseFloat(el.value); $(vid).textContent = fmt ? fmt(v) : v; fn(v); };
+  el.addEventListener('input', upd); upd();
+}
+bind('tod', 'todv', (v) => state.tod = v, (v) => v.toFixed(3));
+bind('qual', 'qualv', (v) => { rig._quality = -1; rig.setQuality(v); });
+bind('casc', 'cascv', (v) => {
+  if (v < 1) { rig.opts.cascades = null; rig._applyQuality(); }
+  else rig.setCascadeCount(v);
+}, (v) => (v < 1 ? 'auto' : String(v)));
+bind('taps', 'tapsv', (v) => rig.setPcfTaps(v));
+bind('soft', 'softv', (v) => rig.setParams({ softness: v }), (v) => v.toFixed(3));
+bind('dist', 'distv', (v) => state.dist = v);
+bind('az', 'azv', (v) => state.az = v, (v) => v.toFixed(2));
+
+$('bdbg').onclick = () => { state.debug = !state.debug; rig.setDebugCascades(state.debug); $('bdbg').classList.toggle('on', state.debug); };
+$('bspin').onclick = () => { state.spin = !state.spin; $('bspin').classList.toggle('on', state.spin); };
+$('blegacy').onclick = () => { setLegacy(!legacyOn); $('blegacy').classList.toggle('on', legacyOn); };
+$('bself').onclick = () => {
+  const r = selfTest(renderer, rig);
+  console.log('[selfTest]', r.pass ? 'PASS' : 'FAIL');
+  r.notes.forEach((n) => console.log('  ' + n));
+  $('err').textContent = 'selfTest: ' + (r.pass ? 'PASS' : 'FAIL') + ' (' + r.notes.length + ' notes, see console)';
+};
+
+// drag to orbit, wheel to zoom
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; });
+addEventListener('pointerup', () => drag = null);
+addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  state.az -= (e.clientX - drag.x) * 0.005;
+  state.polar = Math.max(0.35, Math.min(1.2, state.polar + (e.clientY - drag.y) * 0.004));
+  drag = { x: e.clientX, y: e.clientY };
+  $('az').value = ((state.az % 6.283) + 6.283) % 6.283;
+});
+canvas.addEventListener('wheel', (e) => {
+  state.dist = Math.max(30, Math.min(380, state.dist * (1 + e.deltaY * 0.0012)));
+  $('dist').value = state.dist; $('distv').textContent = Math.round(state.dist);
+  e.preventDefault();
+}, { passive: false });
+
+// ---------------------------------------------------------------------------
+// Loop
+// ---------------------------------------------------------------------------
+const ctx = { time: 0, dt: 0, nightT: 0, nightEff: 0, weather: { rain: 0, snow: 0, tint: [1, 1, 1] },
+              camera, camDist: 150, sunDir: new THREE.Vector3(), quality: 2 };
+let last = performance.now(), acc = 0, frames = 0, ms = 0;
+const stats = $('stats');
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (canvas.clientWidth !== innerWidth || canvas.clientHeight !== innerHeight) resize();
+  if (state.spin) state.az += dt * 0.35;
+
+  const sp = Math.sin(state.polar), cp = Math.cos(state.polar);
+  camera.position.set(CENTER + state.dist * sp * Math.sin(state.az), state.dist * cp, CENTER + state.dist * sp * Math.cos(state.az));
+  camera.lookAt(CENTER, 6, CENTER);
+  camera.updateMatrixWorld();
+
+  ctx.dt = dt; ctx.time += dt; ctx.nightT = state.tod; ctx.nightEff = state.tod; ctx.camDist = state.dist;
+
+  const t0 = performance.now();
+  const out = rig.update(dt, ctx);
+  const tShadow = performance.now() - t0;
+
+  // Stand-in sky (sky.js owns the real one): keep it a plausible brightness so
+  // the lighting balance reads honestly instead of blowing out to white.
+  scene.background.copy(out.skyColor).multiplyScalar(0.42 + 0.28 * Math.max(0, Math.sin(out.elevation)));
+  scene.fog.color.copy(scene.background);
+
+  renderer.render(scene, camera);
+
+  frames++; acc += dt; ms = ms * 0.9 + tShadow * 0.1;
+  if (acc > 0.4) {
+    const c = rig._cascades;
+    stats.textContent =
+      `${(frames / acc).toFixed(0)} fps · rig ${ms.toFixed(2)} ms · calls ${renderer.info.render.calls} · tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k\n` +
+      `cascades ${rig._count} @${rig._atlasTile}px · texel ` +
+      c.slice(0, rig._count).map((x) => x.texelWorld.toFixed(3)).join(' / ') + ' wu' +
+      ` · far ${rig._shadowFar(camera)} · elev ${(out.elevation * 180 / Math.PI).toFixed(1)}°`;
+    stats.style.whiteSpace = 'pre';
+    frames = 0; acc = 0;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- test hooks -----------------------------------------------------------
+window.HARNESS = {
+  set(o) { Object.assign(state, o);
+    if (o.tod !== undefined) { $('tod').value = o.tod; $('todv').textContent = (+o.tod).toFixed(3); }
+    if (o.dist !== undefined) { $('dist').value = o.dist; $('distv').textContent = Math.round(o.dist); }
+    if (o.az !== undefined) { $('az').value = ((o.az % 6.283) + 6.283) % 6.283; }
+    if (o.debug !== undefined) rig.setDebugCascades(o.debug);
+  },
+  rig, renderer, scene, camera, state,
+  cascadeInfo() { return rig._cascades.slice(0, rig._count).map((c) => ({ near: +c.near.toFixed(1), far: +c.far.toFixed(1), R: +c.radius.toFixed(1), texel: +c.texelWorld.toFixed(4) })); },
+  legacy: setLegacy,
+  selfTest: () => selfTest(renderer, rig),
+};
+console.log('[harness] ready');
+</script>
+</body>
+</html>

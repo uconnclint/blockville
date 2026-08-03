@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Blockville — terrain.js render test</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1020;overflow:hidden;
+    font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:#dfe8f5}
+  canvas{display:block}
+  #ui{position:fixed;left:10px;top:10px;z-index:5;background:rgba(8,14,28,.82);
+    border:1px solid #2b3a5a;border-radius:8px;padding:10px 12px;max-width:340px;
+    backdrop-filter:blur(6px)}
+  #ui h1{font-size:13px;margin:0 0 8px;letter-spacing:.03em;color:#8fd7ff}
+  button{font:inherit;background:#1b2740;color:#dfe8f5;border:1px solid #33507f;
+    border-radius:5px;padding:3px 7px;margin:2px 2px 2px 0;cursor:pointer}
+  button:hover{background:#26375a}
+  button.on{background:#2f7fd8;border-color:#5fb0ff;color:#fff}
+  #stats{white-space:pre;margin-top:8px;color:#9fb6d4;font-size:11px}
+  #notes{margin-top:8px;max-height:190px;overflow:auto;font-size:10.5px;color:#8fa8c8;
+    white-space:pre-wrap;border-top:1px solid #24314d;padding-top:6px}
+  .row{margin-top:5px}
+  .lbl{color:#6f87a8;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em}
+</style>
+</head>
+<body>
+<div id="ui">
+  <h1>terrain.js — render test</h1>
+  <div class="lbl">camera presets</div>
+  <div class="row">
+    <button data-cam="close">close turf</button
+    ><button data-cam="far">max zoom-out</button
+    ><button data-cam="mtn">mountain</button
+    ><button data-cam="range">range</button
+    ><button data-cam="beach">beach</button
+    ><button data-cam="shore">shore</button
+    ><button data-cam="town">town AO</button
+    ><button data-cam="horiz">horizon</button
+    ><button data-cam="edge">map edge</button>
+  </div>
+  <div class="lbl" style="margin-top:8px">cast-shadow rig</div>
+  <div class="row">
+    <button data-cam="sgrass">on grass</button
+    ><button data-cam="ssand">on sand</button
+    ><button data-cam="smtn">on slope</button
+    ><button id="bSun">sun &#8635;</button
+    ><button id="bCast" class="on">cast</button>
+  </div>
+  <div class="lbl" style="margin-top:8px">views</div>
+  <div class="row">
+    <button id="bWire">wireframe</button
+    ><button id="bAO">vertex AO only</button
+    ><button id="bSpin" class="on">orbit</button
+    ><button id="bSnow">snow</button
+    ><button id="bTone">ACES</button>
+  </div>
+  <div class="lbl" style="margin-top:8px">actions</div>
+  <div class="row">
+    <button id="bRefresh">refreshTile x50</button
+    ><button id="bRebuild">rebuild</button
+    ><button id="bSelf">selfTest()</button>
+  </div>
+  <div id="stats">booting…</div>
+  <div id="notes"></div>
+</div>
+<script type="module">
+import * as THREE from '../../vendor/three.module.js';
+import { Terrain, selfTest } from '../../src/render/terrain.js';
+import { TILE, N } from '../../src/constants.js';
+
+const MAP_W = N * TILE, C = MAP_W / 2;
+const T = { GRASS:0, WATER:1, SAND:2, ROAD:3, BLDG:7, TREE:8, MOUNTAIN:15 };
+
+// ---------------------------------------------------------------------------
+// Synthetic 80x80 world: ocean + wavy coast, inland lake, road grid, mountains
+// ---------------------------------------------------------------------------
+function hash(ix, iz, s){
+  let h=(Math.imul(ix|0,0x27d4eb2d)^Math.imul(iz|0,0x165667b1)^Math.imul(s|0,0x9e3779b1))>>>0;
+  h^=h>>>15;h=Math.imul(h,0x85ebca6b)>>>0;h^=h>>>13;h=Math.imul(h,0xc2b2ae35)>>>0;h^=h>>>16;
+  return (h>>>0)/4294967296;
+}
+function vnoise(x,z,s){
+  const x0=Math.floor(x),z0=Math.floor(z),fx=x-x0,fz=z-z0;
+  const sx=fx*fx*(3-2*fx), sz=fz*fz*(3-2*fz);
+  const a=hash(x0,z0,s),b=hash(x0+1,z0,s),c=hash(x0,z0+1,s),d=hash(x0+1,z0+1,s);
+  const u=a+(b-a)*sx,w=c+(d-c)*sx; return u+(w-u)*sz;
+}
+function fbm(x,z,f,o,s){let a=1,ff=f,su=0,n=0;for(let i=0;i<o;i++){su+=a*vnoise(x*ff,z*ff,s+i*131);n+=a;a*=0.5;ff*=2;}return su/n;}
+
+function makeState(){
+  const nn=N*N;
+  const st={ map:new Uint8Array(nn), variant:new Uint8Array(nn),
+             occ:new Int32Array(nn), bridge:new Uint8Array(nn) };
+  st.map.fill(T.GRASS);
+  const set=(x,z,v)=>{ if(x>=0&&z>=0&&x<N&&z<N) st.map[z*N+x]=v; };
+
+  // --- ocean along -Z with a wobbling coastline
+  for(let z=0;z<N;z++) for(let x=0;x<N;x++){
+    const w = 4.5*(vnoise(x*0.11,7,2222)*2-1) + 2.5*(vnoise(x*0.037,19,55)*2-1);
+    if (z < 7 + w) set(x,z,T.WATER);
+  }
+  // --- inland lake
+  const lx=57, lz=34, lr=5.5;
+  for(let z=lz-9;z<=lz+9;z++) for(let x=lx-9;x<=lx+9;x++){
+    const d=Math.hypot(x-lx,z-lz);
+    const wob=lr*0.5*(vnoise(x*0.3,z*0.3,3300)*2-1);
+    if(d<lr+wob) set(x,z,T.WATER);
+  }
+  // --- a river from the mountains to the sea
+  let rx=24, rz=68;
+  for(let i=0;i<90;i++){
+    for(let dz=-1;dz<=1;dz++) for(let dx=-1;dx<=1;dx++)
+      if(Math.abs(dx)+Math.abs(dz)<=1) set(rx+dx,rz+dz,T.WATER);
+    rz -= 1;
+    rx += Math.round((vnoise(rz*0.22,3,777)-0.5)*2.2);
+    if(rz<2) break;
+  }
+  // --- mountain range, corner-biased ridge, heights 2..16
+  // Two overlapping peaks make a ridge whose heights span the whole 2..16 range.
+  const peaks=[{x:66,z:58,R:11,pk:17,ang:0.6,el:1.6},{x:56,z:70,R:9,pk:12,ang:1.5,el:1.4}];
+  for(const p of peaks){
+    for(let z=p.z-p.R*2;z<=p.z+p.R*2;z++) for(let x=p.x-p.R*2;x<=p.x+p.R*2;x++){
+      if(x<0||z<0||x>=N||z>=N) continue;
+      const i=z*N+x; if(st.map[i]!==T.GRASS&&st.map[i]!==T.MOUNTAIN) continue;
+      const ca=Math.cos(p.ang), sa=Math.sin(p.ang);
+      const px=(x-p.x)*ca+(z-p.z)*sa, pz=-(x-p.x)*sa+(z-p.z)*ca;
+      const dd=Math.hypot(px/p.el, pz);
+      if(dd>=p.R) continue;
+      // Same shape rule as sim.js _generateBaseTerrain: linear cone + ±1 jitter.
+      const shape=1-dd/p.R;
+      const jit=Math.round((vnoise(x*0.16,z*0.16,4400)-0.5)*2.6);
+      let h=Math.round(p.pk*shape)+jit;
+      if(h<2) continue; if(h>16) h=16;
+      if(st.map[i]===T.MOUNTAIN && st.variant[i]>=h) continue;
+      st.map[i]=T.MOUNTAIN; st.variant[i]=h;
+    }
+  }
+  // second smaller range (tests the low, snow-free case)
+  for(let z=4;z<20;z++) for(let x=60;x<78;x++){
+    const i=z*N+x; if(st.map[i]!==T.GRASS) continue;
+    const dd=Math.hypot((x-70)/1.5, z-12);
+    if(dd>=8) continue;
+    let h=Math.round(9*(1-dd/8))+Math.round((fbm(x,z,0.2,2,99)-0.5)*3);
+    if(h<2) continue;
+    st.map[i]=T.MOUNTAIN; st.variant[i]=h;
+  }
+  // --- road grid in the buildable middle
+  for(let z=12;z<62;z++) for(let x=10;x<58;x++){
+    const i=z*N+x; if(st.map[i]!==T.GRASS) continue;
+    if(x%9===1 || z%8===4) st.map[i]=T.ROAD;
+  }
+  // --- beaches: sand on grass adjacent to water (8-neighbourhood), 2 rings
+  for(let pass=0;pass<2;pass++){
+    const add=[];
+    for(let z=0;z<N;z++) for(let x=0;x<N;x++){
+      const i=z*N+x; if(st.map[i]!==T.GRASS) continue;
+      let near=false;
+      for(let dz=-1;dz<=1&&!near;dz++) for(let dx=-1;dx<=1;dx++){
+        const nx=x+dx,nz=z+dz;
+        if(nx<0||nz<0||nx>=N||nz>=N) continue;
+        const m=st.map[nz*N+nx];
+        if(m===T.WATER || (pass===1&&m===T.SAND)) { near=true; break; }
+      }
+      if(near) add.push(i);
+    }
+    for(const i of add) st.map[i]=T.SAND;
+  }
+  // --- buildings + trees so the baked contact AO has something to hug
+  const boxes=[];
+  for(let z=13;z<61;z++) for(let x=11;x<57;x++){
+    const i=z*N+x; if(st.map[i]!==T.GRASS) continue;
+    const r=hash(x,z,5150);
+    if(r>0.80 && x%9!==2 && x%9!==0 && z%8!==5 && z%8!==3){
+      st.map[i]=T.BLDG; st.occ[i]=1;
+      boxes.push({x,z,h:6+Math.floor(hash(x,z,61)*22)});
+    } else if(r>0.70){
+      st.map[i]=T.TREE;
+      boxes.push({x,z,h:5+Math.floor(hash(x,z,62)*4),tree:true});
+    }
+  }
+  return {st, boxes};
+}
+
+const {st, boxes} = makeState();
+
+// ---------------------------------------------------------------------------
+// Renderer / scene
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 1, 3000);
+
+// --- sky gradient dome (stand-in for sky.js)
+const skyGeo = new THREE.SphereGeometry(1400, 32, 20);
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite:false, fog:false,
+  uniforms:{ top:{value:new THREE.Color().setHex(0x2f7fd8,THREE.SRGBColorSpace)},
+             mid:{value:new THREE.Color().setHex(0x9fd8f7,THREE.SRGBColorSpace)},
+             bot:{value:new THREE.Color().setHex(0xe6f2ff,THREE.SRGBColorSpace)} },
+  vertexShader:`varying vec3 vP; void main(){ vP=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
+  fragmentShader:`uniform vec3 top,mid,bot; varying vec3 vP;
+    void main(){ float h=normalize(vP).y;
+      vec3 c = h>0.0 ? mix(mid,top,pow(h,0.7)) : mix(mid,bot,pow(-h,0.5));
+      gl_FragColor=vec4(c,1.0);
+      #include <colorspace_fragment>
+    }`
+});
+const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+skyMesh.frustumCulled=false;
+scene.add(skyMesh);
+scene.fog = new THREE.Fog(new THREE.Color().setHex(0xbfe0f5,THREE.SRGBColorSpace), MAP_W*0.55, MAP_W*2.0);
+
+// --- IBL from the sky dome (PMREM is core three, no addons)
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+const envScene = new THREE.Scene();
+envScene.add(new THREE.Mesh(skyGeo.clone(), skyMat));
+const envRT = pmrem.fromScene(envScene, 0, 1, 2000);
+scene.environment = envRT.texture;
+
+// --- lights
+// Sun at ~45 deg elevation. bias/normalBias/mapSize/frustum mirror engine.js so
+// shadow crispness here predicts the game (the old normalBias of 0.7 peter-panned
+// every shadow half a tile off its caster and made this harness useless for
+// judging cast shadows).
+const sun = new THREE.DirectionalLight(0xfff3df, 1.75);
+let sunAz = Math.PI * 0.25;                 // rotate with the "sun ↻" button
+const SUN_ELEV = Math.PI * 0.25;            // 45 degrees
+function placeSun(){
+  const r = 420 * Math.cos(SUN_ELEV), y = 420 * Math.sin(SUN_ELEV);
+  sun.position.set(C - r*Math.sin(sunAz), y, C - r*Math.cos(sunAz));
+}
+placeSun();
+sun.castShadow = true;
+sun.shadow.mapSize.set(3072,3072);
+const sc = sun.shadow.camera, sh = MAP_W*0.34;
+sc.left=-sh; sc.right=sh; sc.top=sh; sc.bottom=-sh; sc.near=40; sc.far=MAP_W*2.4;
+sc.updateProjectionMatrix();
+sun.shadow.bias=-0.0004; sun.shadow.normalBias=0.035;
+scene.add(sun);
+const sunTarget = new THREE.Object3D(); sunTarget.position.set(C,0,C); scene.add(sunTarget);
+sun.target = sunTarget;
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x6b8f4e, 0.55));
+scene.add(new THREE.AmbientLight(0x33405c, 0.16));
+
+// ---------------------------------------------------------------------------
+// TERRAIN (the module under test)
+// ---------------------------------------------------------------------------
+const terrain = new Terrain(scene, { aniso: renderer.capabilities.getMaxAnisotropy() });
+const buildMs = terrain.build(st);
+
+// --- stand-in water (water.js owns this in the real game; here just for judging)
+(function water(){
+  const g = new THREE.PlaneGeometry(MAP_W, MAP_W, 1, 1);
+  g.rotateX(-Math.PI/2);
+  const pos=[], idx=[]; let n=0;
+  for(let z=0;z<N;z++) for(let x=0;x<N;x++){
+    if(st.map[z*N+x]!==T.WATER) continue;
+    const x0=x*TILE,x1=x0+TILE,z0=z*TILE,z1=z0+TILE;
+    pos.push(x0,-0.35,z0, x0,-0.35,z1, x1,-0.35,z1, x1,-0.35,z0);
+    idx.push(n,n+1,n+2,n,n+2,n+3); n+=4;
+  }
+  const wg=new THREE.BufferGeometry();
+  wg.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  wg.setIndex(idx);
+  wg.computeVertexNormals();
+  const wm=new THREE.MeshStandardMaterial({
+    color:new THREE.Color().setHex(0x2f9fe0,THREE.SRGBColorSpace),
+    roughness:0.12, metalness:0.0, transparent:true, opacity:0.80 });
+  const mesh=new THREE.Mesh(wg,wm);
+  mesh.renderOrder=1;
+  scene.add(mesh);
+})();
+
+// --- stand-in buildings/trees (voxel.js + roads.js own these in the real game)
+(function props(){
+  const bgeo = new THREE.BoxGeometry(1,1,1);
+  const bmat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:0.75, vertexColors:false});
+  const tmat = new THREE.MeshStandardMaterial({color:new THREE.Color().setHex(0x2e7d32,THREE.SRGBColorSpace), roughness:0.9});
+  const bs = boxes.filter(b=>!b.tree), ts = boxes.filter(b=>b.tree);
+  const bi = new THREE.InstancedMesh(bgeo, bmat, bs.length);
+  bi.castShadow=true; bi.receiveShadow=true;
+  const m=new THREE.Matrix4(), col=new THREE.Color();
+  const pal=[0xe8d7b8,0xd9a679,0xbfc9d4,0xe6b7b7,0xcfd8a8,0xf0e2c8];
+  bs.forEach((b,i)=>{
+    m.makeScale(TILE*0.72, b.h, TILE*0.72);
+    m.setPosition((b.x+0.5)*TILE, b.h/2, (b.z+0.5)*TILE);
+    bi.setMatrixAt(i,m);
+    col.setHex(pal[i%pal.length], THREE.SRGBColorSpace); bi.setColorAt(i,col);
+  });
+  scene.add(bi);
+  const ti = new THREE.InstancedMesh(bgeo, tmat, ts.length);
+  ti.castShadow=true; ti.receiveShadow=true;
+  ts.forEach((b,i)=>{ m.makeScale(TILE*0.5, b.h, TILE*0.5);
+    m.setPosition((b.x+0.5)*TILE, b.h/2, (b.z+0.5)*TILE); ti.setMatrixAt(i,m); });
+  scene.add(ti);
+})();
+
+// --- stand-in road asphalt (roads.js owns this) — thin dark quads at y=0.02
+(function roads(){
+  const pos=[], idx=[]; let n=0;
+  for(let z=0;z<N;z++) for(let x=0;x<N;x++){
+    if(st.map[z*N+x]!==T.ROAD) continue;
+    const x0=x*TILE+0.9,x1=x0+TILE-1.8,z0=z*TILE+0.9,z1=z0+TILE-1.8;
+    pos.push(x0,0.02,z0, x0,0.02,z1, x1,0.02,z1, x1,0.02,z0);
+    idx.push(n,n+1,n+2,n,n+2,n+3); n+=4;
+  }
+  if(!n) return;
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx); g.computeVertexNormals();
+  const mm=new THREE.MeshStandardMaterial({color:new THREE.Color().setHex(0x3a3f47,THREE.SRGBColorSpace), roughness:0.88});
+  const me=new THREE.Mesh(g,mm); me.receiveShadow=true; scene.add(me);
+})();
+
+// ---------------------------------------------------------------------------
+// SHADOW RIG — three identical tall box casters, one on open grass, one on the
+// beach sand, one on a mountain slope. This is the only reliable way to judge
+// "does the terrain material receive the directional shadow, and does that
+// shadow compose sensibly with the baked vertex AO".
+// ---------------------------------------------------------------------------
+const shadowRig = new THREE.Group();
+shadowRig.name = 'shadow-rig';
+scene.add(shadowRig);
+const RIG = {};
+(function rig(){
+  // Find a clear tile of a given class, nearest to a hint, with N tiles of the
+  // same class free of buildings/trees all around it.
+  const clearAt = (want, hx, hz, pad) => {
+    let best=null, bd=1e9;
+    for(let z=2;z<N-2;z++) for(let x=2;x<N-2;x++){
+      if(st.map[z*N+x]!==want) continue;
+      let ok=true;
+      for(let dz=-pad;dz<=pad&&ok;dz++) for(let dx=-pad;dx<=pad;dx++){
+        const m=st.map[(z+dz)*N+(x+dx)];
+        if(m===T.BLDG||m===T.TREE||m===T.ROAD||(want!==T.WATER&&m===T.WATER)){ok=false;break;}
+      }
+      if(!ok) continue;
+      const d=Math.hypot(x-hx,z-hz);
+      if(d<bd){bd=d;best={x,z};}
+    }
+    return best;
+  };
+  // Mountain: a mid-height column with a long downhill run to the south-east.
+  const mtnAt = () => {
+    let best=null, bd=1e9;
+    for(let z=2;z<N-2;z++) for(let x=2;x<N-2;x++){
+      const i=z*N+x;
+      if(st.map[i]!==T.MOUNTAIN) continue;
+      const h=st.variant[i];
+      if(h<6||h>11) continue;
+      // want the +X/+Z (shadow-ward) side to drop away
+      const a=st.map[i+1]===T.MOUNTAIN?st.variant[i+1]:0;
+      const b=st.map[i+N]===T.MOUNTAIN?st.variant[i+N]:0;
+      if(a>=h||b>=h) continue;
+      const d=Math.abs(h-9);
+      if(d<bd){bd=d;best={x,z,h};}
+    }
+    return best;
+  };
+  const g = clearAt(T.GRASS, 30, 70, 3) || {x:30,z:70};
+  const s = clearAt(T.SAND, 30, 8, 1)  || {x:30,z:8};
+  const m = mtnAt() || {x:66,z:58,h:9};
+
+  const geo = new THREE.BoxGeometry(1,1,1);
+  const mat = new THREE.MeshStandardMaterial({
+    color:new THREE.Color().setHex(0xf2f4f8, THREE.SRGBColorSpace), roughness:0.85});
+  const put = (tx,tz,base,h,w) => {
+    const me = new THREE.Mesh(geo, mat);
+    me.scale.set(w, h, w);
+    me.position.set((tx+0.5)*TILE, base + h/2, (tz+0.5)*TILE);
+    me.castShadow = true; me.receiveShadow = false;
+    shadowRig.add(me);
+    return me;
+  };
+  put(g.x, g.z, 0, 26, 5);
+  put(s.x, s.z, 0, 20, 4);
+  put(m.x, m.z, m.h, 22, 5);
+  RIG.grass = {tx:g.x*TILE+4, tz:g.z*TILE+4, ty:0};
+  RIG.sand  = {tx:s.x*TILE+4, tz:s.z*TILE+4, ty:0};
+  RIG.mtn   = {tx:m.x*TILE+4, tz:m.z*TILE+4, ty:m.h};
+  console.log('[shadow rig] grass', g, 'sand', s, 'mountain', m);
+})();
+
+// ---------------------------------------------------------------------------
+// Debug materials
+// ---------------------------------------------------------------------------
+const aoMat = new THREE.ShaderMaterial({
+  vertexShader:`attribute vec4 aMask; varying float vA;
+    void main(){ vA=aMask.x; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);} `,
+  fragmentShader:`varying float vA; void main(){ gl_FragColor=vec4(vec3(clamp(vA,0.0,1.0)),1.0); }`
+});
+const wireMat = new THREE.MeshBasicMaterial({color:0x7fe0ff, wireframe:true});
+
+let mode='normal';
+function applyMode(){
+  terrain.group.traverse(o=>{
+    if(!o.isMesh) return;
+    o.material = mode==='ao' ? aoMat : (mode==='wire' ? wireMat : terrain.material);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Camera / orbit
+// ---------------------------------------------------------------------------
+const cam = { tx:C, tz:C, ty:0, dist:200, az:Math.PI*0.25, polar:0.85 };
+let spin = true;
+function place(){
+  const sp=Math.sin(cam.polar), cp=Math.cos(cam.polar);
+  camera.position.set(cam.tx + cam.dist*sp*Math.sin(cam.az),
+                      cam.ty + cam.dist*cp,
+                      cam.tz + cam.dist*sp*Math.cos(cam.az));
+  camera.lookAt(cam.tx, cam.ty, cam.tz);
+  // Keep the (tight, engine-sized) shadow frustum over what we are looking at,
+  // exactly as engine.js does.
+  sunTarget.position.set(cam.tx, cam.ty, cam.tz);
+  placeSun();
+  sun.position.add(new THREE.Vector3(cam.tx-C, cam.ty, cam.tz-C));
+  sun.target.updateMatrixWorld();
+}
+const PRESETS = {
+  sgrass:{tx:0, tz:0, ty:0, dist:70, az:0.85, polar:1.12, rig:'grass'},
+  ssand: {tx:0, tz:0, ty:0, dist:62, az:0.85, polar:1.14, rig:'sand'},
+  smtn:  {tx:0, tz:0, ty:0, dist:88, az:0.85, polar:1.16, rig:'mtn'},
+  close: {tx:170,  tz:520,  ty:0,  dist:32,  az:0.9,  polar:1.12},
+  shore: {tx:C-40, tz:C+30, ty:0,  dist:34,  az:0.9,  polar:1.10},
+  far:   {tx:C,    tz:C,    ty:0,  dist:380, az:0.55, polar:0.62},
+  mtn:   {tx:520,  tz:470,  ty:6,  dist:95,  az:4.30, polar:1.30},
+  range: {tx:480,  tz:440,  ty:8,  dist:250, az:4.20, polar:1.24},
+  beach: {tx:250,  tz:58,   ty:0,  dist:52,  az:3.05, polar:1.18},
+  town:  {tx:C-60, tz:C-20, ty:0,  dist:78,  az:1.35, polar:1.00},
+  // Horizon: the shot that exposed the "floating slab in a void" — a hard,
+  // straight terrain silhouette with a constant-colour fill behind it. The
+  // skirt must run past fog.far so the ground fades into the horizon colour
+  // instead of stopping.
+  horiz: {tx:C,    tz:C,    ty:0,  dist:400, az:0.35, polar:1.34},
+  edge:  {tx:60,   tz:60,   ty:0,  dist:240, az:3.55, polar:1.24},
+};
+function goto(k){
+  const p = PRESETS[k];
+  Object.assign(cam, p);
+  if (p.rig && RIG[p.rig]) { cam.tx=RIG[p.rig].tx; cam.tz=RIG[p.rig].tz; cam.ty=RIG[p.rig].ty; }
+  place();
+}
+
+renderer.domElement.addEventListener('pointerdown', e=>{
+  const sx=e.clientX, sy=e.clientY, a0=cam.az, p0=cam.polar;
+  const mv=ev=>{ cam.az=a0-(ev.clientX-sx)*0.006;
+    cam.polar=Math.max(0.18,Math.min(1.45,p0-(ev.clientY-sy)*0.005)); place(); };
+  const up=()=>{ removeEventListener('pointermove',mv); removeEventListener('pointerup',up); };
+  addEventListener('pointermove',mv); addEventListener('pointerup',up);
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  cam.dist=Math.max(16,Math.min(560, cam.dist*(1+Math.sign(e.deltaY)*0.12))); place();
+},{passive:true});
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+const $=s=>document.querySelector(s);
+document.querySelectorAll('[data-cam]').forEach(b=>b.onclick=()=>{spin=false;$('#bSpin').classList.remove('on');goto(b.dataset.cam);});
+$('#bWire').onclick=e=>{ mode = mode==='wire'?'normal':'wire'; applyMode();
+  e.target.classList.toggle('on', mode==='wire'); $('#bAO').classList.remove('on'); };
+$('#bAO').onclick=e=>{ mode = mode==='ao'?'normal':'ao'; applyMode();
+  e.target.classList.toggle('on', mode==='ao'); $('#bWire').classList.remove('on'); };
+$('#bSpin').onclick=e=>{ spin=!spin; e.target.classList.toggle('on',spin); };
+$('#bSun').onclick=()=>{ sunAz += Math.PI/6; place(); };
+$('#bCast').onclick=e=>{ sun.castShadow=!sun.castShadow; e.target.classList.toggle('on',sun.castShadow); };
+let snowOn=false;
+$('#bSnow').onclick=e=>{ snowOn=!snowOn; terrain.setWeather({snow:snowOn?1:0});
+  e.target.classList.toggle('on',snowOn); };
+let aces=false;
+$('#bTone').onclick=e=>{ aces=!aces;
+  renderer.toneMapping = aces?THREE.ACESFilmicToneMapping:THREE.NoToneMapping;
+  renderer.toneMappingExposure = aces?1.25:1.0;
+  scene.traverse(o=>{ if(o.isMesh&&o.material) o.material.needsUpdate=true; });
+  e.target.classList.toggle('on',aces); };
+
+let refreshAvg = 0;
+$('#bRefresh').onclick=()=>{
+  let tot=0;
+  for(let k=0;k<50;k++){
+    const x=12+((k*7)%44), z=14+((k*11)%44);
+    st.map[z*N+x] = (st.map[z*N+x]===T.ROAD)?T.GRASS:T.ROAD;
+    tot += terrain.refreshTile(st,x,z);
+  }
+  refreshAvg = tot/50;
+  applyMode(); updateStats();
+};
+$('#bRebuild').onclick=()=>{ terrain.build(st); applyMode(); updateStats(); };
+$('#bSelf').onclick=()=>{
+  const r = selfTest(renderer);
+  $('#notes').textContent = (r.pass?'PASS\n':'FAIL\n') + r.notes.join('\n');
+  console.log('[terrain.selfTest]', r);
+};
+
+function updateStats(){
+  const s=terrain.stats();
+  $('#stats').textContent =
+`build(80x80)   ${(s.buildMs||buildMs).toFixed(1)} ms
+refreshTile    ${s.refreshMs.toFixed(2)} ms  (avg50 ${refreshAvg.toFixed(2)} ms)
+meshes ${s.meshes}   chunks ${s.chunks}
+verts ${s.verts.toLocaleString()}   tris ${s.tris.toLocaleString()}
+draw calls ${renderer.info.render.calls}   fps ${fps.toFixed(0)}
+cam dist ${cam.dist.toFixed(0)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Loop
+// ---------------------------------------------------------------------------
+const ctx = { time:0, dt:0.016, nightT:0, nightEff:0,
+  weather:{rain:0,snow:0,tint:[1,1,1]}, camera, camDist:cam.dist,
+  sunDir:new THREE.Vector3().copy(sun.position).normalize(), quality:2 };
+
+let last=performance.now(), fps=60, acc=0, frames=0;
+place(); applyMode(); updateStats();
+window.__terrain = terrain; window.__state = st; window.__selfTest = selfTest;
+window.__cam = cam; window.__place = place; window.__r = renderer; window.__scene = scene;
+
+function loop(){
+  requestAnimationFrame(loop);
+  const now=performance.now(), dt=Math.min(0.05,(now-last)/1000); last=now;
+  acc+=dt; frames++;
+  if(acc>0.5){ fps=frames/acc; acc=0; frames=0; updateStats(); }
+  if(spin){ cam.az += dt*0.09; place(); }
+  ctx.time+=dt; ctx.dt=dt; ctx.camDist=cam.dist;
+  // Mirror engine.js exactly: fog scales with the orbit distance, so aerial
+  // perspective is active at every zoom and the terrain skirt has a defined
+  // far plane to disappear into.
+  scene.fog.near = cam.dist*0.55;
+  scene.fog.far  = cam.dist*4.2 + 224;
+  ctx.weather.snow = snowOn?1:0;
+  terrain.update(dt, ctx);
+  renderer.render(scene, camera);
+  document.title = 'terrain.js — ' + fps.toFixed(0) + ' fps';
+}
+loop();
+
+addEventListener('resize', ()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

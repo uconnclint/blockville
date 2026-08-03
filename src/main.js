@@ -97,8 +97,11 @@ function refreshRoadProp(x, z) {
   if (inBounds(x, z) && sim.state.map[idx(x, z)] === T.ROAD) {
     const i = idx(x, z);
     const overWater = sim.state.bridge && sim.state.bridge[i] === 1 && typeof models.bridgeModel === 'function';
-    const model = overWater ? models.bridgeModel(roadMask(x, z)) : models.roadModel(roadMask(x, z));
-    engine.addProp('road', model, x, z);
+    // On land, src/render/roads.js now meshes the asphalt, lane markings,
+    // crosswalks and curbs directly into the ground layer — the old voxel
+    // road tile would sit on top of it and double the markings. Only the
+    // bridge deck is still a prop (roads.js deliberately skips bridge tiles).
+    if (overWater) engine.addProp('road', models.bridgeModel(roadMask(x, z)), x, z);
   }
 }
 function refreshRoadArea(x, z) {
