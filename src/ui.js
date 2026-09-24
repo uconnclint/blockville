@@ -718,6 +718,8 @@ const CSS = `
   font-weight: 700; color: #7a94ab; text-decoration: none; opacity: .8;
   padding: 6px 10px; border-radius: 10px; pointer-events: auto; }
 .bv-teacher-link:hover { color: var(--bv-blue, #2b6a99); opacity: 1; background: rgba(43,106,153,.07); }
+.bv-copyright { display: block; text-align: center; margin: 6px auto 0; font-size: 11px;
+  font-weight: 700; color: #7a94ab; opacity: .6; }
 .bv-mode-grid { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 4px; }
 @media (min-width: 640px) { .bv-mode-grid { flex-direction: row; } }
 .bv-mode-opt {
@@ -2032,6 +2034,7 @@ export function initUI(hooks) {
     teacher.rel = 'noopener';
     teacher.textContent = '\u{1F34E} Grown-Ups’ Corner (Teacher Guide & Standards)';
     card.appendChild(teacher);   // the <a target="_blank"> opens the guide natively
+    card.appendChild(el('span', 'bv-copyright', '© 2026 Clint McLeod'));
 
     ov.appendChild(card);
     root.appendChild(ov);

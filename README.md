@@ -1,5 +1,7 @@
 # 🏗️ Blockville
 
+Copyright (c) 2026 Clint McLeod. All rights reserved.
+
 A kid-friendly voxel city **sandbox** — build whatever you want, no money, no rules.
 Runs in any modern browser on Chromebooks, iPads, and desktops. No install, no accounts, no ads.
 

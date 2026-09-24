@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Clint McLeod. All rights reserved.
 // Blockville (sandbox) — integration layer. Owns boot, game loop, input routing,
 // and wiring between sim / engine / models / life / ui / audio / challenges
 // (which never import each other directly).
