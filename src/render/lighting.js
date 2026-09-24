@@ -234,6 +234,9 @@ uniform vec4  uCsmSky;                         // x contactWorld, y openSkyFloor
 uniform vec4  uCsmTune;                        // x tapDensity (taps per texel^2 of disk), yzw reserved
 uniform vec3  uCsmOrigin;                      // world origin the varying is relative to
 uniform vec3  uCsmIblTint;                     // low-sun skylight tint for the DIFFUSE sky IBL; (1,1,1) = off
+uniform vec4  uCsmWallFill;                    // x away-wall fill cut, y key-wall fill gain, z day amount (0 = off), w unused
+uniform vec3  uCsmWallTint;                    // hue of the away-wall fill (linear, luminance ~1)
+uniform vec3  uCsmKeyDirW;                     // WORLD direction scene -> key (sun by day)
 
 // NOTE: vCsmWorldPos is CAMERA-RELATIVE (world minus uCsmOrigin) and uCsmMatrix
 // already folds that translation in. Blockville's world spans 0..640; feeding
@@ -334,6 +337,103 @@ float csmDbgIn    = 0.0;           // 1 if the fragment projected inside the cas
 // needs, and it costs nothing extra: the blocker search already computed it.
 float csmProxOut = 0.0;
 
+// Iso layout coverage of the cascade just sampled: 1 well inside the tight
+// cascade-0 rectangle, fading to 0 over its outer 3 % (see csmApply).
+float csmCoverOut = 0.0;
+
+// ---- grid tent filter (iso layout, round 4) --------------------------------
+// The r3 critic: rooftop shadows were "smeared, streaky, dithered grey
+// blotches with ragged edges". Two causes, both fixed here and in the iso fit:
+// (1) a shadow texel was 4-9 device pixels; (2) a 16-tap Vogel disk over a
+// 5-texel radius is a SUM OF 16 SHIFTED STEP EDGES, which is exactly a streaky
+// ghosted edge (and a rotated disk turns it into dither). This is the exact
+// alternative: every texel in a (2K+2)^2 window is compared once and weighted
+// by a separable tent of radius r texels centred on the lookup, which is a
+// continuous function of both the lookup position and r — a clean, even ramp
+// with no noise, no ghosts and no swim. r follows the PCSS blocker gap
+// (contact-hardening: ~1 texel at a wall foot, K texels for long shadows).
+// The blocker search reads a stride-2 lattice over the same window, so it
+// cannot early-out through the penumbra it is about to filter, and fully lit /
+// fully shadowed fragments stop after (K+1)^2 fetches.
+// Screen-space derivatives of the (camera-relative) world position, taken at
+// the top of csmApply before any non-uniform branch. They give the receiver
+// PLANE in shadow space, so each texel of the filter window is compared
+// against the receiver's own depth at THAT texel instead of at the window
+// centre. Without it a lit wall just under a convex ledge compares its window
+// against the ledge top one texel away and grows a comb of false shadow teeth
+// along every roof edge (r4, measured on the bakery parapet).
+vec3 csmDPdx = vec3( 0.0 );
+vec3 csmDPdy = vec3( 0.0 );
+
+float csmGridFilter( const in int ci, const in vec2 uv, const in float recvZ0, const in vec2 uvMin, const in vec2 uvMax, const in float texelWorld, const in float depthRange ) {
+	// Receiver plane: depth change per atlas texel along x / y.
+	mat3 lin = mat3( uCsmMatrix[ ci ] );
+	vec3 ddx = lin * csmDPdx;
+	vec3 ddy = lin * csmDPdy;
+	float det = ddx.x * ddy.y - ddx.y * ddy.x;
+	vec2 dz = vec2( 0.0 );
+	if ( abs( det ) > 1e-14 ) dz = vec2( ddx.z * ddy.y - ddy.z * ddx.y, ddx.x * ddy.z - ddy.x * ddx.z ) / det;
+	vec2 dzT = dz * ( uCsmAtlasTexel / uCsmRect[ ci ].zw );
+	float dzMax = 2.5 * texelWorld / depthRange;             // slope cap (~68 deg)
+	dzT = clamp( dzT, - dzMax, dzMax );
+	// The plane term replaces most of the slope-scaled bias for the window;
+	// keep the constant part as the floor against quantisation.
+	float recvZ = recvZ0;
+	int K = int( uCsmTune.z + 0.5 );
+	int N = 2 * K + 2;
+	vec2 tx = uCsmAtlasTexel;
+	vec2 g = uv / tx - 0.5;
+	vec2 base = floor( g );
+	vec2 f = g - base;
+	float sum = 0.0;
+	float hits = 0.0;
+	float cnt = 0.0;
+	for ( int j = 0; j < 4; j ++ ) {
+		if ( j > K ) break;
+		for ( int i = 0; i < 4; i ++ ) {
+			if ( i > K ) break;
+			vec2 o = vec2( float( 2 * i - K ), float( 2 * j - K ) );
+			float d = csmUnpackDepth( texture2D( uCsmAtlas, clamp( ( base + o + 0.5 ) * tx, uvMin, uvMax ) ) );
+			float rz = recvZ + dot( dzT, o - f );
+			cnt += 1.0;
+			if ( d < rz ) { sum += rz - d; hits += 1.0; }
+		}
+	}
+	if ( hits < 0.5 ) return 1.0;
+	float gap = max( 0.0, ( sum / hits ) * depthRange );
+	csmProxOut = exp2( - gap / max( uCsmSky.x, 0.01 ) );
+	if ( hits > cnt - 0.5 ) return 0.0;
+	float pen = clamp( gap * uCsmSoft.z, uCsmSoft.x, uCsmSoft.w );
+	float r = clamp( pen / texelWorld, 1.0, float( K ) );
+	float wx[ 8 ];
+	float wy[ 8 ];
+	float sx = 0.0;
+	float sy = 0.0;
+	for ( int i = 0; i < 8; i ++ ) {
+		if ( i >= N ) break;
+		float o = float( i - K );
+		wx[ i ] = max( 0.0, 1.0 - abs( o - f.x ) / r );
+		wy[ i ] = max( 0.0, 1.0 - abs( o - f.y ) / r );
+		sx += wx[ i ];
+		sy += wy[ i ];
+	}
+	float lit = 0.0;
+	for ( int j = 0; j < 8; j ++ ) {
+		if ( j >= N ) break;
+		if ( wy[ j ] <= 0.0 ) continue;
+		float row = 0.0;
+		for ( int i = 0; i < 8; i ++ ) {
+			if ( i >= N ) break;
+			if ( wx[ i ] <= 0.0 ) continue;
+			vec2 o = vec2( float( i - K ), float( j - K ) );
+			float d = csmUnpackDepth( texture2D( uCsmAtlas, clamp( ( base + o + 0.5 ) * tx, uvMin, uvMax ) ) );
+			row += ( d < recvZ + dot( dzT, o - f ) ) ? 0.0 : wx[ i ];
+		}
+		lit += row * wy[ j ];
+	}
+	return lit / max( sx * sy, 1e-5 );
+}
+
 float csmSampleCascade( const in int ci, const in vec3 wpos, const in vec3 wnrm, const in float ndl, const in float phi, const in float pixWorld ) {
 
 	vec4 prm = uCsmParams[ ci ];
@@ -353,6 +453,8 @@ float csmSampleCascade( const in int ci, const in vec3 wpos, const in vec3 wnrm,
 	vec4 p = uCsmMatrix[ ci ] * vec4( wpos + off, 1.0 );
 	vec3 sc = p.xyz;
 	csmDbgIdx = float( ci );
+	float edge = min( min( sc.x, 1.0 - sc.x ), min( sc.y, 1.0 - sc.y ) );
+	csmCoverOut = ( sc.z < 0.0 || sc.z > 1.0 ) ? 0.0 : smoothstep( 0.0, 0.03, edge );
 	if ( sc.x < 0.0 || sc.x > 1.0 || sc.y < 0.0 || sc.y > 1.0 || sc.z < 0.0 || sc.z > 1.0 ) { csmDbgIn = 0.0; return 1.0; }
 	csmDbgIn = 1.0;
 
@@ -368,6 +470,7 @@ float csmSampleCascade( const in int ci, const in vec3 wpos, const in vec3 wnrm,
 	csmDbgUV = uv;
 	csmDbgRecv = recvZ;
 	csmDbgAtlas = csmUnpackDepth( texture2D( uCsmAtlas, uv ) );
+	if ( uCsmTune.z > 0.5 ) return csmGridFilter( ci, uv, recvZ, uvMin, uvMax, texelWorld, depthRange );
 
 	// ---- resolution-aware filter floor ------------------------------------
 	// pixWorld is the world size of ONE DEVICE PIXEL on this surface (see the
@@ -481,6 +584,14 @@ vec3 csmCascadeDebugTint( const in int ci ) {
 // deliberately small so the two do not multiply into a black hole.
 float csmLastShadow = 1.0;
 float csmLastProx   = 0.0;
+// Receiver orientation weight for the sky occlusion (r6). A KEY-FACING wall in
+// a neighbour's cast shadow used to lose 50-60% of its fill (sun-blocked), while
+// the same building's AWAY-facing wall is never 'sun-blocked' (N.L <= 0 returns
+// early) and kept 100%: the shadowed building's lit side went DARKER than its
+// dark side — an inverted, flat three-tone (critic r5: 'left and right walls
+// nearly the same'). The sky a wall loses to a distant caster is small anyway;
+// the deep open-shadow occlusion is for ground and roofs, so walls keep their fill.
+float csmLastUpW    = 1.0;
 
 // How much of the sky dome this fragment loses. 0 = full dome (lit ground, or
 // open ground that is merely sun-blocked), 1 = tucked right under a caster.
@@ -488,7 +599,7 @@ float csmSkyOcclusion() {
 	float sunBlocked = 1.0 - csmLastShadow;
 	// uCsmSky.y is the floor: even wide-open shadowed ground loses a little sky,
 	// because the caster that is blocking the sun subtends some solid angle.
-	return sunBlocked * mix( uCsmSky.y, 1.0, csmLastProx );
+	return sunBlocked * mix( uCsmSky.y, 1.0, csmLastProx ) * csmLastUpW;
 }
 
 // hemi + ambient + light probes
@@ -522,11 +633,268 @@ float csmSpecularScale() {
 	return 1.0 - uCsmFill.y * csmSkyOcclusion();
 }
 
+// ---- WORLD-SPACE AMBIENT OCCLUSION (round 2 of the iso art direction) -----
+// The blind critic's biggest gap: "wall bases, the undersides of cornices,
+// sills, balconies and roof ledges, and the inside corners are lit evenly ...
+// the ledges look like they float, and buildings sit on their lots with no
+// anchoring darkness". ref04 (Blender) puts a soft, fairly WIDE darkening
+// gradient under every overhang and wherever a wall meets the ground or roof
+// deck. Screen-space AO (post.js) is limited to what the depth buffer shows and
+// its radius; the voxel AO (voxel.js) only reaches a voxel or so. Neither can
+// produce a gradient a couple of world units wide that is stable under
+// camera motion.
+//
+// This term is computed from a 2-layer HEIGHT VOLUME the rig renders top-down
+// over the region the camera is looking at (see _aoUpdate): for every ground
+// column, R = the highest surface in it (the top) and G = the LOWEST (r7b)
+// DOWN-FACING surface in it (the underside of the topmost solid, or "none").
+// A world point p is solid when  underside < p.y < top.  That is enough to
+// describe a building (solid to the ground: no underside), a cornice, sill,
+// balcony, awning or tree canopy (solid between its underside and top, open
+// below), the ground and a roof deck. Occlusion is then a fixed, cosine-
+// distributed hemisphere kernel around the normal, each tap soft-tested for
+// "inside" — so it is smooth (no noise, no temporal swim), view-independent,
+// and it reaches under every overhang the way ref04's GI does.
+//
+// It occludes the INDIRECT light (hemi + ambient + sky IBL) — physically the
+// only thing AO should touch — with Jimenez' multi-bounce fit so an occluded
+// orange corner goes DEEPER ORANGE, not grey; plus a small share of the direct
+// key (uAoParams.y) so a sunlit wall still shows the soft tuck at its foot.
+// ROUND 7 REWRITE (critic r6: "no tight dark AO line where the walls meet the
+// plinth, where props meet the paving, or in the inside corners under
+// cornices and awnings, so objects float"). The old per-fragment kernel (6
+// directions x 2 taps at 1 and 3 units) poked the height map so sparsely that
+// every prop footprint was stamped around itself as shifted square ghosts —
+// the "blocky stair-step blotches" that got it switched off. Now:
+//  1. GROUND AO is solved ONCE per height-volume refresh, in map space
+//     (AO_GROUND_FRAG: 16 horizon directions x 8 steps inside aoRadius,
+//     each the max horizon sine with a distance falloff), then blurred with a
+//     height-aware separable filter (AO_BLUR_FRAG), into the B channel.
+//     Dense + filtered = no ghosts; view-independent = no swim.
+//  2. A fragment reads it with a height-aware bilinear (csmAoRead): a roof
+//     never picks up the ground's value at its edge and vice versa, so the
+//     darkest texel sits exactly at the contact, not a texel off it.
+//      - up-facing: the value at its own column (or, if something covers it —
+//        an awning, umbrella, canopy — a cover term from the underside height);
+//      - walls: the ground value just in front of the wall, faded out over
+//        aoContact units of height above that ground (the tight wall-foot
+//        line, continuous with the ground's line = one crease), a broad
+//        aoGradHeight gradient (walls lighter toward the top, ref04/ref05),
+//        a crease under any exposed underside in front (cornice, sill,
+//        awning, balcony), and a narrow-gap term where the column in front is
+//        solid at this height.
+// Channel layout of uAoMap (RGBA half-float): R top + 20, G underside code
+// (see AO_FLOOD_FRAG), B blurred ground visibility (of the FLOOR for an
+// overhang column), A validated floor under the overhang + 20 (<= 0: none).
+// r7b: an 'overhang column' (awning, cornice lip, umbrella over paving) now
+// carries the paving under it, so the wall-foot line runs right up to the
+// wall under a cornice/awning instead of stopping at the overhang's edge
+// (critic r6: "no tight dark AO line where the walls meet the plinth"), and
+// aoTight adds a thin contact crease on top of the broader aoRadius falloff.
+uniform sampler2D uAoMap;
+uniform vec4 uAoXf;                        // u = x * x + y, v = z * z + w
+uniform vec4 uAoParams;                    // x indirect strength, y direct share, z on (> 0.5), w edge fade (uv)
+uniform vec4 uAoTune;                      // x world units per texel, y height tolerance, z 1 / map res, w fill saturation
+uniform vec4 uAoShape;                     // x power, y contact fade height, z gradient height, w gradient depth
+uniform vec4 uAoCover;                     // x cover vis (low overhang), y crease strength, z crease distance, w gap vis
+uniform vec4 uAoGrad;                      // x whole-wall gradient depth (fill), y its curve exponent (r7b), z fill floor, w its knee (r9)
+
+float csmAoVis = - 1.0;                    // cached per fragment
+float csmAoGradV = 1.0;                    // broad wall gradient: fill only (set by csmWorldAO)
+
+// One texel of the height-aware bilinear read. mode 0 (up-facing receiver at
+// height y): 'recv' = this column's top IS the receiver; 'cov' = something
+// above it (cover vis in .z). mode 1 (wall at height y): 'open' = column top
+// below y (ground/roof in front: ao in .x, top in .y); 'over' = exposed
+// underside above y (crease); otherwise solid at y (narrow gap).
+void csmAoTexel( const in vec2 uv, const in float wb, const in float y, const in float mode,
+		inout vec4 accA, inout vec4 accW ) {
+	vec4 t = texture2D( uAoMap, uv );
+	if ( t.r <= 0.0 ) return;                            // nothing rendered here
+	float top = t.r - 20.0;
+	float und = t.g > 0.0 ? t.g - 20.0 : - 1e4;          // exposed underside (< -1e3: none / enclosed)
+	float flo = t.a > 0.5 ? t.a - 20.0 : - 1e4;          // validated floor under the overhang (r7b)
+	// 'overhang column': an exposed underside with a real floor under it
+	// (awning, cornice, umbrella, canopy over paving). Its B value belongs to
+	// that FLOOR, not to the top (see AO_GROUND_FRAG).
+	float isOv = ( und > - 1e3 && flo > - 1e3 && flo < und - 0.05 ) ? 1.0 : 0.0;
+	float tol = uAoTune.y + 0.0015 * abs( top );         // half-float step grows with height
+	if ( mode < 0.5 ) {
+		float cvU = und > y ? mix( uAoCover.x, 1.0, smoothstep( 0.25, 5.0, und - y ) ) : uAoCover.x;
+		float rT = 1.0 - smoothstep( tol, 2.5 * tol, abs( top - y ) );
+		float rF = isOv * ( 1.0 - smoothstep( tol, 2.5 * tol, abs( flo - y ) ) );
+		float r = min( 1.0, rT + rF );
+		float v = ( rF * t.b * cvU + rT * mix( t.b, 1.0, isOv ) ) / max( rT + rF, 1e-4 );
+		float above = ( 1.0 - r ) * smoothstep( tol, 2.5 * tol, top - y );
+		accA.x += wb * r * v;       accW.x += wb * r;
+		accA.y += wb * above * cvU; accW.y += wb * above;
+	} else {
+		// wall at height y looking at the column in front of it:
+		//  openT: the column's top is below us (ground / roof deck in front)
+		//  openF: we are under its exposed overhang, standing on its floor
+		//  openX: under an overhang with no usable floor (no contact term)
+		//  solid: the column is solid at our height (narrow gap)
+		float openT = 1.0 - smoothstep( 0.0, tol, top - y );
+		float under = ( 1.0 - openT ) * step( y, und );
+		float openF = under * isOv * ( 1.0 - smoothstep( 0.0, tol, flo - y ) );
+		float openX = under - openF;
+		float solid = max( 1.0 - openT - under, 0.0 );
+		float hT = max( y - top, 0.0 ), hF = max( y - flo, 0.0 );
+		float vT = mix( mix( t.b, 1.0, isOv ), 1.0, smoothstep( 0.0, uAoShape.y, hT ) );
+		float vF = mix( t.b, 1.0, smoothstep( 0.0, uAoShape.y, hF ) );
+		float gT = mix( 1.0 - uAoShape.w, 1.0, smoothstep( 0.0, uAoShape.z, hT ) );
+		float gF = mix( 1.0 - uAoShape.w, 1.0, smoothstep( 0.0, uAoShape.z, hF ) );
+		accA.x += wb * ( openT * vT + openF * vF + openX );
+		accA.y += wb * ( openT * gT + openF * gF + openX );
+		accW.x += wb * ( openT + openF + openX );
+		accA.z += wb * under * ( und - y );  accW.y += wb * under;
+		accW.z += wb * solid;
+		accA.w += wb * ( openT * top + openF * flo );  accW.w += wb * ( openT + openF );
+	}
+}
+
+// 4-texel bilinear with per-texel masks (see csmAoTexel).
+void csmAoRead( const in vec2 uv, const in float y, const in float mode, out vec4 accA, out vec4 accW ) {
+	accA = vec4( 0.0 ); accW = vec4( 0.0 );
+	vec2 st = uv / uAoTune.z - 0.5;
+	vec2 i0 = floor( st );
+	vec2 f = st - i0;
+	vec2 b = ( i0 + 0.5 ) * uAoTune.z;
+	float d = uAoTune.z;
+	csmAoTexel( b,                   ( 1.0 - f.x ) * ( 1.0 - f.y ), y, mode, accA, accW );
+	csmAoTexel( b + vec2( d, 0.0 ),  f.x * ( 1.0 - f.y ),           y, mode, accA, accW );
+	csmAoTexel( b + vec2( 0.0, d ),  ( 1.0 - f.x ) * f.y,           y, mode, accA, accW );
+	csmAoTexel( b + vec2( d, d ),    f.x * f.y,                     y, mode, accA, accW );
+}
+
+// Sky visibility 0..1 from the height volume (1 = nothing nearby).
+float csmWorldAO( const in vec3 viewNormal ) {
+	if ( csmAoVis >= 0.0 ) return csmAoVis;
+	csmAoVis = 1.0;
+	if ( uAoParams.z < 0.5 ) return 1.0;
+	vec3 P = vCsmWorldPos + uCsmOrigin;
+	vec2 uv0 = vec2( P.x * uAoXf.x + uAoXf.y, P.z * uAoXf.z + uAoXf.w );
+	vec2 edge = min( uv0, 1.0 - uv0 );
+	float regionFade = clamp( min( edge.x, edge.y ) / max( uAoParams.w, 1e-4 ), 0.0, 1.0 );
+	if ( regionFade <= 0.0 ) return 1.0;
+	vec3 N = csmInvXformDir( viewNormal, viewMatrix );
+	vec4 A, W;
+	float vis = 1.0;
+	if ( N.y > 0.55 ) {
+		csmAoRead( uv0, P.y, 0.0, A, W );
+		float wt = W.x + W.y;
+		if ( wt > 1e-3 ) vis = ( A.x + A.y ) / wt;
+	} else if ( N.y > - 0.55 ) {
+		vec2 nh = normalize( N.xz + vec2( 1e-5, 0.0 ) );
+		vec2 pf = P.xz + nh * ( 1.35 * uAoTune.x + 0.02 );
+		csmAoRead( vec2( pf.x * uAoXf.x + uAoXf.y, pf.y * uAoXf.z + uAoXf.w ), P.y, 1.0, A, W );
+		float wt = W.x + W.z;
+		if ( wt > 1e-3 ) {
+			float vOpen = W.x > 1e-4 ? A.x / W.x : 1.0;
+			float vGrad = W.x > 1e-4 ? A.y / W.x : 1.0;
+			// crease under an exposed underside in front (cornice, sill, awning)
+			float vOver = W.y > 1e-4 ? 1.0 - uAoCover.y * exp( - ( A.z / W.y ) / uAoCover.z ) * min( W.y / wt, 1.0 ) : 1.0;
+			vis = ( W.x * vOpen + W.z * uAoCover.w ) / wt * vOver;
+			// r7b whole-wall gradient (critic r6: "the dark faces are one flat
+			// value ... a subtle vertical gradient that gets lighter toward the
+			// top"): the fill on a wall rises from its foot to the top of the
+			// solid it belongs to (read one texel BEHIND the face), so every
+			// block — a bench or a tower — shades darker at the bottom.
+			if ( uAoGrad.x > 0.0 && W.w > 1e-4 ) {
+				vec2 pb = P.xz - nh * ( 1.35 * uAoTune.x + 0.02 );
+				vec4 ts = texture2D( uAoMap, vec2( pb.x * uAoXf.x + uAoXf.y, pb.y * uAoXf.z + uAoXf.w ) );
+				float fl = A.w / W.w;
+				float tself = ts.r > 0.0 ? ts.r - 20.0 : P.y;
+				float fr = clamp( ( P.y - fl ) / max( tself - fl, 0.5 ), 0.0, 1.0 );
+				vGrad = min( vGrad, mix( 1.0 - uAoGrad.x, 1.0, pow( fr, uAoGrad.y ) ) );
+			}
+			csmAoGradV = mix( 1.0, mix( 1.0 - uAoShape.w * 0.5, vGrad, W.x / wt ), regionFade );
+		}
+	}
+	csmAoVis = pow( clamp( mix( 1.0, vis, regionFade ), 0.0, 1.0 ), uAoShape.x );
+	return csmAoVis;
+}
+
+// Multiplier for the INDIRECT irradiance (hemi/ambient and the sky IBL).
+// Multi-bounce (Jimenez et al. 2016, "Practical Realtime Strategies for
+// Accurate Indirect Occlusion"): bright albedos lose less and keep their hue.
+// 'fill saturation' (uAoTune.w) is the same physics one step further: the fill
+// that reaches a wall has mostly bounced off the city around it, so it carries
+// the surface colour — this is what keeps the dark right-hand faces a rich,
+// darker version of the wall colour (ref04) instead of grey-purple / beige.
+vec3 csmAoIndirect( const in vec3 viewNormal, const in vec3 albedo ) {
+	if ( uCsmMisc.y > 0.5 ) return vec3( 1.0 );
+	float lum = dot( albedo, vec3( 0.2126, 0.7152, 0.0722 ) );
+	vec3 hue = clamp( albedo / max( lum, 0.02 ), vec3( 0.55 ), vec3( 1.9 ) );
+	vec3 sat = mix( vec3( 1.0 ), hue, uAoTune.w );
+	if ( uAoParams.z < 0.5 ) return sat;
+	float ao = ( 1.0 - uAoParams.x * ( 1.0 - csmWorldAO( viewNormal ) ) ) * csmAoGradV;
+	// r9 fill floor (critic r8: "near-black crevices under awnings, between
+	// rooftop props and at plinth bases"). The fill in a crevice was the
+	// PRODUCT of several independent occluders (cast-shadow sky loss, this
+	// world AO at pow 2, the crease under an overhang, the wall gradient,
+	// materials' baked voxel AO), so a recess ran to ~1-3% of its open fill —
+	// black. ref04's Blender AO never goes below roughly half the face value.
+	// A smooth max (knee uAoGrad.w) keeps every light, soft gradient exactly as
+	// it was and only stops the deep end at uAoGrad.z, so crevices stay a
+	// colourful mid-tone. Open cast shadows (csmIndirectScale) are untouched.
+	if ( uAoGrad.z > 0.0 ) {
+		float kf = max( uAoGrad.w, 1e-3 );
+		float hf = clamp( 0.5 + 0.5 * ( ao - uAoGrad.z ) / kf, 0.0, 1.0 );
+		ao = mix( uAoGrad.z, ao, hf ) + kf * hf * ( 1.0 - hf );
+	}
+	vec3 a = 2.0404 * albedo - 0.3324;
+	vec3 b = - 4.7951 * albedo + 0.6417;
+	vec3 c = 2.7552 * albedo + 0.6903;
+	vec3 mb = max( vec3( ao ), ( ( ao * a + b ) * ao + c ) * ao );
+	return mb * sat;
+}
+
+// ---- DIRECTIONAL WALL FILL (light r8) ------------------------------------
+// Critic r7 (picked the reference): "in our downtown the left and right walls
+// sit at almost the same mid value ... the reference gives every building a
+// bright warm left face and a clearly darker but still colourful cool right
+// face". Measured (iso-mid, faces masked by a normal render): right/left sRGB
+// luma 0.80-0.90 on neutral and blue walls (ref05 ~0.60-0.68). The hemi light
+// and the studio IBL are rotationally symmetric about Y, so every wall got the
+// SAME fill whichever way it faced, and in a dense downtown — where half the
+// key-facing walls stand in a neighbour's cast shadow — fill is all there is,
+// so the two sides converged. A real clear sky is not symmetric: the half of
+// the dome around the sun (plus the sunlit street it bounces off) is several
+// times brighter than the half behind you. So walls turned AWAY from the key
+// take less of the fill, tinted a touch cool (they see blue sky, not sunlit
+// paving), and walls turned TOWARD it take a little more — that keeps a
+// shadowed key-side wall a clear step above its own far wall. Horizontal
+// faces (roofs, ground) are untouched, so tops and cast shadows keep their
+// values; off at night / dusk / overcast (uCsmWallFill.z = the daytime art
+// amount). Applied to hemi + ambient AND the diffuse sky IBL.
+vec3 csmWallFill( const in vec3 viewNormal ) {
+	if ( uCsmWallFill.z <= 0.0 || uCsmMisc.y > 0.5 ) return vec3( 1.0 );
+	vec3 wn = csmInvXformDir( viewNormal, viewMatrix );
+	float nh = length( wn.xz );
+	float kh = length( uCsmKeyDirW.xz );
+	if ( nh < 1e-3 || kh < 1e-3 ) return vec3( 1.0 );
+	float f = dot( wn.xz / nh, uCsmKeyDirW.xz / kh );    // +1 faces the key, -1 turned away
+	float wall = ( 1.0 - smoothstep( 0.35, 0.85, abs( wn.y ) ) ) * uCsmWallFill.z;
+	float away = smoothstep( 0.0, 0.55, - f ) * wall;
+	float toward = smoothstep( 0.0, 0.55, f ) * wall;
+	vec3 awayMul = mix( vec3( 1.0 ), uCsmWallTint * ( 1.0 - uCsmWallFill.x ), away );
+	return awayMul * ( 1.0 + uCsmWallFill.y * toward );
+}
+
+// Multiplier for the direct key (a small artistic share, see above).
+float csmAoDirect( const in vec3 viewNormal ) {
+	if ( uAoParams.z < 0.5 || uAoParams.y <= 0.0 ) return 1.0;
+	return 1.0 - uAoParams.y * ( 1.0 - csmWorldAO( viewNormal ) );
+}
+
 // The single entry point a material splices in. Returns the direct light colour
 // modulated by the cascaded shadow (and, in debug mode, the cascade tint).
 vec3 csmApply( const in vec3 lightColor, const in vec3 viewNormal, const in vec3 viewLightDir ) {
 
 	if ( uCsmCount < 0.5 ) return lightColor;
+	csmDPdx = dFdx( vCsmWorldPos );
+	csmDPdy = dFdy( vCsmWorldPos );
 
 	float ndl = dot( viewNormal, viewLightDir );
 	if ( ndl <= 0.001 ) return lightColor;              // already unlit by N.L
@@ -594,6 +962,20 @@ vec3 csmApply( const in vec3 lightColor, const in vec3 viewNormal, const in vec3
 	float prox = 0.0;
 	vec3 tint = vec3( 0.0 );
 
+	if ( uCsmTune.y > 0.5 ) {
+		// Iso layout: the tight cascade 0 wherever it covers the fragment, the
+		// whole-view cascade 1 outside it (tall roofs above the fit height).
+		float s0 = csmSampleCascade( 0, vCsmWorldPos, wnrm, ndl, phi, pixWorld );
+		float p0 = csmProxOut;
+		float c0 = csmCoverOut;
+		shadow = s0; prox = p0; tint = csmCascadeDebugTint( 0 ); wsum = 1.0;
+		if ( c0 < 0.999 && uCsmCount > 1.5 ) {
+			float s1 = csmSampleCascade( 1, vCsmWorldPos, wnrm, ndl, phi, pixWorld );
+			shadow = mix( s1, s0, c0 );
+			prox = mix( csmProxOut, p0, c0 );
+			tint = mix( csmCascadeDebugTint( 1 ), tint, c0 );
+		}
+	} else
 	for ( int i = 0; i < CSM_MAX_CASCADES; i ++ ) {
 		if ( float( i ) >= uCsmCount ) break;
 		float w = csmCascadeWeight( vz, uCsmSplits[ i ] );
@@ -622,6 +1004,7 @@ vec3 csmApply( const in vec3 lightColor, const in vec3 viewNormal, const in vec3
 	shadow = mix( 1.0, shadow, fade * term * uCsmMisc.x );
 	csmLastShadow = shadow;
 	csmLastProx = clamp( prox, 0.0, 1.0 ) * fade * term;
+	csmLastUpW = smoothstep( 0.2, 0.7, wnrm.y );
 
 	vec3 outCol = lightColor * shadow;
 
@@ -639,6 +1022,13 @@ vec3 csmApply( const in vec3 lightColor, const in vec3 viewNormal, const in vec3
 	if ( dm < 0.5 ) return outCol;
 
 	vec3 dbg;
+	if ( dm > 7.5 ) {                                                 // 8: AO map probe (r,g = uv, b = top - y)
+		vec3 Pd = vCsmWorldPos + uCsmOrigin;
+		vec2 uvd = vec2( Pd.x * uAoXf.x + uAoXf.y, Pd.z * uAoXf.z + uAoXf.w );
+		vec2 hd = texture2D( uAoMap, uvd ).rg - 20.0;
+		return vec3( fract( uvd * 4.0 ), clamp( ( hd.x - Pd.y ) * 0.5 + 0.5, 0.0, 1.0 ) ) * 1.6;
+	}
+	if ( dm > 6.5 ) return vec3( csmWorldAO( viewNormal ) ) * 1.6;   // 7: world AO visibility
 	if ( dm < 1.5 )      dbg = tint * ( 0.30 + 0.70 * shadow );
 	else if ( dm < 2.5 ) dbg = vec3( shadow );
 	else if ( dm < 3.5 ) dbg = vec3( fract( csmDbgUV * 8.0 ), csmDbgIn );
@@ -691,6 +1081,7 @@ export function csmLightsFragmentBegin() {
     DIR_LIGHT_INFO_LINE +
     '\n\t\t#if ( UNROLLED_LOOP_INDEX == 0 )\n' +
     '\t\tdirectLight.color = csmApply( directLight.color, geometryNormal, directLight.direction );\n' +
+    '\t\tdirectLight.color *= csmAoDirect( geometryNormal );\n' +
     '\t\t#endif'
   );
   // Second hook: occlude the indirect (hemi + ambient + probe) term by the same
@@ -698,9 +1089,13 @@ export function csmLightsFragmentBegin() {
   if (out.indexOf(INDIRECT_SPEC_LINE) >= 0) {
     out = out.replace(
       INDIRECT_SPEC_LINE,
-      '#if defined( RE_IndirectDiffuse )\n\tirradiance *= csmIndirectScale();\n#endif\n' + INDIRECT_SPEC_LINE
+      '#if defined( RE_IndirectDiffuse )\n\tirradiance *= csmIndirectScale();\n\tirradiance *= csmWallFill( geometryNormal );\n' +
+      '\tirradiance *= csmAoIndirect( geometryNormal, diffuseColor.rgb );\n#endif\n' + INDIRECT_SPEC_LINE
     );
   }
+  // Debug views 7/8 read the lookup through a white, non-specular surface so the
+  // value is not multiplied by albedo (Standard/Physical only).
+  out = '#ifdef STANDARD\n\tif ( uCsmMisc.y > 6.5 ) { material.diffuseColor = vec3( 1.0 ); material.specularColor = vec3( 0.0 ); }\n#endif\n' + out;
   _cachedLightsChunk = out;
   return _cachedLightsChunk;
 }
@@ -731,7 +1126,8 @@ export function csmLightsFragmentMaps() {
   if (_cachedMapsChunk) return _cachedMapsChunk;
   const src = THREE.ShaderChunk.lights_fragment_maps;
   _cachedMapsChunk = src +
-    '\n#if defined( RE_IndirectDiffuse )\n\tiblIrradiance *= csmIblScale();\n\tiblIrradiance *= csmIblTint();\n#endif\n' +
+    '\n#if defined( RE_IndirectDiffuse )\n\tiblIrradiance *= csmIblScale();\n\tiblIrradiance *= csmIblTint();\n\tiblIrradiance *= csmWallFill( geometryNormal );\n' +
+    '\tiblIrradiance *= csmAoIndirect( geometryNormal, diffuseColor.rgb );\n#endif\n' +
     '#if defined( RE_IndirectSpecular )\n\tradiance *= csmSpecularScale();\n#endif\n';
   return _cachedMapsChunk;
 }
@@ -769,6 +1165,12 @@ export function csmPatchShader(shader, uniforms) {
   // Third splice: occlude the sky IBL too (see csmLightsFragmentMaps).
   if (fs.indexOf('#include <lights_fragment_maps>') >= 0) {
     fs = fs.replace('#include <lights_fragment_maps>', csmLightsFragmentMaps());
+  }
+  // Debug view 7 (world AO): overwrite the final colour with the raw visibility
+  // so nothing downstream (albedo, sky fill, rim, emissive) can mask it.
+  if (fs.indexOf('#include <dithering_fragment>') >= 0) {
+    fs = fs.replace('#include <dithering_fragment>',
+      '#include <dithering_fragment>\n\tif ( uCsmMisc.y > 6.5 && uCsmMisc.y < 7.5 ) gl_FragColor.rgb = vec3( csmWorldAO( normal ) );');
   }
   shader.fragmentShader = CSM_FRAGMENT_PARS + fs;
   return shader;
@@ -917,11 +1319,257 @@ const GRADE_C = GRADE.map((g) => ({
 //   block 16                                  1.04
 //   none                                      1.00
 // Quality 1 keeps a block rotation because 5 taps show the fixed disk more.
+//
+// isoTile / isoGrid: the ISO LAYOUT (orthographic game camera, round 4). An
+// ortho camera has no perspective foreshortening, so depth-split cascades are
+// pointless there: every cascade had to cover the whole screen width, and at
+// iso-close a 1024 tile gave 0.064-0.134 world units per shadow texel = 4-9
+// device pixels per texel, which is what the r3 critic saw as "smeared,
+// streaky, dithered grey blotches with ragged edges". In the iso layout
+// cascade 0 is a tight light-space RECTANGLE fitted to what is on screen at an
+// isoTile^2 resolution, cascade 1 a coarse whole-view fallback (anything taller
+// than the fit), and the filter is an exact separable tent over an isoGrid-
+// texel window (see csmGridFilter) instead of a sparse Vogel disk.
 const QUALITY = [
-  { cascades: 1, taps: 4,  search: 4,  tile: 1024, rotate: 0, bilinear: 0, farScale: 0.75 },
-  { cascades: 2, taps: 5,  search: 6,  tile: 1024, rotate: 4, bilinear: 1, farScale: 0.9 },
-  { cascades: 3, taps: 8,  search: 8,  tile: 1024, rotate: 0, bilinear: 1, farScale: 1.0 },
+  { cascades: 1, taps: 4,  search: 4,  tile: 1024, rotate: 0, bilinear: 0, farScale: 0.75, aoRes: 0,    aoTaps: 0,  isoTile: 1536, isoGrid: 2 },
+  { cascades: 2, taps: 5,  search: 6,  tile: 1024, rotate: 4, bilinear: 1, farScale: 0.9,  aoRes: 1024, aoTaps: 8,  isoTile: 2048, isoGrid: 2 },
+  { cascades: 3, taps: 8,  search: 8,  tile: 1024, rotate: 0, bilinear: 1, farScale: 1.0,  aoRes: 2048, aoTaps: 12, isoTile: 2048, isoGrid: 3 },
 ];
+
+// ---------------------------------------------------------------------------
+// World-AO height volume pass (see "WORLD-SPACE AMBIENT OCCLUSION" in the GLSL).
+// One top-down orthographic pass, MAX-blended, no depth test: every fragment
+// writes its world height (+20 so "nothing" clears to 0) into R, and — only if
+// it faces DOWN (a back face seen from above) — into G as well. MAX blending
+// then leaves R = the column's highest surface and G = its lowest underside.
+// ---------------------------------------------------------------------------
+const AO_VERT = /* glsl */`
+#include <common>
+#include <batching_pars_vertex>
+#include <morphtarget_pars_vertex>
+#include <skinning_pars_vertex>
+varying float vAoY;
+void main() {
+	#include <batching_vertex>
+	#include <beginnormal_vertex>
+	#include <morphnormal_vertex>
+	#include <skinbase_vertex>
+	#include <skinnormal_vertex>
+	#include <begin_vertex>
+	#include <morphtarget_vertex>
+	#include <skinning_vertex>
+	#include <project_vertex>
+	vec4 aoW = vec4( transformed, 1.0 );
+	#ifdef USE_BATCHING
+	aoW = batchingMatrix * aoW;
+	#endif
+	#ifdef USE_INSTANCING
+	aoW = instanceMatrix * aoW;
+	#endif
+	vAoY = ( modelMatrix * aoW ).y;
+}
+`;
+
+const AO_FRAG = /* glsl */`
+varying float vAoY;
+void main() {
+	float h = max( vAoY + 20.0, 0.0 );
+	// G (r7b): the LOWEST down-facing surface — the first ceiling above the
+	// floor — stored as 1 / (h + 1) so the MAX blend keeps the minimum;
+	// AO_COPY_FRAG decodes it back to h. (Was the highest underside: under a
+	// stepped cornice that picked the top tier, and the lower tier then hid
+	// the pavement from the floor pass.)
+	gl_FragColor = vec4( h, gl_FrontFacing ? 0.0 : 1.0 / ( h + 1.0 ), 0.0, 0.0 );
+}
+`;
+
+// Second scene pass (light r7b): the column's FLOOR — the highest up-facing
+// surface strictly below its lowest underside (tSrc = the first pass). MAX
+// blended into A of a copy of the first pass. That is the paving under an
+// awning, a cornice lip or an umbrella: the surface the wall-foot / prop-foot
+// contact line has to land on (the first pass only knew the overhang's top).
+// A floor can also be BURIED (terrain under a lot slab, paving under a wall:
+// catalog meshes are open underneath); AO_FLOOD_FRAG only accepts a floor
+// that connects sideways, at or above floor level, to open ground.
+const AO_FLOOR_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform vec2 uTexel;
+varying float vAoY;
+void main() {
+	float h = max( vAoY + 20.0, 0.0 );
+	float g = texture2D( tSrc, gl_FragCoord.xy * uTexel ).g;
+	float U = g > 0.0 ? 1.0 / g - 1.0 : 0.0;
+	gl_FragColor = vec4( 0.0, 0.0, 0.0, ( gl_FrontFacing && h < U - 0.02 ) ? h : 0.0 );
+}
+`;
+const AO_COPY_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform vec2 uTexel;
+void main() {
+	vec4 c = texture2D( tSrc, gl_FragCoord.xy * uTexel );
+	gl_FragColor = vec4( c.r, c.g > 0.0 ? 1.0 / c.g - 1.0 : 0.0, c.b, c.a );   // decode G (AO_FRAG)
+}
+`;
+
+// "Is the space under this underside actually OPEN AIR?" Voxel buildings are
+// hollow shells (core.js walls()), so the roof slab of every building has a
+// down-facing underside too — seen from above, a hollow tower and a cornice
+// look identical (a slab over empty space). Measured on the demo city: the
+// tallest building near the target read top 16.66 / underside 16.41, i.e. a
+// floating 0.25-unit slab, and nothing at its foot was occluded at all.
+// The difference is lateral: the space under a cornice, sill, balcony, awning
+// or canopy connects sideways to open air; a building's interior is walled in
+// (wall columns have no underside, so they block). A few ping-pong passes flood
+// "exposed" in from open columns through underside columns only — a bounded
+// flood fill, ~aoFloodWorld units deep. Encoding of G after the flood:
+//   > 0  exposed underside (height + 20)     = 0  no underside
+//   < 0  enclosed underside (-(height + 20)) -> treated as solid to the ground
+const AO_QUAD_VERT = /* glsl */`
+void main() { gl_Position = vec4( position.xy, 0.0, 1.0 ); }
+`;
+const AO_FLOOD_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform vec2 uTexel;
+uniform float uInit;
+vec4 aoN( const in vec2 uv ) { return texture2D( tSrc, uv ); }
+float aoExposes( const in vec4 v, const in float U ) {
+	if ( v.g > 0.5 ) return 1.0;                                   // exposed under-space
+	if ( abs( v.g ) < 0.5 && v.r < U - 0.05 ) return 1.0;          // open column lower than our underside
+	return 0.0;
+}
+// Floor validity (A > 0 valid, A < 0 not yet): our floor F is real open floor
+// if a neighbour's walkable level (an open column's top, or a valid floor) is
+// no higher than F + tol — i.e. F is not buried under that neighbour's slab.
+float aoFloorOk( const in vec4 v, const in float U, const in float F ) {
+	float lvl = - 1.0;
+	if ( abs( v.g ) < 0.5 && v.r > 0.0 && v.r < U - 0.05 ) lvl = v.r;
+	else if ( v.a > 0.5 ) lvl = v.a;
+	return ( lvl > 0.0 && F >= lvl - 0.05 ) ? 1.0 : 0.0;
+}
+void main() {
+	vec2 uv = gl_FragCoord.xy * uTexel;
+	vec4 c = aoN( uv );
+	if ( uInit > 0.5 ) { gl_FragColor = vec4( c.r, c.g > 0.5 ? - c.g : 0.0, 1.0, c.a > 0.5 ? - c.a : 0.0 ); return; }
+	vec4 o = vec4( c.rg, 1.0, c.a );
+	float U = abs( c.g );
+	vec4 n0 = aoN( uv + vec2( uTexel.x, 0.0 ) ), n1 = aoN( uv - vec2( uTexel.x, 0.0 ) );
+	vec4 n2 = aoN( uv + vec2( 0.0, uTexel.y ) ), n3 = aoN( uv - vec2( 0.0, uTexel.y ) );
+	if ( c.g < 0.0 ) {
+		float ex = max( max( aoExposes( n0, U ), aoExposes( n1, U ) ), max( aoExposes( n2, U ), aoExposes( n3, U ) ) );
+		o.g = ex > 0.5 ? U : - U;
+	}
+	if ( c.a < - 0.5 ) {
+		float F = - c.a;
+		float ok = max( max( aoFloorOk( n0, U, F ), aoFloorOk( n1, U, F ) ), max( aoFloorOk( n2, U, F ), aoFloorOk( n3, U, F ) ) );
+		o.a = ok > 0.5 ? F : - F;
+	}
+	gl_FragColor = o;
+}
+`;
+
+// Ground AO, solved once per height-volume refresh in map space (see the
+// round-7 note above csmWorldAO). For every column, the receiver is its top;
+// 16 fixed directions x 8 steps (denser near the receiver) inside uP.x world
+// units; per direction the max horizon sine, weighted by (1 - (r/R)^2) so
+// the darkening is tight at the contact and gone by R. Deterministic (no
+// noise to denoise); AO_BLUR_FRAG smooths what the step spacing leaves.
+// Column helpers shared by the map-space passes (all heights in +20 units).
+// A holds the column's validated floor (AO_FLOOR_FRAG + AO_FLOOD_FRAG).
+// An 'overhang column' (exposed underside with a floor under it: awning,
+// cornice lip, umbrella, canopy) receives its AO at the FLOOR, and shows a
+// neighbour only its floor while the neighbour stands below the overhang —
+// so the paving under an awning gets its wall-foot line, and a cornice does
+// not read as a 9-unit wall to the pavement beside it.
+const AO_COLUMN_GLSL = /* glsl */`
+float aoFloor20( const in vec4 t ) { return max( t.a, 0.0 ); }
+float aoIsOver( const in vec4 t ) {
+	return ( t.g > 0.5 && t.a > 0.5 && t.a < t.g - 0.05 ) ? 1.0 : 0.0;
+}
+float aoRecv( const in vec4 t ) { return aoIsOver( t ) > 0.5 ? aoFloor20( t ) : t.r; }
+float aoOccH( const in vec4 t, const in float y ) {
+	return ( aoIsOver( t ) > 0.5 && t.g > y + 0.05 ) ? aoFloor20( t ) : t.r;
+}
+`;
+
+const AO_GROUND_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform vec2 uTexel;
+uniform vec4 uP;                 // x radius (world), y world units per texel, z steps, w tight share
+uniform vec4 uP2;                // x broad radius (world), y broad strength
+${AO_COLUMN_GLSL}
+void main() {
+	vec2 uv = gl_FragCoord.xy * uTexel;
+	vec4 c = texture2D( tSrc, uv );
+	if ( c.r <= 0.0 ) { gl_FragColor = vec4( c.rg, 1.0, c.a ); return; }
+	float R = uP.x;
+	float y0 = aoRecv( c );
+	float occ = 0.0, occT = 0.0;
+	for ( int d = 0; d < 16; d ++ ) {
+		float a = ( float( d ) + 0.5 ) * 0.39269908;
+		vec2 dir = vec2( cos( a ), sin( a ) ) * uTexel / uP.y;
+		float hm = 0.0, ht = 0.0;
+		for ( int s = 0; s < 8; s ++ ) {
+			if ( float( s ) >= uP.z ) break;
+			float t = ( float( s ) + 1.0 ) / uP.z;
+			float r = max( R * pow( t, 1.5 ), 0.9 * uP.y );
+			float h = aoOccH( texture2D( tSrc, uv + dir * r ), y0 ) - y0;
+			float q = r / R;
+			float sn = h / sqrt( h * h + r * r );
+			hm = max( hm, sn * ( 1.0 - q * q ) );
+			// tight contact term: only what stands within ~0.3 R (the crease line)
+			float qt = min( r / ( 0.3 * R ), 1.0 );
+			ht = max( ht, sn * ( 1.0 - qt * qt ) );
+		}
+		occ += hm; occT += ht;
+	}
+	float v = ( 1.0 - occ / 16.0 ) * ( 1.0 - uP.w * occT / 16.0 );
+	// Broad term (r7b; critic r6: "large flat areas get almost no light
+	// variation"): a sparse 8 x 4 horizon search out to uP2.x, so plazas,
+	// pool decks and lawns darken gently toward the buildings around them
+	// the way ref05's GI does. Tops only: a far-away tower barely registers.
+	if ( uP2.y > 0.0 ) {
+		float ob = 0.0;
+		for ( int d = 0; d < 8; d ++ ) {
+			float a = ( float( d ) + 0.25 ) * 0.78539816;
+			vec2 dir = vec2( cos( a ), sin( a ) ) * uTexel / uP.y;
+			float hm = 0.0;
+			for ( int s = 1; s <= 4; s ++ ) {
+				float r = uP2.x * float( s ) * 0.25;
+				float h = aoOccH( texture2D( tSrc, uv + dir * r ), y0 ) - y0;
+				float q = r / uP2.x;
+				hm = max( hm, h / sqrt( h * h + r * r ) * ( 1.0 - q * q ) );
+			}
+			ob += hm;
+		}
+		v *= 1.0 - uP2.y * ob / 8.0;
+	}
+	gl_FragColor = vec4( c.rg, clamp( v, 0.0, 1.0 ), c.a );
+}
+`;
+
+// Height-aware separable blur of the B channel (binomial 1-4-6-4-1): only
+// columns whose top is within ~0.15 units mix, so a roof's value never bleeds
+// onto the ground at its foot (that would lift the contact line) and vice
+// versa. R/G pass through untouched.
+const AO_BLUR_FRAG = /* glsl */`
+uniform sampler2D tSrc;
+uniform vec2 uTexel;
+uniform vec2 uDir;
+${AO_COLUMN_GLSL}
+void main() {
+	vec2 uv = gl_FragCoord.xy * uTexel;
+	vec4 c = texture2D( tSrc, uv );
+	float y0 = aoRecv( c );
+	float acc = c.b * 6.0, wsum = 6.0;
+	for ( int i = - 2; i <= 2; i ++ ) {
+		if ( i == 0 ) continue;
+		vec4 t = texture2D( tSrc, uv + uDir * uTexel * float( i ) );
+		float w = ( abs( float( i ) ) > 1.5 ? 1.0 : 4.0 ) * ( 1.0 - smoothstep( 0.08, 0.2, abs( aoRecv( t ) - y0 ) ) );
+		acc += t.b * w; wsum += w;
+	}
+	gl_FragColor = vec4( c.rg, acc / wsum, c.a );
+}
+`;
 
 /**
  * LightingRig — sun/moon + ambient + CSM + night light pools.
@@ -951,8 +1599,8 @@ export class LightingRig {
       minShadowDistance: 460,
       maxShadowDistance: 1000,
       splitLambda: 0.86,
-      normalOffsetTexels: 1.0,
-      depthBiasTexels: 0.5,
+      normalOffsetTexels: 2.0,   // was 1.0 — res-4 detail is thin along the light ray (acne); coordinator 12:25
+      depthBiasTexels: 2.5,      // was 0.5 — see pieces/light.md 12:25 note
       // Penumbra. NOTE the interaction with `casterSide: BackSide`: the atlas
       // stores SECOND depth, i.e. where the light ray LEAVES the caster, so the
       // PCSS blocker distance is overestimated by roughly the caster's
@@ -970,6 +1618,19 @@ export class LightingRig {
       maxPenumbra: 1.50,
       blockerSearchWorld: 1.6,
       shadowStrength: 0.97,      // 1 = physical; <1 keeps shadows colourful
+      // Directional wall fill (light r8, csmWallFill): daytime share of the
+      // fill (hemi + ambient + diffuse IBL) that walls turned AWAY from the
+      // key lose, the extra share key-facing walls gain, and the away walls'
+      // hue (linear, luminance ~1: a touch cool, they see open blue sky).
+      // Scaled per frame by setWallFillAmount() (engine: sky artAmount).
+      // Measured iso-mid (normal-masked faces, sRGB luma right/left): neutral
+      // walls 0.88 -> 0.81, blue 0.77 -> 0.64, green 0.84 -> 0.72 against
+      // this off; white prop 1 : 0.91 : 0.64. Post's shaded-face floor lifts
+      // the far walls back up — with it at 0.12 instead of 0.24 the same
+      // light gives neutral 0.70 / blue 0.57 (see pieces/light.md r8).
+      wallFillAway: 0.75,
+      wallFillToward: 0.25,
+      wallFillTint: [0.88, 0.98, 1.16],
       // How much of each INDIRECT term a SKY-OCCLUDED fragment loses. These are
       // multiplied by csmSkyOcclusion(), NOT by the cast-shadow term — see the
       // long note above csmSkyOcclusion(). Driving them off the cast shadow (at
@@ -1041,6 +1702,52 @@ export class LightingRig {
       // into a continuous penumbra. Quality 1/2 halve their tap budget to pay
       // for it; quality 0 leaves it off.
       bilinearTaps: true,
+      // ---- world-space AO (the "anchoring darkness", see the GLSL notes) ----
+      // aoRadius: reach of the kernel in world units (a res-4 voxel is 0.25).
+      // ref04's gradient under a cornice / at a wall foot runs ~6-10 voxels.
+      // aoIndirect: how much of the hemi/ambient/sky-IBL fill an enclosed
+      // point loses (multi-bounce keeps it coloured). aoDirect: artistic share
+      // of the key so a SUNLIT wall still darkens at its foot and under ledges.
+      // aoFillSaturation: bounce colour carried by the fill (dark sides stay
+      // a rich darker version of the wall colour, never grey).
+      // r7: the sparse-kernel version (blocky ghosts, switched off 13:10) is
+      // gone; this is the map-space contact AO (see the GLSL note above
+      // csmWorldAO). aoRadius: reach of the ground horizon search (a res-4
+      // voxel is 0.25). aoContact: height over which a wall's foot line fades.
+      // aoGradHeight/Depth: broad wall gradient (lighter toward the top).
+      // aoCover: sky vis of ground under a low overhang (awning, umbrella).
+      // aoCrease/Dist: dark band on a wall under an exposed underside
+      // (cornice, sill, awning). aoGap: vis of a wall facing solid stuff
+      // closer than ~1 texel (narrow slots). aoHeightTol: same-surface test.
+      worldAO: true,
+      aoRadius: 1.0,
+      // r7b: extra darkening from what stands within 0.3 aoRadius only — the
+      // thin crease line at a wall foot / prop foot (critic r6: "no tight dark
+      // AO line where the walls meet the plinth"). 0 = off.
+      aoTight: 1.0,
+      // r7b: broad ground term (see AO_GROUND_FRAG): strength / reach (world).
+      aoBroad: 0.25,
+      aoBroadRadius: 4.0,
+      aoIndirect: 1.0,
+      aoDirect: 0.85,
+      aoContact: 0.45,
+      aoGradHeight: 5.0,
+      aoGradDepth: 0.25,
+      // r7b: whole-wall fill gradient, foot -> top of the solid (see csmWorldAO).
+      aoWallGrad: 0.3,
+      aoWallGradPow: 0.8,
+      // r9: smooth floor on the INDIRECT world-AO visibility (see csmAoIndirect):
+      // crevices keep at least this share of their fill; knee = blend width.
+      aoFillFloor: 0.0,
+      aoFillKnee: 0.15,
+      aoCover: 0.55,
+      aoCrease: 0.5,
+      aoCreaseDist: 0.35,
+      aoGap: 0.5,
+      aoHeightTol: 0.06,
+      aoFillSaturation: 0.30,
+      aoFloodWorld: 1.6,         // how deep "open air" reaches under an overhang
+      aoPower: 2.0,              // contrast of the visibility curve (>1 = deeper tuck)
       moonShadows: true,
       moonShadowStrength: 0.55,  // cascade strength multiplier while the moon keys
       maxSunElevation: 62,       // degrees
@@ -1085,9 +1792,29 @@ export class LightingRig {
       // needed. Switch to FrontSide only if you add open/single-sided casters
       // (they cast nothing under BackSide), and raise the two bias texel
       // counts to ~3.0 / ~1.5 if you do.
-      casterSide: THREE.BackSide,
+      //
+      // Round 3: that premise no longer holds. The res-4 catalog meshes are
+      // OPEN underneath (no bottom faces under lots, canopies or buildings —
+      // they are never seen from the iso camera), so a light ray entering a
+      // roof or canopy top leaves through a face that does not exist and
+      // BackSide stores nothing: whole buildings cast only thin slivers from
+      // their far walls, and tree shadows broke into jagged fragments
+      // detached from the trees. That was the r2 critic's "buildings cast
+      // almost no visible shadow onto the road, the lots or the blocks next to
+      // them". DoubleSide stores the NEAREST surface of every caster, closed
+      // or not; the acne that invites is held off by the bias the coordinator
+      // already raised for res-4 detail (2.5 / 2.0 texels, above).
+      casterSide: THREE.DoubleSide,
       rotateBlock: null,         // null => follow quality (see QUALITY[].rotate)
       farCascadeInterval: 2,     // far cascades re-render every N frames if stable
+      // ---- iso layout (orthographic camera; see QUALITY) ----------------------
+      isoLayout: true,
+      isoTile: null,             // null => QUALITY[].isoTile
+      isoGrid: null,             // null => QUALITY[].isoGrid (tent window half-width, texels)
+      isoFitLow: -2,             // receiver slab the tight cascade must cover (world y)
+      isoFitHeight: 24,
+      isoFitStep: 2,             // extent quantum (world units): texel size only changes in steps
+      isoFitMargin: 1.5,
       envIntensity: 1.0,
       exposure: 1.0,             // scales sun + fill together (post.js may want <1)
       fillBoost: 1.0,            // scales ONLY the ambient/hemi fill: >1 = softer shadows
@@ -1232,6 +1959,16 @@ export class LightingRig {
       uCsmTune: { value: new THREE.Vector4(1.6, 0, 0, 0) },
       uCsmOrigin: { value: new THREE.Vector3() },
       uCsmIblTint: { value: new THREE.Vector3(1, 1, 1) },
+      uCsmWallFill: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uCsmWallTint: { value: new THREE.Vector3(1, 1, 1) },
+      uCsmKeyDirW: { value: new THREE.Vector3(0, 1, 0) },
+      uAoMap: { value: null },
+      uAoXf: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uAoParams: { value: new THREE.Vector4(0, 0, 0, 0.04) },
+      uAoTune: { value: new THREE.Vector4(0.1, 0.07, 1 / 2048, 0) },
+      uAoShape: { value: new THREE.Vector4(1, 0.6, 6, 0.2) },
+      uAoCover: { value: new THREE.Vector4(0.55, 0.5, 0.35, 0.5) },
+      uAoGrad: { value: new THREE.Vector4(0, 1, 0, 0) },
     };
     this._originMat = new THREE.Matrix4();
 
@@ -1248,6 +1985,75 @@ export class LightingRig {
     this._atlas = null;
     this._atlasTile = 0;
     this._hidden = [];
+
+    // ---- world AO height volume (see _aoUpdate) ------------------------------
+    this._aoTarget = null;
+    this._aoRes = 0;
+    this._aoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 200);
+    this._aoCam.up.set(0, 0, -1);
+    this._aoMat = new THREE.ShaderMaterial({
+      name: 'CSM.aoHeight',
+      uniforms: {},
+      vertexShader: AO_VERT,
+      fragmentShader: AO_FRAG,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.MaxEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      fog: false,
+      lights: false,
+    });
+    this._aoState = { S: 0, cx: 1e9, cz: 1e9, sig: NaN, frame: -999, sigFrame: -999 };
+    this._aoTargetB = null;
+    this._aoFloodMat = new THREE.ShaderMaterial({
+      name: 'CSM.aoFlood',
+      uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uInit: { value: 0 } },
+      vertexShader: AO_QUAD_VERT,
+      fragmentShader: AO_FLOOD_FRAG,
+      depthTest: false,
+      depthWrite: false,
+      fog: false,
+      lights: false,
+    });
+    const mkPass = (name, frag, uniforms) => new THREE.ShaderMaterial({
+      name, uniforms, vertexShader: AO_QUAD_VERT, fragmentShader: frag,
+      depthTest: false, depthWrite: false, fog: false, lights: false,
+    });
+    this._aoGroundMat = mkPass('CSM.aoGround', AO_GROUND_FRAG, {
+      tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uP: { value: new THREE.Vector4(1.2, 0.1, 8, 0) },
+      uP2: { value: new THREE.Vector4(4, 0, 0, 0) },
+    });
+    this._aoCopyMat = mkPass('CSM.aoCopy', AO_COPY_FRAG, {
+      tSrc: { value: null }, uTexel: { value: new THREE.Vector2() },
+    });
+    this._aoFloorMat = new THREE.ShaderMaterial({
+      name: 'CSM.aoFloor',
+      uniforms: { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } },
+      vertexShader: AO_VERT,
+      fragmentShader: AO_FLOOR_FRAG,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.MaxEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneFactor,
+      fog: false,
+      lights: false,
+    });
+    this._aoBlurMat = mkPass('CSM.aoBlur', AO_BLUR_FRAG, {
+      tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uDir: { value: new THREE.Vector2(1, 0) },
+    });
+    this._aoQuadScene = new THREE.Scene();
+    this._aoQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this._aoFloodMat);
+    this._aoQuad.frustumCulled = false;
+    this._aoQuadScene.add(this._aoQuad);
+    this._aoHidden = [];
+    this._aoCorner = new THREE.Vector3();
+    this._aoDir = new THREE.Vector3();
     this._patched = new Set();
 
     // ---- night light pools -------------------------------------------------
@@ -1340,6 +2146,7 @@ export class LightingRig {
     if (p.minPenumbra !== undefined) this.uniforms.uCsmSoft.value.x = p.minPenumbra;
     if (p.maxPenumbra !== undefined) this.uniforms.uCsmSoft.value.w = p.maxPenumbra;
     if (p.blockerSearchWorld !== undefined) this.uniforms.uCsmSoft.value.y = p.blockerSearchWorld;
+    this._applyAoParams();
     if (p.lampColor !== undefined || p.lampRadius !== undefined || p.lampIntensity !== undefined) {
       this._rebuildPools();
     }
@@ -1357,9 +2164,11 @@ export class LightingRig {
    *   2 shadow term (grey)   3 atlas UV (r=u, g=v, b=inside-cascade)
    *   4 sampled atlas depth  5 receiver depth in light space
    *   6 signed depth delta (red = occluded, green = lit, black = outside)
+   *   7 world-AO visibility, written as the FINAL colour (albedo-free)
+   *   8 world-AO height-map probe (r,g = fract(uv*4), b = top - y)
    */
   setDebugCascades(on) {
-    this._debug = (on === true) ? 1 : (typeof on === 'number' ? clamp(on | 0, 0, 6) : 0);
+    this._debug = (on === true) ? 1 : (typeof on === 'number' ? clamp(on | 0, 0, 8) : 0);
     this.uniforms.uCsmMisc.value.y = this._debug;
   }
 
@@ -1376,6 +2185,19 @@ export class LightingRig {
     if (!v) { this._externalSunDir = null; return; }
     if (!this._externalSunDir) this._externalSunDir = new THREE.Vector3();
     this._externalSunDir.copy(v).normalize();
+    this.uniforms.uCsmKeyDirW.value.copy(this._externalSunDir);
+  }
+
+  /**
+   * Directional wall fill (see csmWallFill in the GLSL). `amount` 0..1 is the
+   * daytime art blend (engine passes sky.js's artAmount every frame); the
+   * strengths come from opts.wallFillAway / wallFillToward / wallFillTint.
+   */
+  setWallFillAmount(amount) {
+    const o = this.opts, u = this.uniforms;
+    u.uCsmWallFill.value.set(o.wallFillAway || 0, o.wallFillToward || 0, clamp(amount, 0, 1), 0);
+    const t = o.wallFillTint || [1, 1, 1];
+    u.uCsmWallTint.value.set(t[0], t[1], t[2]);
   }
 
   /** The direction the rig is currently using (scene -> sun). Do not mutate. */
@@ -1431,6 +2253,7 @@ export class LightingRig {
     this._setNightGrade(nightT);
     this._updatePools(nightT);
     this._renderCascades(camera);
+    this._aoUpdate(camera);
 
     return {
       sunDir: this.sunDir,
@@ -1454,6 +2277,15 @@ export class LightingRig {
 
   dispose() {
     if (this._atlas) { this._atlas.dispose(); this._atlas = null; }
+    if (this._aoTarget) { this._aoTarget.dispose(); this._aoTarget = null; }
+    if (this._aoTargetB) { this._aoTargetB.dispose(); this._aoTargetB = null; }
+    this._aoMat.dispose();
+    this._aoFloodMat.dispose();
+    this._aoGroundMat.dispose();
+    this._aoBlurMat.dispose();
+    this._aoCopyMat.dispose();
+    this._aoFloorMat.dispose();
+    this._aoQuad.geometry.dispose();
     this._depthMat.dispose();
     if (this._poolMesh) { this._disposeInstanced(this._poolMesh); this._poolMesh = null; }
     if (this._glowMesh) { this._disposeInstanced(this._glowMesh); this._glowMesh = null; }
@@ -1498,16 +2330,36 @@ export class LightingRig {
       Math.max(0, this.opts.penumbraFloorPixels)
     );
     this.uniforms.uCsmTune.value.x = Math.max(0, this.opts.tapDensity);
+    this._applyAoParams();
     this._ensureAtlas(tile, count);
     this.markDirty();
   }
 
   _ensureAtlas(tile, count) {
-    const grid = (count <= 1) ? 1 : 2;
-    const size = tile * grid;
-    if (this._atlas && this._atlasTile === tile && this._atlasGrid === grid) return;
+    // Iso layout (orthographic camera): [ cascade 0: isoTile^2 | cascade 1: tile^2 ].
+    const q = QUALITY[this._quality];
+    const iso = !!(this.camera && this.camera.isOrthographicCamera) && this.opts.isoLayout !== false;
+    const isoTile = iso ? (this.opts.isoTile || q.isoTile || tile) : 0;
+    const grid = iso ? -1 : ((count <= 1) ? 1 : 2);
+    const key = tile + ':' + grid + ':' + isoTile + ':' + count;
+    if (this._atlas && this._atlasKey === key) return;
+    let W, H;
+    const rects = [];
+    if (iso) {
+      W = isoTile + (count > 1 ? tile : 0);
+      H = Math.max(isoTile, tile);
+      rects.push([0, 0, isoTile, isoTile]);
+      for (let i = 1; i < CSM_MAX_CASCADES; i++) rects.push([isoTile, 0, tile, tile]);
+    } else {
+      W = H = tile * grid;
+      for (let i = 0; i < CSM_MAX_CASCADES; i++) {
+        const gx = (grid === 1) ? 0 : (i % 2);
+        const gy = (grid === 1) ? 0 : ((i / 2) | 0);
+        rects.push([gx * tile, gy * tile, tile, tile]);
+      }
+    }
     if (this._atlas) this._atlas.dispose();
-    const rt = new THREE.WebGLRenderTarget(size, size, {
+    const rt = new THREE.WebGLRenderTarget(W, H, {
       minFilter: THREE.NearestFilter,
       magFilter: THREE.NearestFilter,
       format: THREE.RGBAFormat,
@@ -1521,27 +2373,27 @@ export class LightingRig {
     rt.texture.wrapS = rt.texture.wrapT = THREE.ClampToEdgeWrapping;
     rt.texture.generateMipmaps = false;
     this._atlas = rt;
+    this._atlasKey = key;
     this._atlasTile = tile;
     this._atlasGrid = grid;
+    this._iso = iso;
+    this._isoTile = isoTile;
+    this._rects = rects;
     this._atlasCleared = false;
     this.uniforms.uCsmAtlas.value = rt.texture;
-    this.uniforms.uCsmAtlasTexel.value.set(1 / size, 1 / size);
-
-    // atlas sub-rects (2x2 layout; cascade 3 unused at 3 cascades)
-    const s = 1 / grid;
+    this.uniforms.uCsmAtlasTexel.value.set(1 / W, 1 / H);
     for (let i = 0; i < CSM_MAX_CASCADES; i++) {
-      const gx = (grid === 1) ? 0 : (i % 2);
-      const gy = (grid === 1) ? 0 : ((i / 2) | 0);
-      this.uniforms.uCsmRect.value[i].set(gx * s, gy * s, s, s);
+      const r = rects[i];
+      this.uniforms.uCsmRect.value[i].set(r[0] / W, r[1] / H, r[2] / W, r[3] / H);
     }
+    // Shader switches: y = iso coverage mode, z = grid-filter half width (texels).
+    this.uniforms.uCsmTune.value.y = iso ? 1 : 0;
+    this.uniforms.uCsmTune.value.z = iso ? (this.opts.isoGrid || q.isoGrid || 0) : 0;
+    for (const c of this._cascades) { c.lastFrame = -999; c.lastCentre.set(9e9, 9e9, 9e9); }
   }
 
   _tileRect(i) {
-    const t = this._atlasTile;
-    const grid = this._atlasGrid;
-    const gx = (grid === 1) ? 0 : (i % 2);
-    const gy = (grid === 1) ? 0 : ((i / 2) | 0);
-    return [gx * t, gy * t, t, t];
+    return this._rects[i];
   }
 
   // -------------------------------------------------------------------------
@@ -1925,6 +2777,7 @@ export class LightingRig {
    * bands instead of refitting (and re-snapping) every frame.
    */
   _depthBounds(camera, out) {
+    if (camera.isOrthographicCamera) return this._depthBoundsOrtho(camera, out);
     const o = this.opts;
     const cap = Math.min(o.maxShadowDistance, camera.far);
     const yHi = o.maxCasterHeight;
@@ -1972,6 +2825,52 @@ export class LightingRig {
     return out;
   }
 
+  /**
+   * Orthographic variant of _depthBounds (the game camera is a true-isometric
+   * OrthographicCamera). Corner rays are PARALLEL (all along the view axis),
+   * starting from the four corners of the view rectangle on the camera plane.
+   * View depth may be NEGATIVE: engine.js sits the ortho camera at the old
+   * orbit distance and uses a negative near plane so tall towers never clip.
+   * The shadow distance caps are therefore applied RELATIVE to the near-most
+   * caster, not as absolute view depths.
+   */
+  _depthBoundsOrtho(camera, out) {
+    const o = this.opts;
+    const yHi = o.maxCasterHeight;
+    const yLo = -4;
+    const z = camera.zoom || 1;
+    const hw = (camera.right - camera.left) * 0.5 / z;
+    const hh = (camera.top - camera.bottom) * 0.5 / z;
+    camera.updateMatrixWorld();
+    const pos = this._v3b.setFromMatrixPosition(camera.matrixWorld);
+    const fwd = this._v3c.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    const right = this._v3a.set(1, 0, 0).applyQuaternion(camera.quaternion);
+    // Only the Y components matter for the slab test: y(t) = y0 + fwd.y * t.
+    const upV = this._center.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    let dMin = Infinity, dMax = -Infinity;
+    for (let s = 0; s < 4; s++) {
+      const sx = (s & 1) ? 1 : -1;
+      const sy = (s & 2) ? 1 : -1;
+      const y0 = pos.y + right.y * sx * hw + upV.y * sy * hh;
+      if (Math.abs(fwd.y) < 1e-5) continue;
+      const t1 = (yHi - y0) / fwd.y;       // ray starts on the camera plane (depth 0)
+      const t2 = (yLo - y0) / fwd.y;
+      dMin = Math.min(dMin, t1, t2);
+      dMax = Math.max(dMax, t1, t2);
+    }
+    const near = Number.isFinite(camera.near) ? camera.near : 0;
+    const far = Number.isFinite(camera.far) ? camera.far : 3000;
+    if (!isFinite(dMin) || dMax <= dMin) { dMin = near; dMax = far; }
+    dMin = Math.max(near, dMin);
+    dMax = Math.min(far, dMax, dMin + o.maxShadowDistance);
+    if (o.shadowDistance) dMax = Math.min(dMax, dMin + o.shadowDistance);
+    dMax = Math.max(dMax, dMin + 24);
+    out[0] = Math.floor(dMin / 8) * 8;
+    out[1] = Math.ceil(dMax / 32) * 32;
+    out[1] = Math.max(out[1], out[0] + 24);
+    return out;
+  }
+
   _camDist(camera) {
     return camera.position.distanceTo(this.opts.mapCenter);
   }
@@ -1999,7 +2898,20 @@ export class LightingRig {
     this._depthBounds(camera, this._bounds);
     const near = this._bounds[0];
     const far = this._bounds[1];
-    const splits = this._computeSplits(near, far, count, this.opts.splitLambda);
+    const ortho = !!camera.isOrthographicCamera;
+    let splits;
+    if (ortho) {
+      // Near may be <= 0 for the ortho camera: split a shifted, positive range.
+      // Every pixel has the same world footprint in ortho, so lean uniform.
+      const sh = 1 - near;
+      splits = this._computeSplits(1, far + sh, count, Math.min(0.5, this.opts.splitLambda));
+      for (let i = 0; i < splits.length; i++) splits[i] -= sh;
+    } else {
+      splits = this._computeSplits(near, far, count, this.opts.splitLambda);
+    }
+    const oz = camera.zoom || 1;
+    const ohw = ortho ? (camera.right - camera.left) * 0.5 / oz : 0;
+    const ohh = ortho ? (camera.top - camera.bottom) * 0.5 / oz : 0;
 
     // ---- fit every cascade -------------------------------------------------
     const L = this._shadowDir;
@@ -2037,42 +2949,102 @@ export class LightingRig {
     org.set(Math.round(camPos.x / 32) * 32, 0, Math.round(camPos.z / 32) * 32);
     this._originMat.makeTranslation(org.x, org.y, org.z);
 
-    const tile = this._atlasTile;
     const anyDirty = [];
+    // Iso layout: cascade 0 = tight rect over the screen, cascade 1 = the
+    // whole view (fallback for receivers above the fit height). See QUALITY.
+    const isoFit = !!(this._iso && ortho);
+    const effCount = isoFit ? Math.min(count, 2) : count;
 
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < effCount; i++) {
       const c = this._cascades[i];
-      const n = splits[i], f = splits[i + 1];
+      let n = splits[i], f = splits[i + 1];
+      if (isoFit) { n = near; f = far; }
       c.near = n; c.far = f;
-
-      // Optimal bounding sphere of the frustum slice (rotation invariant, so
-      // the fit does not change as the camera orbits => no shadow swim).
-      let cz = (a2 + 1) * (n + f) * 0.5;
-      let R;
-      if (cz > f) { cz = f; R = f * Math.sqrt(a2); }
-      else { R = Math.sqrt(f * f * a2 + (cz - f) * (cz - f)); }
-      R = Math.max(R, 1);
-
-      const texel = (2 * R) / tile;
-      c.radius = R;
-      c.texelWorld = texel;
-
-      // Sphere centre in world space, then snapped to the shadow texel grid.
-      this._center.copy(camPos).addScaledVector(camFwd, cz);
-      this._center.applyMatrix4(this._rotInv);
-      this._center.x = Math.round(this._center.x / texel) * texel;
-      this._center.y = Math.round(this._center.y / texel) * texel;
-      this._center.applyMatrix4(this._rot);
-
-      const back = R + this.opts.maxCasterHeight + 8;
-      const depthRange = back + R + this.opts.maxCasterHeight + 8;
-      c.depthRange = depthRange;
-
+      const tile = this._rects[i][2];
       const cam = c.cam;
-      cam.left = -R; cam.right = R; cam.top = R; cam.bottom = -R;
-      cam.near = 0.05; cam.far = depthRange;
-      cam.updateProjectionMatrix();
-      cam.position.copy(this._center).addScaledVector(L, back);
+      let texel, depthRange, fitKey;
+
+      if (isoFit && i === 0) {
+        // ---- tight light-space rectangle over what the iso camera shows ----
+        // Receivers = the screen's 4 corner rays clipped to the slab
+        // [isoFitLow, isoFitHeight]; casters = anything up to maxCasterHeight
+        // standing on them (the depth range extends toward the light).
+        const o = this.opts;
+        const yLo = o.isoFitLow, yHi = o.isoFitHeight;
+        const right = this._v3a.set(1, 0, 0).applyQuaternion(camera.quaternion);
+        const upV = this._isoUp || (this._isoUp = new THREE.Vector3());
+        upV.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        const P = this._isoP || (this._isoP = new THREE.Vector3());
+        let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+        const Ly = Math.max(0.05, L.y);
+        const fy = Math.abs(camFwd.y) > 1e-4 ? camFwd.y : -1e-4;
+        for (let s = 0; s < 8; s++) {
+          const sx = (s & 1) ? 1 : -1, sy = (s & 2) ? 1 : -1;
+          const yy = (s & 4) ? yHi : yLo;
+          P.copy(camPos).addScaledVector(right, sx * ohw).addScaledVector(upV, sy * ohh);
+          P.addScaledVector(camFwd, (yy - P.y) / fy);
+          const py = P.y;
+          P.applyMatrix4(this._rotInv);
+          x0 = Math.min(x0, P.x); x1 = Math.max(x1, P.x);
+          y0 = Math.min(y0, P.y); y1 = Math.max(y1, P.y);
+          z0 = Math.min(z0, P.z);
+          z1 = Math.max(z1, P.z + (o.maxCasterHeight - py) / Ly);
+        }
+        // Quantised extents: the texel size only changes in whole steps while
+        // zooming, never while panning (no shadow swim).
+        const qs = o.isoFitStep;
+        const hx = Math.ceil(((x1 - x0) * 0.5 + o.isoFitMargin) / qs) * qs;
+        const hy = Math.ceil(((y1 - y0) * 0.5 + o.isoFitMargin) / qs) * qs;
+        const tx = (2 * hx) / tile, ty = (2 * hy) / tile;
+        texel = Math.max(tx, ty);
+        const cx = Math.round(((x0 + x1) * 0.5) / tx) * tx;
+        const cy = Math.round(((y0 + y1) * 0.5) / ty) * ty;
+        const zTop = Math.ceil((z1 + 4) / 8) * 8;
+        depthRange = Math.ceil((zTop - z0 + 6) / 8) * 8;
+        c.radius = Math.max(hx, hy);
+        c.texelWorld = texel;
+        this._center.set(cx, cy, zTop).applyMatrix4(this._rot);
+        cam.left = -hx; cam.right = hx; cam.top = hy; cam.bottom = -hy;
+        cam.near = 0.05; cam.far = depthRange;
+        cam.updateProjectionMatrix();
+        cam.position.copy(this._center);
+        fitKey = hx * 7919 + hy * 13 + depthRange;
+      } else {
+        // Optimal bounding sphere of the frustum slice (rotation invariant, so
+        // the fit does not change as the camera orbits => no shadow swim).
+        let cz, R;
+        if (ortho) {
+          // Ortho slice is a box: centre mid-depth, radius = half its diagonal.
+          cz = (n + f) * 0.5;
+          R = Math.sqrt(ohw * ohw + ohh * ohh + (f - n) * (f - n) * 0.25);
+        } else {
+          cz = (a2 + 1) * (n + f) * 0.5;
+          if (cz > f) { cz = f; R = f * Math.sqrt(a2); }
+          else { R = Math.sqrt(f * f * a2 + (cz - f) * (cz - f)); }
+        }
+        R = Math.max(R, 1);
+
+        texel = (2 * R) / tile;
+        c.radius = R;
+        c.texelWorld = texel;
+
+        // Sphere centre in world space, then snapped to the shadow texel grid.
+        this._center.copy(camPos).addScaledVector(camFwd, cz);
+        this._center.applyMatrix4(this._rotInv);
+        this._center.x = Math.round(this._center.x / texel) * texel;
+        this._center.y = Math.round(this._center.y / texel) * texel;
+        this._center.applyMatrix4(this._rot);
+
+        const back = R + this.opts.maxCasterHeight + 8;
+        depthRange = back + R + this.opts.maxCasterHeight + 8;
+
+        cam.left = -R; cam.right = R; cam.top = R; cam.bottom = -R;
+        cam.near = 0.05; cam.far = depthRange;
+        cam.updateProjectionMatrix();
+        cam.position.copy(this._center).addScaledVector(L, back);
+        fitKey = R * 7919 + depthRange;
+      }
+      c.depthRange = depthRange;
       cam.up.copy(this._up);
       // NOT cam.lookAt(): these cameras have matrixAutoUpdate = false, and
       // Object3D.lookAt() calls updateWorldMatrix() first — which, with
@@ -2099,12 +3071,14 @@ export class LightingRig {
       const depthBias = this.opts.depthBiasTexels * texel;
       this.uniforms.uCsmParams.value[i].set(texel, depthRange, normalOffset, depthBias);
 
-      // Re-render this cascade if it moved, or on its stagger interval.
-      const moved = this._center.distanceToSquared(c.lastCentre) > (texel * texel * 0.25);
+      // Re-render this cascade if it moved or resized, or on its stagger interval.
+      const moved = this._center.distanceToSquared(c.lastCentre) > (texel * texel * 0.25)
+        || c.lastKey !== fitKey;
       const interval = (i === 0) ? 1 : this.opts.farCascadeInterval;
       const due = (this._frame - c.lastFrame) >= interval;
       if (moved || due) {
         c.lastCentre.copy(this._center);
+        c.lastKey = fitKey;
         c.lastFrame = this._frame;
         anyDirty.push(i);
       }
@@ -2118,8 +3092,10 @@ export class LightingRig {
       const lenNext = (i + 1 < count) ? (splits[i + 2] - splits[i + 1]) : 0;
       const hIn = (i > 0) ? 0.07 * Math.min(lenPrev, lenCur) : 0;
       const hOut = (i + 1 < count) ? 0.07 * Math.min(lenCur, lenNext) : 0;
-      const inA = (i > 0) ? splits[i] - hIn : -2;
-      const inB = (i > 0) ? splits[i] + hIn : -1;
+      // Cascade 0 has no fade-in band. -1e6 (not -2) so ortho view depths,
+      // which can be negative, still land in it.
+      const inA = (i > 0) ? splits[i] - hIn : -1e6;
+      const inB = (i > 0) ? splits[i] + hIn : -1e6 + 1;
       const outA = (i + 1 < count) ? splits[i + 1] - hOut : 1e9;
       const outB = (i + 1 < count) ? splits[i + 1] + hOut : 1e9;
       s.set(inA, inB, outA, outB);
@@ -2127,9 +3103,10 @@ export class LightingRig {
     for (let i = count; i < CSM_MAX_CASCADES; i++) {
       this.uniforms.uCsmSplits.value[i].set(1e9, 1e9 + 1, 1e9, 1e9);
     }
-    this.uniforms.uCsmMisc.value.z = far * 0.86;
+    this.uniforms.uCsmMisc.value.z = ortho ? near + (far - near) * 0.86 : far * 0.86;
     this.uniforms.uCsmMisc.value.w = far;
-    this.uniforms.uCsmCount.value = count;
+    if (isoFit) { this.uniforms.uCsmMisc.value.z = 1e6; this.uniforms.uCsmMisc.value.w = 1e6 + 1; }
+    this.uniforms.uCsmCount.value = effCount;
 
     if (anyDirty.length === 0) return;
 
@@ -2183,6 +3160,239 @@ export class LightingRig {
       renderer.setClearColor(prevClear, prevAlpha);
       renderer.autoClear = prevAutoClear;
       renderer.shadowMap.enabled = prevShadowEnabled;
+      renderer.setRenderTarget(prevTarget, prevActiveCube, prevActiveMip);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Internals — world-space AO height volume
+  // -------------------------------------------------------------------------
+
+  _applyAoParams() {
+    const o = this.opts;
+    const q = QUALITY[this._quality];
+    const taps = (o.worldAO === false) ? 0 : (q.aoTaps | 0);
+    const u = this.uniforms;
+    u.uAoParams.value.x = clamp(o.aoIndirect, 0, 1);
+    u.uAoParams.value.y = clamp(o.aoDirect, 0, 1);
+    // .z (taps) is only switched on once a height volume has been rendered.
+    this._aoTaps = taps;
+    if (!taps || !this._aoTarget) u.uAoParams.value.z = 0;
+    else u.uAoParams.value.z = taps;
+    u.uAoTune.value.y = Math.max(0.01, o.aoHeightTol);
+    u.uAoTune.value.w = clamp(o.aoFillSaturation, 0, 1);
+    u.uAoShape.value.set(Math.max(0.1, o.aoPower), Math.max(0.02, o.aoContact),
+      Math.max(0.1, o.aoGradHeight), clamp(o.aoGradDepth, 0, 0.9));
+    u.uAoCover.value.set(clamp(o.aoCover, 0, 1), clamp(o.aoCrease, 0, 1),
+      Math.max(0.02, o.aoCreaseDist), clamp(o.aoGap, 0, 1));
+    u.uAoGrad.value.set(clamp(o.aoWallGrad || 0, 0, 0.9), Math.max(0.2, o.aoWallGradPow || 1),
+      clamp(o.aoFillFloor || 0, 0, 0.95), clamp(o.aoFillKnee != null ? o.aoFillKnee : 0.15, 0.01, 0.5));
+    const aoSig = [o.aoRadius, o.aoTight, o.aoBroad, o.aoBroadRadius].join(',');
+    if (this._aoSig !== aoSig) { this._aoSig = aoSig; this._aoState.S = 0; }
+    if (q.aoRes && q.aoRes !== this._aoRes) this._aoState.S = 0;   // force a re-render
+  }
+
+  /**
+   * Keep the AO height volume over what the camera sees. Re-rendered only when
+   * the view leaves the region / changes scale, or when the static scene
+   * changes (a cheap transform signature, checked every 15 frames) — it is one
+   * extra scene pass, not a per-frame cost.
+   */
+  _aoUpdate(camera) {
+    const u = this.uniforms;
+    const q = QUALITY[this._quality];
+    if (!this._aoTaps || !q.aoRes || !camera || !this.renderer) {
+      u.uAoParams.value.z = 0;
+      return;
+    }
+    const st = this._aoState;
+    // Ground footprint of the view: the four frustum corners hit y = 0.
+    camera.updateMatrixWorld();
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    const c = this._aoCorner, d = this._aoDir;
+    for (let i = 0; i < 4; i++) {
+      const nx = (i & 1) ? 1 : -1, ny = (i & 2) ? 1 : -1;
+      c.set(nx, ny, -1).unproject(camera);
+      d.set(nx, ny, 1).unproject(camera).sub(c);
+      let t = (Math.abs(d.y) > 1e-6) ? -c.y / d.y : 0;
+      if (!(t > 0)) t = 0;
+      const x = c.x + d.x * Math.min(t, 1.0), z = c.z + d.z * Math.min(t, 1.0);
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    const R = Math.max(0.1, this.opts.aoRadius);
+    let ext = Math.max(maxX - minX, maxZ - minZ);
+    if (!isFinite(ext)) return;
+    // Coarse log steps so a zoom ease does not re-render every frame.
+    ext = clamp(ext * 1.3 + 4 * R, 48, 900);
+    const S = 48 * Math.pow(1.25, Math.ceil(Math.log(ext / 48) / Math.log(1.25)));
+    const cx = (minX + maxX) * 0.5, cz = (minZ + maxZ) * 0.5;
+
+    let dirty = (S !== st.S) || Math.abs(cx - st.cx) > S / 12 || Math.abs(cz - st.cz) > S / 12;
+    if (!dirty && this._frame - st.sigFrame >= 15) {
+      st.sigFrame = this._frame;
+      const sig = this._aoSignature();
+      if (sig !== st.sig) dirty = true;
+    }
+    if (dirty) {
+      const grid = S / 32;
+      st.S = S;
+      st.cx = Math.round(cx / grid) * grid;
+      st.cz = Math.round(cz / grid) * grid;
+      st.sig = this._aoSignature();
+      st.sigFrame = this._frame;
+      this._aoRender(q.aoRes);
+    }
+    if (!this._aoTarget) { u.uAoParams.value.z = 0; return; }
+    // Surface offset must clear the bilinear ramp of the height map (~1 texel),
+    // or every wall would sample its own roof edge and occlude itself.
+    const texel = st.S / this._aoRes;
+    u.uAoTune.value.x = texel;
+    u.uAoTune.value.z = 1 / this._aoRes;
+    // uv: u = (x - (cx - S/2)) / S ; v = ((cz + S/2) - z) / S  (camera up = -Z)
+    u.uAoXf.value.set(1 / st.S, -(st.cx - st.S / 2) / st.S, -1 / st.S, (st.cz + st.S / 2) / st.S);
+    u.uAoParams.value.z = this._aoTaps;
+    u.uAoParams.value.w = 0.04;
+  }
+
+  _aoSignature() {
+    let sig = 0;
+    this.scene.traverse((o) => {
+      if (!o.isMesh || !o.visible || !(o.castShadow || o.receiveShadow)) return;
+      const e = o.matrixWorld.elements;
+      sig += (o.id % 997) * 0.013 + e[12] * 1.7 + e[13] * 3.1 + e[14] * 0.37 + e[5] * 5.3
+        + (o.geometry ? o.geometry.id * 0.77 : 0) + (o.isInstancedMesh ? o.count * 0.19 : 0);
+    });
+    return Math.round(sig * 1000);
+  }
+
+  _aoRender(res) {
+    const renderer = this.renderer;
+    const st = this._aoState;
+    if (!this._aoTarget || this._aoRes !== res) {
+      if (this._aoTarget) this._aoTarget.dispose();
+      if (this._aoTargetB) this._aoTargetB.dispose();
+      const mk = (name) => {
+        const t = new THREE.WebGLRenderTarget(res, res, {
+          type: THREE.HalfFloatType,
+          format: THREE.RGBAFormat,
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          depthBuffer: false,
+          stencilBuffer: false,
+          generateMipmaps: false,
+        });
+        t.texture.name = name;
+        return t;
+      };
+      this._aoTarget = mk('CSM.aoHeightA');
+      this._aoTargetB = mk('CSM.aoHeightB');
+      this._aoRes = res;
+    }
+    const cam = this._aoCam;
+    const h = st.S * 0.5;
+    const top = (this.opts.maxCasterHeight || 80) + 40;
+    cam.left = -h; cam.right = h; cam.top = h; cam.bottom = -h;
+    cam.near = 1; cam.far = top + 60;
+    cam.position.set(st.cx, top, st.cz);
+    cam.lookAt(st.cx, 0, st.cz);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
+
+    const scene = this.scene;
+    const prevTarget = renderer.getRenderTarget();
+    const prevActiveCube = renderer.getActiveCubeFace();
+    const prevActiveMip = renderer.getActiveMipmapLevel();
+    const prevAutoClear = renderer.autoClear;
+    const prevBackground = scene.background;
+    const prevOverride = scene.overrideMaterial;
+    const prevClear = renderer.getClearColor(this._colB).getHex();
+    const prevAlpha = renderer.getClearAlpha();
+    const prevShadow = renderer.shadowMap.enabled;
+    // Static, opaque world only: dynamics (cars, people, clouds, the ghost)
+    // are flagged neither castShadow nor receiveShadow; transparent overlays
+    // (light pools, glows, precipitation) must not become "solid".
+    const hidden = this._aoHidden;
+    hidden.length = 0;
+    scene.traverse((o) => {
+      if (!o.visible) return;
+      if (o.isMesh || o.isLine || o.isPoints || o.isSprite) {
+        const m = o.material;
+        const transp = m && !Array.isArray(m) && m.transparent && !m.depthWrite;
+        if (!o.isMesh || !(o.castShadow || o.receiveShadow) || transp) { o.visible = false; hidden.push(o); }
+      }
+    });
+    try {
+      renderer.shadowMap.enabled = false;
+      renderer.autoClear = false;
+      scene.background = null;
+      scene.overrideMaterial = this._aoMat;
+      renderer.setClearColor(0x000000, 0);
+      renderer.setRenderTarget(this._aoTarget);
+      renderer.clear(true, false, false);
+      renderer.render(scene, cam);
+      // Floor under each column's underside (AO_FLOOR_FRAG): copy A -> B, then
+      // a second MAX-blended scene pass into B's alpha that reads A.
+      const cm = this._aoCopyMat;
+      this._aoQuad.material = cm;
+      cm.uniforms.tSrc.value = this._aoTarget.texture;
+      cm.uniforms.uTexel.value.set(1 / res, 1 / res);
+      renderer.setRenderTarget(this._aoTargetB);
+      renderer.render(this._aoQuadScene, cam);
+      cm.uniforms.tSrc.value = null;
+      const flm = this._aoFloorMat;
+      flm.uniforms.tSrc.value = this._aoTarget.texture;
+      flm.uniforms.uTexel.value.set(1 / res, 1 / res);
+      scene.overrideMaterial = flm;
+      renderer.render(scene, cam);
+      flm.uniforms.tSrc.value = null;
+      for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
+      hidden.length = 0;
+      scene.overrideMaterial = prevOverride;
+      // Flood "exposed" in from open air (see AO_FLOOD_FRAG): init + N steps.
+      const fm = this._aoFloodMat;
+      this._aoQuad.material = fm;
+      fm.uniforms.uTexel.value.set(1 / res, 1 / res);
+      const texel = st.S / res;
+      const steps = clamp(Math.ceil(Math.max(0, this.opts.aoFloodWorld) / texel), 2, 32);
+      let src = this._aoTargetB, dst = this._aoTarget;
+      for (let i = 0; i <= steps; i++) {
+        fm.uniforms.uInit.value = (i === 0) ? 1 : 0;
+        fm.uniforms.tSrc.value = src.texture;
+        renderer.setRenderTarget(dst);
+        renderer.render(this._aoQuadScene, cam);
+        const t = src; src = dst; dst = t;
+      }
+      fm.uniforms.tSrc.value = null;
+      // Ground AO into B (map space), then a height-aware blur, H then V.
+      const quad = this._aoQuad;
+      const pass = (mat) => {
+        quad.material = mat;
+        mat.uniforms.tSrc.value = src.texture;
+        mat.uniforms.uTexel.value.set(1 / res, 1 / res);
+        renderer.setRenderTarget(dst);
+        renderer.render(this._aoQuadScene, cam);
+        mat.uniforms.tSrc.value = null;
+        const t = src; src = dst; dst = t;
+      };
+      const gm = this._aoGroundMat;
+      gm.uniforms.uP.value.set(Math.max(0.2, this.opts.aoRadius), texel, (res >= 2048) ? 8 : 6, clamp(this.opts.aoTight || 0, 0, 1));
+      gm.uniforms.uP2.value.set(Math.max(1, this.opts.aoBroadRadius || 4), clamp(this.opts.aoBroad || 0, 0, 1), 0, 0);
+      pass(gm);
+      this._aoBlurMat.uniforms.uDir.value.set(1, 0);
+      pass(this._aoBlurMat);
+      this._aoBlurMat.uniforms.uDir.value.set(0, 1);
+      pass(this._aoBlurMat);
+      quad.material = this._aoFloodMat;
+      this.uniforms.uAoMap.value = src.texture;
+    } finally {
+      for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
+      hidden.length = 0;
+      scene.overrideMaterial = prevOverride;
+      scene.background = prevBackground;
+      renderer.setClearColor(prevClear, prevAlpha);
+      renderer.autoClear = prevAutoClear;
+      renderer.shadowMap.enabled = prevShadow;
       renderer.setRenderTarget(prevTarget, prevActiveCube, prevActiveMip);
     }
   }

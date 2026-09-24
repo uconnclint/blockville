@@ -1,23 +1,26 @@
 // src/render/water.js — §3.3 of CONTRACTS-RENDER.md
 //
-// A real water surface for Blockville. Owns EVERYTHING at the water plane:
-//   * a bright turquoise→deep-blue surface at y = -0.35 over every WATER tile
-//     and every bridge tile,
-//   * a sculpted sea bed underneath it (so the surface can be translucent and
-//     you can actually see the shallows / a sandy shelf / caustics),
-//   * depth colour + foam driven by a baked distance-to-shore DataTexture
+// Stylised voxel-city water for Blockville (art target: ref05's hotel pool in
+// tools/rendertest/ART-DIRECTION.md). Owns EVERYTHING at the water plane:
+//   * a flat, bright pool-blue surface at y = -2.6 (recessed ~3.3 below the
+//     pool rim; round 4) over every WATER tile, every bridge tile and an
+//     apron of open sea past the map edge,
+//   * depth read as stepped TERRACES (pale band -> shallow -> pool blue ->
+//     open water) quantised on a voxel grid, all still bright and saturated,
+//   * drifting light/dark axis-aligned slabs and little white wave dashes,
+//   * a crisp, gently breathing white foam line + two soft surf lines that
+//     follow the land's REAL (warped) edge via a baked signed distance field
 //     (NO scene-depth-buffer read — the post stack owns the depth buffer),
-//   * 3 scrolling procedural normal layers + 3 gerstner-ish vertex waves,
-//   * fresnel sky/env reflection and a sharp sun glint that feeds bloom,
-//   * an animated, surging shoreline foam band,
-//   * rain ripple rings.
+//   * square rain ripples, sunset tint, deep-blue night with city-light streaks.
+//   * an optional sculpted sea bed (engine.js uses terrain.js's instead).
 //
 // Everything is procedural: no assets, no npm, no build step, no addons.
 //
-// Public API (see the bottom of the file for the full list):
+// Public API:
 //   const water = new WaterFX(scene, opts);
 //   water.buildSurface(state);
 //   water.refreshTiles(state, x, z);
+//   water.setLandWarp(fn, step);     // optional: follow terrain.js's warped bank
 //   water.update(dt, ctx);
 //   water.dispose();
 //   import { selfTest } from './water.js';
@@ -31,12 +34,70 @@ import * as THREE from '../../vendor/three.module.js';
 const TILE = 8;
 const N_DEFAULT = 80;
 const CHUNK = 16;
-const WATER_Y = -0.35;
+// Round 4: the surface sits a good 2.5 units below the pool rim, so the far
+// walls read as tall banded basin faces (ref05's hotel pool) instead of a thin
+// outline. life.js (boats) mirrors this; engine.js turns terrain's seabed off.
+const WATER_Y = -2.6;            // round 11: -1.85 -> -2.6, taller pool walls (life.js agrees)
 const T_WATER = 1;
 const T_SAND = 2;
 
 const SQRT2 = Math.SQRT2;
 const INF = 1e9;
+
+// ---- the voxel basin (ref05's hotel pool: water recessed below a hard rim) --
+// Every SAND tile becomes a raised sand deck (same 0.5 height as the lot
+// plinths), a cream coping lip runs along every deck edge that meets water,
+// and every land/water tile edge gets a vertical pool wall from below the
+// surface up to the rim — so the water reads as RECESSED, and the far walls
+// show their saturated blue inner faces to the camera exactly like ref05.
+const DECK_Y = 0.5;             // sand deck top (lot plinths are 0.5 too)
+const LIP = 0.24;               // coping lip above the deck
+// Round 7: a wider light-CONCRETE coping (ref kerbs #dcd8cc) between the sand
+// and the water — the cream one read as more sand at game zoom.
+const COPE_W = 1.7;             // coping width
+const WET_SAND = 1.1;           // damp-sand strip on the deck beside the coping
+const COPE_FACE = 0.2;          // pale coping face at the top of every deck wall
+// Round 5: the two visible wall orientations get their own tone (ref05: lit
+// face #0086d0, shaded face #004d95) — the lighting alone left both one navy.
+// Keyed by the wall's outward normal; +z faces screen-left (lit), +x faces
+// screen-right (shade) under the default iso camera, like every building.
+// Round 8: px 0.58 -> 0.8 (the shade face went navy); both faces now also
+// carry WALL_GLOW (self-lit share of their colour, see bankMaterial).
+const WALL_TONE = { px: 1.0, pz: 0.72, nx: 0.86, nz: 0.80 };   // round 14: the shade pair reads darker (ref05 #0087cc lit / #004d95 shade)   // round 11: both near-equal like ref05 (#0087c9 / #008bd4)
+const WALL_GLOW = 0.65;
+const GROUND_TOP = 0.03;        // wall top where the bank is plain ground
+const WALL_SINK = 0.45;          // walls run this far below the surface
+const WALL_PANEL = 2.0;          // round 13: vertical tile columns only (critic r12: grout grid too strong)
+const WALL_SEAM = 0.12;          // darker seam between wall tile columns
+const WET_BAND = 0.18;           // round 13: bright wet waterline strip just above the surface
+const WALL_EPS = 0.02;          // walls sit just inside the water tile
+const SIDE_BOT = -0.06;         // deck outer faces tuck under the ground
+const EDGE_BOT = -3.25;         // map-edge cut face: terrain's borderY (-3.2) sea
+const BANK_COLORS = {
+  deckTop: 0xf7d9a0,            // ref05 deck #fad79d
+  deckSide: 0xd9a86a,           // ref05's darker deck edge band
+  deckWet: 0xe6b677,            // round 11: damp sand along the coping (wet-edge step)
+  lawnTop: 0x9ccb48,            // round 7: raised lawn beds on the outer sand ring
+  lawnSide: 0x6d9a2e,
+  hedge: 0x5fae34, hedgeTop: 0x86c83f, hedgeBase: 0x3f8a2a,
+  copeTop: 0xdcd8cc,            // light concrete coping (ART-DIRECTION kerb colour)
+  copeSide: 0xa9a293,           // its outer faces: a crisp grey edge on the sand
+  copeFace: 0xe6e2d6,           // its face over the water, capping the wall
+  wall: 0x0674be,               // round 14: top tile row; lower rows step darker (ROW_K)               // ref05 wall #0087c9..#008bd4 (lit side) — pool tiles
+  wallAlt: 0x0878c2,            // alternate tile column (subtle)
+  wallSeam: 0x0664ac,           // seams between the wall tiles (round 13: softer)
+  wallWet: 0xd6f6ff,             // round 14: a bright foam edge line where the water meets the wall            // round 13: bright waterline strip where the water laps the wall
+  wallGrout: 0x044e92,          // shadow line tucked under the coping lip
+  pier: 0xdcd8cc,               // bridge piers: light concrete like the kerbs
+  pierSide: 0xb9b4a6,
+  wallTop: 0x6fcdef,            // thin light band where a grass bank meets the wall
+  // floats
+  red: 0xf2463a, white: 0xfdfdf8, yellow: 0xffc62e, blue: 0x2e7cf0, orange: 0xff8a2a,
+  lounge: 0x3fb8e8,
+  seaEdge: 0x1aa6ff,
+};
+const MAX_FLOATS = 18;
+const MAX_PARASOLS = 24;
 
 // ---------------------------------------------------------------------------
 // Small deterministic noise helpers (build-time only, never per frame)
@@ -147,7 +208,7 @@ function makeWaveNormalTexture(size = 256, strength = 2.1) {
 // Shaders
 // ---------------------------------------------------------------------------
 
-// Shared GLSL: shore-field sampling + gerstner waves.
+// Shared GLSL for the (optional) sea bed: shore-field sampling + a gentle swell.
 const COMMON_GLSL = /* glsl */`
 uniform sampler2D uShoreMap;
 uniform vec2  uWorldSize;
@@ -155,59 +216,52 @@ uniform float uTime;
 uniform float uWaveAmp;
 uniform float uWaveScale;
 
-// R = normalised distance from the shoreline (0 land .. 1 offshore)
-// G = water coverage mask (bilinear -> soft edge)
-// B = beachiness (nearest land is sand)
-// A = low-frequency per-water-body variation
+// R = coarse distance from the TRUE waterline (0 shore .. 1 = far tiles out)
+// G = water coverage mask (tile based)
+// B = fine SIGNED distance from the true waterline, world units, remapped
+// A = beachiness (nearest land is sand)
 vec4 shoreAt(vec2 wxz) {
   return texture2D(uShoreMap, wxz / uWorldSize);
 }
 
-// Three directional swells. Returns height in .x and the XZ gradient in .yz
-// so the caller gets an analytic normal for free.
 vec3 swell(vec2 p, float t) {
   vec3 r = vec3(0.0);
-  // dir, wavelength(world units), amplitude, speed
   const vec2 d0 = vec2(0.86, 0.51);
   const vec2 d1 = vec2(-0.42, 0.91);
-  const vec2 d2 = vec2(0.71, -0.71);
   float k0 = 6.2831853 / (46.0 * uWaveScale);
   float k1 = 6.2831853 / (27.0 * uWaveScale);
-  float k2 = 6.2831853 / (15.0 * uWaveScale);
-  float a0 = 0.062, a1 = 0.040, a2 = 0.022;
   float ph0 = dot(d0, p) * k0 + t * 0.85;
   float ph1 = dot(d1, p) * k1 - t * 1.15;
-  float ph2 = dot(d2, p) * k2 + t * 1.75;
-  r.x  = a0 * sin(ph0) + a1 * sin(ph1) + a2 * sin(ph2);
-  vec2 g = a0 * k0 * cos(ph0) * d0 + a1 * k1 * cos(ph1) * d1 + a2 * k2 * cos(ph2) * d2;
-  r.yz = g;
+  r.x  = 0.05 * sin(ph0) + 0.03 * sin(ph1);
+  r.yz = 0.05 * k0 * cos(ph0) * d0 + 0.03 * k1 * cos(ph1) * d1;
   return r;
 }
 `;
 
+// ---------------------------------------------------------------------------
+// Surface shader — stylised "voxel pool" water.
+//
+// Art target (tools/rendertest/ART-DIRECTION.md, ref05's hotel pool): a flat,
+// clean, saturated pool blue with lighter axis-aligned slabs drifting across
+// it, a few little white "wave dash" marks, lighter shallows and a crisp white
+// foam line hugging the shore. No normal maps, no noise, no fresnel mirror, no
+// navy depths — every tone is authored, and every edge is a hard, anti-aliased
+// step on either a voxel grid or the baked shore-distance field.
+// ---------------------------------------------------------------------------
+
 const SURFACE_VERT = /* glsl */`
 #include <common>
 #include <fog_pars_vertex>
-${COMMON_GLSL}
 
 varying vec3 vWorld;
-varying vec3 vSwellN;
-varying float vCrest;
 
 void main() {
   vec3 transformed = position;
-  vec4 sh = shoreAt(position.xz);
-  // Waves flatten as they run into the shallows (and never poke above y=0).
-  float damp = smoothstep(0.02, 0.42, sh.r);
-  vec3 s = swell(position.xz, uTime);
-  transformed.y += s.x * uWaveAmp * damp;
-  vSwellN = normalize(vec3(-s.yz.x * uWaveAmp * damp, 1.0, -s.yz.y * uWaveAmp * damp));
-  vCrest = clamp(s.x / 0.12 * 0.5 + 0.5, 0.0, 1.0) * damp;
-
   vec4 wp = modelMatrix * vec4(transformed, 1.0);
   vWorld = wp.xyz;
   vec4 mvPosition = viewMatrix * wp;
   gl_Position = projectionMatrix * mvPosition;
+  // @CSM_VERTEX_MAIN
   #include <fog_vertex>
 }
 `;
@@ -215,55 +269,56 @@ void main() {
 const SURFACE_FRAG = /* glsl */`
 #include <common>
 #include <fog_pars_fragment>
-${COMMON_GLSL}
 
-uniform sampler2D uNormalMap;
+uniform sampler2D uShoreMap;
+uniform vec2  uWorldSize;
+uniform float uTime;
+uniform float uNight;
+uniform float uRain;
+uniform float uQuality;
+
 uniform vec3  uSunDir;
 uniform vec3  uSunColor;
 uniform vec3  uSkyTop;
-uniform vec3  uSkyHorizon;
-uniform vec3  uShallowColor;
-uniform vec3  uMidColor;
-uniform vec3  uDeepColor;
-uniform vec3  uBeachColor;
+
+uniform vec3  uEdgeColor;     // pale band hugging the shore
+uniform vec3  uShallowColor;  // first terrace
+uniform vec3  uMidColor;      // the pool blue
+uniform vec3  uDeepColor;     // open water (still bright)
+uniform vec3  uSeaColor;      // the open sea: matches terrain.js's off-map sea
+uniform vec3  uPatchColor;    // the light turquoise step hugging the pool wall
+uniform vec3  uWallLine;      // hard line where the water meets a pool wall
 uniform vec3  uFoamColor;
-uniform float uRain;
-uniform float uNight;
-uniform float uQuality;
-uniform float uGlint;
-uniform float uGlintGain;
-uniform float uGlintRough;
-uniform float uOpacityDeep;
-uniform float uOpacityShore;
-uniform float uDetail;
-uniform float uFoamWidth;
-uniform float uEnvIntensity;
-uniform float uSkyGain;
+uniform vec3  uNightTint;
+uniform vec3  uShadowTint;    // what a fully shadowed pixel is multiplied by
+
+uniform float uGain;          // overall exposure trim for the body colours
 uniform float uNightFloor;
-uniform float uShoreWobble;
+uniform float uFar;           // world units the coarse field spans
+uniform vec2  uFine;          // (min, range) of the fine signed field, world units
+uniform vec3  uDark2Color;    // multiplier for a darker patch step
+uniform vec3  uCausticHi;     // pale cyan of the brightest overlapping patches
+uniform vec2  uDepth;         // (start, end) world units of the shallow -> deep ramp
+uniform vec4  uPatch;         // patch cell sizes: layer A (xy), layer B (zw), world units
+uniform vec3  uPatchMix;      // (tone strength, drift speed u/s, -)
+uniform vec4  uSpark;         // specular flecks: (strength, density, cell size, -)
+uniform vec4  uFoam;          // (wall line width, -, lap breathing reach, lap strength)
+uniform float uEdgeFade;      // world units over which open sea meets the map edge
+uniform float uTileSize;      // world units per map tile
+uniform vec4  uFloatPos[${MAX_FLOATS}];  // (x, z, half size, alive) per bobbing float
+uniform vec4  uWallShade;     // far-wall shadow band: (-x width, -z width, -x strength, -z strength)
+uniform vec3  uShadeColor;    // multiplier of the darkest shadow-band step
+uniform vec2  uNearRamp;      // (start, end) world units of the near-shore shallow -> deep ramp
+uniform vec4  uTerr;         // round 14: terrace boundaries (world units from the wall): shallow|mid|deep|core|abyss
+uniform vec2  uTerr2;        // (patch push in world units, -)
+uniform vec3  uCoreColor;    // round 14: 4th depth step
+uniform vec3  uAbyssColor;   // round 14: the centre of big lakes
+
 uniform float uEmitStrength;
-uniform vec2  uEmitParams;      // (march step in world units, decay)
+uniform vec2  uEmitParams;
 uniform sampler2D uEmitMap;
-uniform float uHorizonLift;
-uniform float uHazeRefl;
-uniform float uGrazePow;
-uniform float uGlintRough2;
-uniform float uSpecScale;
-uniform float uGlintSlope;
-uniform float uSparkFloor;      // broad off-peak sheen under the GGX lobe
-uniform vec3  uSparkGate;       // (crest gate lo, hi, gain) — sparkle density
-uniform float uSwellSpark;      // 0 = sparkle anywhere, 1 = only on swell crests
-uniform float uGlintFar;        // how much of the glint survives at distance
-uniform float uMieGain;         // reflected forward-scatter halo around the sun
-uniform float uFoamGate;        // foam dies past this RAW shore-field distance
-uniform float uWobbleFade;      // shore-field distance the wobble fades out over
-#ifdef USE_ENVCUBE
-uniform samplerCube uEnvMap;
-#endif
 
 varying vec3 vWorld;
-varying vec3 vSwellN;
-varying float vCrest;
 
 float hash21(vec2 p) {
   p = fract(p * vec2(127.1, 311.7));
@@ -271,273 +326,373 @@ float hash21(vec2 p) {
   return fract(p.x * p.y);
 }
 
-// One layer of rain ripple rings. Returns xy = normal perturbation, z = rim.
-vec3 rippleLayer(vec2 wp, float t, float scale, float seed, float density) {
-  vec2 p = wp / scale + seed;
-  vec2 cell = floor(p);
-  vec2 f = fract(p);
-  float hA = hash21(cell + seed);
-  float hB = hash21(cell + seed + 19.37);
-  float hC = hash21(cell + seed + 41.11);
-  if (hA > density) return vec3(0.0);
-  vec2 c = vec2(hB, hC) * 0.56 + 0.22;
-  vec2 d = f - c;
-  float dist = length(d) + 1e-5;
-  float phase = fract(t * 1.35 + hB * 2.71);
-  float r = phase * 0.40;
-  float env = (1.0 - phase) * smoothstep(0.0, 0.10, phase);
-  float band = dist - r;
-  float w = sin(band * 78.0) * exp(-abs(band) * 20.0) * env;
-  return vec3(normalize(d) * w, max(0.0, -w) * env);
+float vnoise2(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash21(i), b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0)), d = hash21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// Analytic sky radiance in a direction. This is what the fresnel term mixes
-// toward, so it has to be genuinely BRIGHT at the horizon — a grazing-angle
-// water pixel is 60-90 % mirror and must read as sky, not as tinted depth.
-vec3 skyLook(vec3 dir) {
-  float up = clamp(dir.y, 0.0, 1.0);
-  // uSkyHorizon arrives as the fog/haze colour, which is deliberately dull;
-  // lift it so the reflected horizon band is the brightest part of the lake.
-  vec3 c = mix(uSkyHorizon * uHorizonLift, uSkyTop, pow(up, 0.42));
-  // Mie forward-scatter halo + the sun disc itself. Reflected through fresnel
-  // this is the classic glitter path running from the sun to the viewer.
-  // The halo used to be pow(sd,7)*0.42 — a lobe that wide covers most of the
-  // upper hemisphere, so at a 63-degree noon sun EVERY water pixel reflected a
-  // slab of near-sun sky. Measured: it was worth ~0.05 linear luminance across
-  // the whole lake on its own, which is the entire deep-water budget.
-  float sd = max(dot(dir, uSunDir), 0.0);
-  float above = smoothstep(-0.06, 0.10, uSunDir.y);
-  c += uSunColor * (pow(sd, 11.0) * uMieGain + pow(sd, 220.0) * 5.0) * above;
-#ifdef USE_ENVCUBE
-  vec3 e = textureCube(uEnvMap, dir).rgb;
-  c = mix(c, e, uEnvIntensity);
-#endif
-  return c * uSkyGain;
+// 1.0 where the tile at integer tile coords tc is land (shore map G channel).
+float landAt(vec2 tc) {
+  return 1.0 - step(0.5, texture2D(uShoreMap, (tc + 0.5) * uTileSize / uWorldSize).g);
 }
 
-// Normalised Blinn-Phong lobe: peak value scales with the exponent so a sharp
-// lobe is genuinely HDR (>> 1.0) and reaches the bloom threshold.
-float specLobe(float NdH, float e) {
-  return pow(NdH, e) * (e + 8.0) * 0.0075;
+// Distance to the nearest land tile measured the voxel way: straight along
+// each wall and SQUARE around every corner (the Euclidean shore field rounds
+// corners off, which reads as airbrushed next to the hard-edged basin).
+float boxShore(vec2 p) {
+  vec2 tc = floor(p / uTileSize);
+  vec2 f = p - tc * uTileSize;
+  vec2 g = uTileSize - f;
+  float d = 1e3;
+  if (landAt(tc + vec2(-1.0, 0.0)) > 0.5) d = min(d, f.x);
+  if (landAt(tc + vec2( 1.0, 0.0)) > 0.5) d = min(d, g.x);
+  if (landAt(tc + vec2(0.0, -1.0)) > 0.5) d = min(d, f.y);
+  if (landAt(tc + vec2(0.0,  1.0)) > 0.5) d = min(d, g.y);
+  if (landAt(tc + vec2(-1.0, -1.0)) > 0.5) d = min(d, max(f.x, f.y));
+  if (landAt(tc + vec2( 1.0, -1.0)) > 0.5) d = min(d, max(g.x, f.y));
+  if (landAt(tc + vec2(-1.0,  1.0)) > 0.5) d = min(d, max(f.x, g.y));
+  if (landAt(tc + vec2( 1.0,  1.0)) > 0.5) d = min(d, max(g.x, g.y));
+  return d;
 }
 
-// GGX / Trowbridge-Reitz. This replaces the Blinn-Phong spike for the sun
-// glint, and the reason is measured, not aesthetic: Blockville's noon sun sits
-// at 63 degrees elevation while the waterfront/region cameras sit at 10-15, so
-// the half-vector is ~27 degrees off vertical over the whole lake. The old
-// pow(NdH, 180..2200) lobe is numerically ZERO there — cranking uGlintGain by
-// 1000x was needed before a single pixel crossed 245/255, which is why the
-// reviewers found "not a single specular glint" at a 63-degree sun.
-//
-// GGX has heavy tails. Off-peak it returns a soft, cheap sheen; on the wave
-// facets that DO line up it spikes to an HDR value that clears the bloom
-// threshold. That is what turns the sun track into sparkles rather than either
-// nothing (Blinn-Phong) or a smeared blob (a low exponent everywhere).
-float ggxD(float NdH, float a) {
-  float a2 = a * a;
-  float d = NdH * NdH * (a2 - 1.0) + 1.0;
-  return a2 / max(3.14159265 * d * d, 1e-7);
+// Round 12: the same voxel distance, split by which side the wall is on.
+// The iso camera looks from +x+z, so walls on land at -x / -z are the FAR walls
+// (their inner faces are visible, and they shade the water at their foot, like
+// the dark band under ref05's top-left pool wall); walls on land at +x / +z are
+// the NEAR walls, hidden behind the coping, where the pool is shallow and pale.
+// Returns (far -x, far -z, near +x, near +z) distances; diagonal land tiles
+// wrap each band squarely round the corner. The mixed diagonals (+x-z, -x+z)
+// are the tips of far walls, so they only feed the far bands (a pale near
+// band wrapped round them read as little glyph boxes under the far walls).
+// Round 13: the camera now rotates in 90-degree snaps (engine.js, and the
+// iso shots pick the snap from the sun), so "far" and "near" come from the
+// live view instead of being fixed to +x+z. s = sign of the toward-camera
+// direction on the ground (each component +-1): land at -s is FAR.
+vec4 boxShoreDir(vec2 p, vec2 s) {
+  vec2 tc = floor(p / uTileSize);
+  vec2 f0 = p - tc * uTileSize;
+  vec2 g0 = uTileSize - f0;
+  vec2 f = vec2(s.x > 0.0 ? f0.x : g0.x, s.y > 0.0 ? f0.y : g0.y);   // to the far edge
+  vec2 g = vec2(s.x > 0.0 ? g0.x : f0.x, s.y > 0.0 ? g0.y : f0.y);   // to the near edge
+  vec4 d = vec4(1e3);
+  float lxm = landAt(tc + vec2(-s.x, 0.0)), lxp = landAt(tc + vec2(s.x, 0.0));
+  float lzm = landAt(tc + vec2(0.0, -s.y)), lzp = landAt(tc + vec2(0.0, s.y));
+  float lmm = landAt(tc - s), lpm = landAt(tc + vec2(s.x, -s.y));
+  float lmp = landAt(tc + vec2(-s.x, s.y)), lpp = landAt(tc + s);
+  if (lxm > 0.5) d.x = min(d.x, f.x);
+  if (lmm > 0.5) { d.x = min(d.x, max(f.x, f.y)); d.y = min(d.y, max(f.x, f.y)); }
+  if (lmp > 0.5) d.x = min(d.x, max(f.x, g.y));
+  if (lzm > 0.5) d.y = min(d.y, f.y);
+  if (lpm > 0.5) d.y = min(d.y, max(g.x, f.y));
+  if (lxp > 0.5) d.z = min(d.z, g.x);
+  if (lpp > 0.5) { d.z = min(d.z, max(g.x, g.y)); d.w = min(d.w, max(g.x, g.y)); }
+  if (lzp > 0.5) d.w = min(d.w, g.y);
+  return d;
+}
+
+// Distance from p to the NEAR shore, measured toward the camera (world +x+z,
+// straight down the screen): sphere-traced through the coarse shore field.
+// Small near the bottom edges of a lake, large under its far walls — the
+// shallow -> deep axis of ref05's pool (pale at the near edge and the step,
+// deepest blue under the far walls).
+float nearShore(vec2 p, vec2 dir) {
+  float s = 0.0;
+  for (int i = 0; i < 16; i++) {
+    float d = texture2D(uShoreMap, (p + dir * s) / uWorldSize).r * uFar;
+    if (d < 0.75 || s > 96.0) break;
+    s += max(d * 0.92, 1.0);
+  }
+  return s;
+}
+
+// One layer of ref05's pool patchwork: one axis-aligned rectangle per cell
+// of a drifting grid (cell size S world units per axis). Sizes and offsets are
+// whole voxels (1 world unit), so overlapping layers build blocky compound
+// tiles. Returns +coverage (a lighter patch), -coverage (darker) or 0.
+float patchLayer(vec2 p, vec2 S, vec2 drift, float salt, float occ, float aaW) {
+  vec2 q = p + drift;
+  vec2 c = floor(q / S);
+  vec2 f = q - c * S;
+  float h0 = hash21(c + salt);
+  if (h0 > occ) return 0.0;
+  // depth, statistically: near the rim a patch leans light, deep ones dark
+  vec2 cw = (c + 0.5) * S - drift;
+  float dcell = texture2D(uShoreMap, cw / uWorldSize).r * uFar;
+  // Round 13 (critic r12: "bias the patches darker away from the walls"):
+  // deep cells are almost always dark, and a patch whose centre is close to a
+  // wall is never dark — the shallows by every wall stay light cyan.
+  float pLight = mix(0.85, 0.10, smoothstep(uDepth.x, uDepth.y, dcell));
+  float sgn = hash21(c + salt + 29.3) < pLight ? 1.0 : -1.0;
+  if (dcell < 6.0) sgn = 1.0;
+  vec2 h1 = vec2(hash21(c + salt + 17.3), hash21(c + salt + 41.9));
+  vec2 h2 = vec2(hash21(c + salt + 73.1), hash21(c + salt + 5.7));
+  vec2 sz = max(vec2(2.0), floor(S * (0.45 + 0.55 * h1) + 0.5));
+  vec2 lo = floor((S - sz) * h2 + 0.5);
+  vec2 hi = lo + sz;
+  vec2 cov = smoothstep(lo - aaW, lo + aaW, f) * (1.0 - smoothstep(hi - aaW, hi + aaW, f));
+  return sgn * cov.x * cov.y;
+}
+
+// A screen-aligned rectangle mask (d, half size in the same units).
+float boxMask(vec2 d, vec2 hs, float aaW) {
+  vec2 m = 1.0 - smoothstep(hs - aaW, hs + aaW, abs(d));
+  return m.x * m.y;
 }
 
 void main() {
   vec2 p = vWorld.xz;
   float t = uTime;
-  vec4 sh = shoreAt(p);
-  float camD = length(cameraPosition - vWorld);
+  vec4 sh = texture2D(uShoreMap, p / uWorldSize);
+  float dF = sh.b * uFine.y + uFine.x;     // signed world units from the waterline
+  float dC = sh.r * uFar;                  // world units, saturates at uFar
 
-  // The tile grid is 8 units; break the hard staircase of the distance field
-  // with a two-octave wobble before anything shore-driven uses it. This is what
-  // turns a 90-degree voxel shoreline into a meandering one.
-  //
-  // REGRESSION FIX: the wobble is a SHORELINE effect and must decay offshore.
-  // At the old amplitude (0.26 x a +/-1.14 signal = +/-0.30 normalised = +/-12
-  // world units) it could drag depthT to zero in the middle of the lake, which
-  // is how a 2.5-unit foam band ended up painting open water white.
-  float wobRaw = (texture2D(uNormalMap, p * (1.0 / 37.0) + vec2( 0.0041, 0.0029) * t).a - 0.5) * 1.42
-               + (texture2D(uNormalMap, p * (1.0 / 13.0) + vec2(-0.0069, 0.0044) * t).a - 0.5) * 0.86;
-  float wobFade = 1.0 - smoothstep(uWobbleFade * 0.25, uWobbleFade, sh.r);
-  float wob = wobRaw * uShoreWobble * wobFade;
-  float depthT = max(0.0, sh.r + wob);
+  // World units per screen pixel. Block detail fades out once a block is only a
+  // couple of pixels wide, so the wide shot never shimmers.
+  float pxw = max(length(vec2(dFdx(p.x), dFdy(p.x))), length(vec2(dFdx(p.y), dFdy(p.y))));
+  float detail = 1.0 - smoothstep(0.30, 0.80, pxw);
+  float aa = pxw * 0.6 + 1e-4;
 
-  // ---- animated normal: four layers, all different scales, SPEEDS and
-  // DIRECTIONS, each in its own rotated frame so nothing beats in phase with
-  // anything else. (The old set scrolled slowly enough that the surface read as
-  // one breathing unit; these are 2-3x faster and mutually decorrelated.)
-  mat2 rotA = mat2( 0.802, -0.597,  0.597,  0.802);
-  mat2 rotB = mat2(-0.279,  0.960, -0.960, -0.279);
-  mat2 rotC = mat2( 0.435,  0.900, -0.900,  0.435);
-  vec2 uv0 = p * (1.0 / 57.0)             + vec2( 0.0190,  0.0072) * t;
-  vec2 uv1 = (rotA * p) * (1.0 / 21.5)    + vec2(-0.0345,  0.0268) * t;
-  vec2 uv2 = (rotB * p) * (1.0 /  8.1)    + vec2( 0.0512, -0.0655) * t;
-  vec2 uv3 = (rotC * p) * (1.0 /  3.0)    + vec2(-0.0930, -0.0410) * t;
+  // ---- depth: stepped terraces tied to distance from the shore (round 14) --
+  // Critic r13: "dark-blue tone patches scattered as random rectangles look
+  // like checkerboard blotches, not depth; the surface fades to a pale,
+  // washed-out cyan near the rims. ref05's pool is a saturated pool blue that
+  // darkens steadily toward the centre and away from the walls." So the tone
+  // is now a function of ONE thing — how far this water is from its walls —
+  // quantised into five saturated steps (rim -> shallow -> mid -> deep ->
+  // core). The distance is read on a 2 u voxel block and nudged by a chunky
+  // fixed jitter and a sparse drifting patch layer, so each contour is a
+  // crenellated voxel edge rather than a perfect ring, and every "patch" is
+  // simply a neighbouring depth step pushed in or out — never a random
+  // blotch in a foreign tone.
+  vec2 toCam = vec2(viewMatrix[0][2], viewMatrix[2][2]);
+  vec2 camS = vec2(toCam.x >= 0.0 ? 1.0 : -1.0, toCam.y >= 0.0 ? 1.0 : -1.0);
+  vec4 sd = boxShoreDir(p, camS);
+  float dNear = min(min(sd.z, sd.w), 2.0 * uTileSize);
+  float dFar = min(min(sd.x, sd.y), 2.0 * uTileSize);
+  float dS = min(dNear, dFar);
+  float aaD = pxw * 0.6 + 1e-3;
 
-  vec4 n0 = texture2D(uNormalMap, uv0);
-  vec4 n1 = texture2D(uNormalMap, uv1);
-  vec2 dn = (n0.xy * 2.0 - 1.0) * 1.00 + (rotA * (n1.xy * 2.0 - 1.0)) * 0.86;
-  float hgt = n0.a * 0.55 + n1.a * 0.45;
-  // The fine layers mip away in the distance; keep the total slope roughly
-  // constant by measuring how much of them survives and re-weighting.
-  float detFade = 1.0 - smoothstep(90.0, 460.0, camD);
-  if (uQuality > 0.5) {
-    vec4 n2 = texture2D(uNormalMap, uv2);
-    dn += (rotB * (n2.xy * 2.0 - 1.0)) * 0.66;
-    hgt = mix(hgt, n2.a, 0.30);
+  // terrace distance on a 4 u block (half a tile): big, calm pool-tile steps
+  // (2 u blocks notched every contour into speckle at game zoom)
+  float Bd = 4.0;
+  vec2 pb = (floor(p / Bd) + 0.5) * Bd;
+  float dBlk = texture2D(uShoreMap, pb / uWorldSize).r * uFar;
+  float k = 0.0;
+  float pDetA = 1.0 - smoothstep(0.9, 1.8, pxw);
+  float aaP = pxw * 0.55 + 1e-3;
+  if (pDetA > 0.001) {
+    float sp = t * uPatchMix.y;
+    k += patchLayer(p, uPatch.xy, vec2(0.83, 0.31) * sp, 3.7, 0.42, aaP);
+    k += patchLayer(p, uPatch.zw, vec2(-0.42, 0.66) * sp, 19.1, 0.30, aaP);
+    k = clamp(k, -1.0, 1.0) * pDetA * uPatchMix.x;
   }
-  if (uQuality > 1.5) {
-    // Finest ripple scale — this is what breaks the sun track into sparkles
-    // instead of one smeared blob in the near field.
-    vec4 n3 = texture2D(uNormalMap, uv3);
-    dn += (rotC * (n3.xy * 2.0 - 1.0)) * 0.46;
-    hgt = mix(hgt, n3.a, 0.26);
-  }
-  // Chop rises with rain and calms in the shallows. Slopes are damped with
-  // distance: sub-pixel waves average out in reality, and leaving them large
-  // scatters the grazing normal so badly that fresnel collapses and the far sea
-  // turns navy instead of sky-bright.
-  float calm = mix(0.55, 1.0, smoothstep(0.0, 0.22, depthT));
-  dn *= uDetail * calm * (1.0 + uRain * 0.8) * mix(0.45, 1.0, detFade);
+  // chunky fixed jitter on 12 x 8 u cells (whole 4 u blocks), none by a wall
+  vec2 jc = floor(p / vec2(12.0, 8.0));
+  float jit = (hash21(jc + 7.7) - 0.5) * 3.6 * smoothstep(3.0, 9.0, dBlk);
+  float dT = dBlk + jit - k * uTerr2.x * smoothstep(2.5, 6.0, dBlk);
+  // far zoom: the continuous field, softened, so the wide shot never speckles
+  float fade = smoothstep(0.55, 1.4, pxw);
+  dT = mix(dT, dC, fade);
+  float twT = mix(0.02, 2.5, fade);
+  vec3 body = uShallowColor;
+  body = mix(body, uMidColor, smoothstep(uTerr.x - twT, uTerr.x + twT, dT));
+  body = mix(body, uDeepColor, smoothstep(uTerr.y - twT, uTerr.y + twT, dT));
+  body = mix(body, uCoreColor, smoothstep(uTerr.z - twT, uTerr.z + twT, dT));
+  body = mix(body, uAbyssColor, smoothstep(uTerr.w - twT, uTerr.w + twT, dT));
+  // the rim step: a Chebyshev band hugging every wall (square corners),
+  // saturated cyan — lighter than the body but never pale or washed out
+  float rimW = max(uFoam.y, pxw * 2.0);
+  float rim = 1.0 - smoothstep(rimW - aaD, rimW + aaD, dS);
+  body = mix(body, uPatchColor, rim);
+  vec3 bodyBase = body;
+  // coarse depth on a half-tile block, only used to step the open sea in
+  float B = 4.0;
+  float dQ = texture2D(uShoreMap, (floor(p / B) + 0.5) * B / uWorldSize).r * uFar;
+  // Only real open sea saturates the coarse field (lakes never get this far
+  // from land), so the coast blends into terrain's off-map sea with no seam.
+  float s3 = mix(smoothstep(uFar * 0.72, uFar * 0.97, dC), step(uFar * 0.85, dQ), detail);
+  // A narrow coastal strip never gets far enough from land to saturate, so at
+  // the map edge itself the open sea steps (in voxel terraces) into the colour
+  // of terrain's off-map sea — the coast reads deeper further out and the
+  // boundary vanishes. Ponds that touch the edge stay pool-blue (dC gate).
+  vec2 eq = min(p, uWorldSize - p);
+  float eD = min(eq.x, eq.y);
+  float eDq = (floor(eD / (2.0 * B)) + 0.5) * 2.0 * B;
+  float s4 = (1.0 - mix(smoothstep(0.0, uEdgeFade, eD), smoothstep(0.0, uEdgeFade, eDq), detail))
+           * smoothstep(6.0, 14.0, dC);
+  s3 = max(s3, s4);
+  float gainNow = mix(uGain, 1.0, uNight);   // night keeps the old deep fold
+  body = mix(body * gainNow, uSeaColor, s3);
+  bodyBase *= gainNow;
 
-  // ---- rain ripples -------------------------------------------------------
-  // Faded out with distance so the rings never alias into moire at the horizon.
-  float rfade = 1.0 - smoothstep(160.0, 420.0, camD);
-  float rim = 0.0;
-  if (uRain * rfade > 0.001) {
-    float ra = uRain * rfade;
-    vec3 r1 = rippleLayer(p, t, 3.4, 0.0, uRain * 0.55);
-    dn += r1.xy * ra * 0.9;
-    rim += r1.z * rfade;
-    if (uQuality > 0.5) {
-      vec3 r2 = rippleLayer(p, t * 1.31, 6.9, 7.3, uRain * 0.45);
-      dn += r2.xy * ra * 0.8;
-      rim += r2.z * 0.8 * rfade;
+  // ---- shoreline: a crisp foam edge line at every wall (round 14) ----------
+  // Critic r13: "there is no foam or edge line where the water meets the
+  // wall". Every wall now gets a solid white foam line with a pale-cyan lap
+  // line breathing just outside it; the near walls (behind the coping) keep
+  // the wider line, square corner splash blocks and the rolling foam dashes.
+  // All distances are Chebyshev to the voxel coast, so the lines turn the
+  // stepped coastline's corners squarely.
+  float breathe = 0.5 + 0.5 * sin(t * 1.1 + (p.x + p.y) * 0.05);
+  float lw = max(uFoam.x + 0.08 * breathe, pxw * 1.8);
+  float foamN = 1.0 - smoothstep(lw - aaD, lw + aaD, dNear);
+  float cw = max(0.8 + 0.12 * breathe, pxw * 2.2);
+  foamN = max(foamN, 1.0 - smoothstep(cw - aaD, cw + aaD, max(sd.z, sd.w)));
+  float lwF = max(0.40 + 0.06 * breathe, pxw * 1.8);
+  float foamF = 1.0 - smoothstep(lwF - aaD, lwF + aaD, dFar);
+  float cwF = max(0.75 + 0.1 * breathe, pxw * 2.0);
+  foamF = max(foamF, (1.0 - smoothstep(cwF - aaD, cwF + aaD, max(sd.x, sd.y))) * 0.85);
+  // a thin pale lap line a little way out from every wall
+  float lapR = max(lw, lwF) + 0.55 + 0.35 * breathe;
+  float lapA = (1.0 - smoothstep(0.11 - aaD, 0.11 + aaD, abs(dS - lapR))) * detail * 0.55;
+  float bandW = rimW;
+  // a thin foam dash rolling in and out across the near rim
+  float lapN = lw + 1.0 + breathe * uFoam.z;
+  float lap = (1.0 - smoothstep(0.10 - aaD, 0.10 + aaD, abs(dNear - lapN))) * detail;
+  lap *= step(0.5, fract((p.x + p.y) / 5.0 + t * 0.05) + 0.25);   // broken into dashes
+  float shade = 0.0;
+
+  // No wall at the map boundary (the sea runs on off-map), so no shore marks.
+  float onMap = smoothstep(0.6, 1.6, eD);
+  float lake = onMap * (1.0 - s3);
+  foamN *= onMap; foamF *= onMap; lap *= onMap; lapA *= lake;
+
+  vec3 col = body;
+  col = mix(col, uCausticHi, lapA);
+  col = mix(col, uFoamColor, lap * uFoam.w);
+  col = mix(col, uFoamColor, max(foamN, foamF));
+
+  // ---- sun glints: crisp white streaks + twinkling sparkles (ref05) ------
+  // Round 13 (critic r12: "no specular highlights, so it reads as a painted
+  // floor; ref05 has a few bright white / pale-cyan highlight streaks and
+  // ripple glints that make it read as glossy water"). The round-11 soft
+  // sheens (a square in a square, read as a UI glyph) are gone. Now:
+  //  - STREAKS: per sparse cell, a staggered stack of 2-3 thin world-axis
+  //    bars (ref05's stepped white ripple highlights), white core + pale-cyan
+  //    halo, drifting gently along their axis and fading in and out.
+  //  - SPARKLES: small white voxel glints that twinkle on and off.
+  // Kept off the shore bands, the open sea and the far zoom.
+  if (detail > 0.001 && uSpark.x > 0.001) {
+    float aaF = pxw * 0.55 + 1e-3;
+    float keepBase = detail * uSpark.x * smoothstep(bandW + 0.8, bandW + 2.4, dS)
+                   * (1.0 - s3) * onMap * (1.0 - shade);
+    float halo = 0.0, core = 0.0;
+    vec2 G = vec2(uSpark.z * 1.25, uSpark.z);
+    vec2 fc = floor(p / G);
+    float fh = hash21(fc + 91.7);
+    if (fh < uSpark.y) {
+      bool alongX = hash21(fc + 2.3) < 0.5;
+      vec2 ax = alongX ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+      vec2 pr = alongX ? vec2(0.0, 1.0) : vec2(1.0, 0.0);
+      vec2 fo = vec2(hash21(fc + 3.1), hash21(fc + 8.9));
+      vec2 ctr = floor(fc * G + 4.0 + (G - 8.0) * fo + 0.5);
+      float period = 5.0 + 4.0 * hash21(fc + 12.3);
+      float ph = fract(t / period + fh * 13.0);
+      float env = smoothstep(0.0, 0.2, ph) * (1.0 - smoothstep(0.65, 0.95, ph));
+      ctr += ax * (ph * 1.6 - 0.8);                 // a slow slide along the bar
+      float L = floor(2.0 + 2.5 * hash21(fc + 4.4) + 0.5) * 0.5;
+      float wB = max(0.34, pxw * 0.8);
+      float nb = hash21(fc + 6.2) < 0.5 ? 2.0 : 3.0;
+      for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        if (fi >= nb) break;
+        // stacked bars a thin gap apart, each stepped along: a stair-stepped
+        // crest shape rather than a row of parallel dashes
+        vec2 c = ctr + pr * (fi * (2.0 * wB + 0.3)) + ax * (fi * 0.9);
+        vec2 d = p - c;
+        vec2 dl = vec2(dot(d, ax), dot(d, pr));
+        float li = L * (1.0 - 0.28 * fi);
+        core = max(core, boxMask(dl, vec2(li, wB), aaF));
+        halo = max(halo, boxMask(dl, vec2(li + 0.6, wB + 0.5), aaF));
+      }
+      float k2 = (0.30 + 0.70 * env) * keepBase;
+      halo *= k2; core *= k2;
     }
+    // sparkles: small twinkling glints on a finer grid
+    vec2 Gs = vec2(uSpark.w, uSpark.w * 0.85);
+    vec2 sc = floor(p / Gs);
+    float sh2 = hash21(sc + 57.1);
+    if (sh2 < 0.16) {
+      vec2 sp2 = floor(sc * Gs + 1.0 + (Gs - 2.0) * vec2(hash21(sc + 1.7), hash21(sc + 9.3)) + 0.5);
+      float per = 1.8 + 2.2 * hash21(sc + 5.9);
+      float ph = fract(t / per + sh2 * 31.0);
+      float tw = smoothstep(0.0, 0.12, ph) * (1.0 - smoothstep(0.30, 0.55, ph));
+      vec2 d = p - sp2;
+      float r = max(0.32, pxw * 0.8);
+      core = max(core, boxMask(d, vec2(r), aaF) * tw * keepBase);
+      halo = max(halo, boxMask(d, vec2(r + 0.4), aaF) * tw * keepBase);
+    }
+    col = mix(col, uCausticHi, halo * 0.85);
+    col = mix(col, uFoamColor, core);
   }
 
-  vec3 N = normalize(vec3(vSwellN.x + dn.x, 1.0, vSwellN.z + dn.y));
-  vec3 V = normalize(cameraPosition - vWorld);
-  float NdV = max(dot(N, V), 1e-4);
-  vec3 L = normalize(uSunDir);
-  float sunUp = smoothstep(-0.07, 0.05, L.y);
+  // ---- splash halos around the bobbing floats (ref05's balls and rings) ----
+  // A hard white collar hugging each float plus one square ripple that rolls
+  // outward and fades — reads as "this is floating", in the voxel idiom.
+  if (detail > 0.001) {
+    float sp = 0.0;
+    for (int i = 0; i < ${MAX_FLOATS}; i++) {
+      vec4 fp = uFloatPos[i];
+      if (fp.w < 0.5) continue;
+      vec2 d = abs(p - fp.xy);
+      float cheb = max(d.x, d.y);
+      float r0 = fp.z + 0.12;
+      float collar = (1.0 - smoothstep(r0 + 0.32 - aa, r0 + 0.32 + aa, cheb)) * step(r0 - 0.4, cheb);
+      float life = fract(t * 0.32 + float(i) * 0.37);
+      float rr = r0 + 0.5 + life * 2.4;
+      float ring = (1.0 - smoothstep(0.13 - aa, 0.13 + aa, abs(cheb - rr))) * (1.0 - life) * 0.26;
+      sp = max(sp, max(collar * 0.92, ring));
+    }
+    col = mix(col, uFoamColor, sp * detail);
+  }
 
-  // ---- body colour: 100 % from the sampled shore-distance FIELD -----------
-  // (no vertex attribute anywhere in this path, so no triangulation seams)
-  // Hue-preserving: the shallows take the SKY's colour cast (warm at sunset,
-  // steel blue at dusk, near-black at midnight) without gaining brightness.
-  float skyL = max(1e-4, dot(uSkyHorizon, vec3(0.2126, 0.7152, 0.0722)));
-  vec3 skyHue = uSkyHorizon / skyL;
-  vec3 shallowC = uShallowColor * mix(vec3(1.0), skyHue, 0.42);
-  // A REAL depth ramp. The turquoise lives in the first ~1 tile off the shore
-  // (0.20 x far 5 tiles) and the deep blue is fully reached by ~3.5 tiles, so
-  // the ramp spends its whole range inside a lake this size instead of running
-  // out of gradient (the previous 0.26 -> 0.88 window put the far shore of an
-  // 8-tile lake only 40 % of the way to uDeepColor).
-  vec3 body = mix(shallowC, uMidColor, smoothstep(0.0, 0.20, depthT));
-  body = mix(body, uDeepColor, smoothstep(0.18, 0.70, depthT));
-  // Sandy shores read warm and pale.
-  body = mix(body, uBeachColor, sh.b * (1.0 - smoothstep(0.0, 0.30, depthT)) * 0.75);
-  // Low-frequency variation so a big ocean isn't one flat colour.
-  body *= 0.86 + 0.28 * sh.a;
-  // A touch of translucency on wave faces (light through the crest).
-  body += shallowC * vCrest * 0.18 * (1.0 - depthT * 0.5);
-  // Wave-slope shading, now with real contrast so the travelling normal detail
-  // is visible in the BODY as well as in the reflection.
-  float wave = dot(N, normalize(L + vec3(0.0, 0.9, 0.0)));
-  body *= 0.74 + 0.52 * clamp(wave, 0.0, 1.0);
-  // Night: the lake is not emissive. Fold it down on the same kind of curve the
-  // lit terrain follows, or it becomes the brightest thing in the night frame.
-  body *= mix(1.0, uNightFloor, uNight);
+  // ---- rain: little square ripple rings ------------------------------------
+  if (uRain > 0.01) {
+    float rk = uRain * max(detail, 0.0);
+    vec2 g = p / 3.2;
+    vec2 c = floor(g);
+    vec2 f = fract(g) - 0.5;
+    float ph = t * 0.95 + hash21(c + 5.5) * 7.0;
+    float life = fract(ph);
+    if (hash21(c + floor(ph) * 2.1) < 0.25 + 0.5 * uRain) {
+      float cheb = max(abs(f.x), abs(f.y));
+      float rr = life * 0.44;
+      float aa = fwidth(cheb) * 1.2 + 1e-4;
+      float rim = 1.0 - smoothstep(0.035 - aa, 0.035 + aa, abs(cheb - rr));
+      col = mix(col, uFoamColor * 0.9, rim * (1.0 - life) * 0.55 * rk);
+    }
+    col *= 1.0 - uRain * 0.16;
+  }
 
-  // ---- fresnel reflection --------------------------------------------------
-  // Schlick, unclamped and uncapped: at grazing angles the water MUST go
-  // sky-bright. Previously a 0.55-0.86 cap plus a dull horizon colour made the
-  // far edge darker than the near edge, which is backwards.
-  float fres = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
-  fres = clamp(fres, 0.0, 1.0);
-  vec3 R = reflect(-V, N);
-  R.y = abs(R.y) * 0.90 + 0.015;      // never sample below the horizon
-  vec3 refl = skyLook(R);
-  // Water is not a perfect mirror: a little of its own hue bleeds in.
-  refl = mix(refl, refl * (0.68 + 0.55 * body), 0.16);
-  // Sky reflection dims under rain (overcast + broken surface).
-  refl = mix(refl, refl * 0.72 + vec3(0.10, 0.12, 0.14), uRain * 0.6);
+  // ---- cast shadows (lighting.js's cascades, when engine.js wires them) ----
+#ifdef USE_WATER_CSM
+  {
+    vec3 vN = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+    vec3 vL = normalize((viewMatrix * vec4(uSunDir, 0.0)).xyz);
+    float lit = clamp(dot(csmApply(vec3(1.0), vN, vL), vec3(0.33333)), 0.0, 1.0);
+    col *= mix(uShadowTint, vec3(1.0), lit);
+  }
+#endif
 
-  // Grazing floor. Even where the per-pixel normal happens to point at the
-  // camera, water this far away is seen at a grazing angle overall and must
-  // read as sky. Without it the horizon band goes navy, which is the exact
-  // "darker at the far edge" inversion the reviewers measured.
-  // Geometric (unperturbed) view elevation, so wave noise cannot break it.
-  float graze = pow(1.0 - clamp(V.y, 0.0, 1.0), uGrazePow);
-  float reflMix = clamp(max(fres, graze * 0.94) * 0.98, 0.0, 0.98);
-  vec3 col = mix(body, refl, reflMix);
+  // ---- time of day ---------------------------------------------------------
+  // Low sun: take on a little of the sun's hue (sunset water), never darker.
+  float lowSun = 1.0 - smoothstep(0.05, 0.38, uSunDir.y);
+  vec3 sunHue = uSunColor / max(max(uSunColor.r, uSunColor.g), max(uSunColor.b, 1e-4));
+  col *= mix(vec3(1.0), 0.62 + 0.40 * sunHue, lowSun * 0.55 * (1.0 - uNight));
+  // Night: fold down onto a deep, still clearly BLUE tone.
+  col = mix(col, col * uNightTint, uNight * (1.0 - uNightFloor));
 
-  // ---- sun glint (HDR; feeds the bloom pass) ------------------------------
-  // The specular lobe gets its OWN, steeper normal. Real glitter comes from the
-  // capillary ripples riding on the swell, whose slopes are far steeper than the
-  // slope that shades the body — and the half-vector here sits ~27 degrees off
-  // vertical, so nothing shallower can ever reach it. Driving both from one
-  // normal forces a choice between "no sparkle" and "visibly noisy water";
-  // uGlintSlope buys the sparkle without roughening the body.
-  vec3 Ns = normalize(vec3(vSwellN.x + dn.x * uGlintSlope,
-                           1.0,
-                           vSwellN.z + dn.y * uGlintSlope));
-  vec3 H = normalize(L + V);
-  float NdH = max(dot(Ns, H), 0.0);
-  float NdL = max(dot(Ns, L), 0.0);
-  // Sub-pixel slope variance IS roughness. The fine normal layers mip away with
-  // distance, so the lobe has to widen by exactly as much as they shrink or the
-  // far field loses its glitter band; rain roughens it further.
-  float rough = uGlintRough2 + (1.0 - detFade) * 0.030 + uGlintRough * 0.05;
-  float D = ggxD(NdH, rough);
-  // Only facets near a crest carry the spike, so the track breaks into
-  // individual sparkles instead of one continuous smear.
-  //
-  // REGRESSION FIX: spark used to carry a 0.45 PEDESTAL, i.e. every pixel on
-  // the lake — crest or trough — got 45 % of a GGX lobe whose peak is ~130.
-  // Combined with uGlintSlope 6 (a specular normal six times steeper than the
-  // shading normal) that is not a glitter track, it is an isotropic white haze
-  // over the entire surface. Measured on the region shot: switching uGlint to 0
-  // dropped the high-pass residual sigma from 8.4/255 to 0.8/255 and open-water
-  // luminance from 0.35 to 0.23 — the "slush" was the specular, not the foam.
-  // The pedestal is now ~0.06 and the crest gate is tighter, so the lobe still
-  // spikes HDR where a facet actually aligns (and still feeds bloom) but has
-  // almost no coverage off-peak.
-  // Sparkles ride the SWELL, not just the noise field. Without this the lobe
-  // fires wherever the fine noise happens to peak, which is a spatially
-  // uniform (isotropic) fleck field — the exact thing the reviewers measured.
-  // Gating on vCrest as well makes the glitter run in bands along the wave
-  // fronts, which is both what real sun glitter does and roughly half the
-  // coverage for the same peak brightness.
-  float swellGate = mix(1.0, smoothstep(0.34, 0.86, vCrest), uSwellSpark);
-  float spark = uSparkFloor + uSparkGate.z * smoothstep(uSparkGate.x, uSparkGate.y, hgt) * swellGate;
-  // A broad secondary lobe keeps a low sun's track readable at the horizon,
-  // where no single facet is big enough on screen to sparkle.
-  float track = specLobe(NdH, 20.0) * 0.22 * (1.0 - smoothstep(0.10, 0.42, L.y));
-  float spec = (D * spark * NdL * uSpecScale + track) * uGlint * uGlintGain * sunUp;
-  // A sparkle smaller than a pixel must AVERAGE DOWN, not survive at full HDR.
-  // Widening the roughness with distance (above) spreads one highlight over more
-  // pixels; without this companion term that is exactly how a sparkle field
-  // turns into uniform white fog at the 340-unit region orbit.
-  spec *= mix(uGlintFar, 1.0, detFade);
-  spec = min(spec, 60.0);
-  col += uSunColor * spec;
-
-  // ---- cheap fake reflection: the city smears into the lake ---------------
-  // A coarse top-down map of the emissive city is marched along the reflection
-  // ray. No render target, no depth read — just a decaying line integral, which
-  // is exactly the heavy vertical blur a real mirror pass would need anyway.
+  // ---- night: the lit city streaks across the water ------------------------
   if (uEmitStrength > 0.002) {
-    vec2 rd = R.xz;
+    vec3 V = normalize(cameraPosition - vWorld);
+    vec2 rd = -V.xz;
     float rl = length(rd);
     if (rl > 1e-3) {
       rd /= rl;
       vec3 acc = vec3(0.0);
       float wsum = 1e-4;
-      // 10 taps, not 6. The reviewers' case is "a lit downtown 20 tiles behind
-      // the lake shows nothing" — 20 tiles is 160 world units, and 6 taps at the
-      // old 26-unit step only reached 156 with the tail already decayed to 0.13,
-      // so the city was effectively out of range. Measured on the reference
-      // city: extending the march lifts the mean night-water luminance near
-      // downtown by ~9/255 where the old settings moved it by 0.0.
       for (int i = 1; i <= 10; i++) {
         float ft = float(i);
         vec2 q = (p + rd * (ft * uEmitParams.x)) / uWorldSize;
@@ -546,95 +701,20 @@ void main() {
         acc += em.rgb * em.a * w;
         wsum += w;
       }
-      col += (acc / wsum) * uEmitStrength * (0.30 + 0.70 * fres);
+      col += (acc / wsum) * uEmitStrength * 0.6;
     }
   }
 
-  // ---- shoreline foam ------------------------------------------------------
-  // Driven entirely by smoothstep() on the shore-distance FIELD (orientation
-  // free, so all four edge orientations get identical treatment) times two
-  // counter-phased animated noise fields, so it pulses and breaks up.
-  //
-  // HARD GATE on the RAW field (no wobble, no surge, no noise can widen it):
-  // foam exists in the first uFoamGate of the shore-distance field and nowhere
-  // else. uFoamGate 0.055 x far(5 tiles) x TILE(8) = 2.2 world units, i.e. the
-  // first ~2 m of shoreline. Everything below may only ever reduce it.
-  float shoreGate = 1.0 - smoothstep(uFoamGate * 0.50, uFoamGate, sh.r);
-  float fn1 = texture2D(uNormalMap, p * (1.0 / 19.0) + vec2( 0.0075, -0.0052) * t).a;
-  float fn2 = texture2D(uNormalMap, p * (1.0 /  5.1) + vec2(-0.0260,  0.0195) * t).a;
-  float fn3 = texture2D(uNormalMap, p * (1.0 /  2.2) + vec2( 0.0410,  0.0330) * t).a;
-  // The waterline surges in and out, at two unrelated periods.
-  float surgeA = 0.5 + 0.5 * sin(t * 0.93 + fn1 * 6.283 + p.x * 0.0135 - p.y * 0.0093);
-  float surgeB = 0.5 + 0.5 * sin(t * 0.51 - fn2 * 6.283 + p.y * 0.0172 + p.x * 0.0061);
-  float surge = surgeA * 0.62 + surgeB * 0.38;
-  float band = uFoamWidth * (0.40 + 1.20 * surge);
-  float edge = 1.0 - smoothstep(0.0, band, depthT);
-  float lace = smoothstep(0.38, 0.86, fn2 * 0.44 + fn3 * 0.26 + fn1 * 0.30 + edge * 0.36);
-  float foam = clamp(edge * (0.10 + 1.05 * lace), 0.0, 1.0);
-  // A crisp bright line hard against the land — also surge-modulated so it is
-  // never the fat uniform-opacity ribbon it used to be.
-  foam = max(foam, (1.0 - smoothstep(0.0, uFoamWidth * (0.10 + 0.30 * surge), depthT))
-                   * (0.34 + 0.48 * surgeB));
-  foam *= shoreGate;
-  // Offshore whitecaps: RAIN ONLY. In calm weather a kid-friendly lake has no
-  // breaking crests, and this term was firing on every swell peak across the
-  // whole surface (vCrest reaches 1.0 in open water), adding a second isotropic
-  // white speckle field on top of the specular one.
-  if (uQuality > 0.5 && uRain > 0.02) {
-    float cap = texture2D(uNormalMap, p * vec2(1.0 / 13.0, 1.0 / 7.5) + vec2(0.020, 0.012) * t).a;
-    float cap2 = texture2D(uNormalMap, p * (1.0 / 3.1) + vec2(-0.038, 0.026) * t).a;
-    float wc = smoothstep(0.74, 0.96, cap * 0.62 + cap2 * 0.38)
-             * smoothstep(0.86, 0.995, vCrest)
-             * smoothstep(0.30, 0.72, depthT);
-    foam = max(foam, wc * 0.70 * uRain);
-  }
-  vec3 foamC = uFoamColor * (0.55 + 0.55 * max(L.y, 0.0) + 0.25);
-  foamC *= mix(1.0, uNightFloor * 2.6, uNight);
-  col = mix(col, foamC, foam);
-
-  // rain ring rims
-  col += vec3(0.9, 0.96, 1.0) * rim * uRain * 0.30;
-
-  // ---- low sun: the whole sheet takes the sun's hue -----------------------
-  float lowSun = 1.0 - smoothstep(0.02, 0.34, L.y);
-  vec3 sunHue = uSunColor / max(max(uSunColor.r, uSunColor.g), max(uSunColor.b, 1e-4));
-  col *= mix(vec3(1.0), 0.44 + 0.80 * sunHue, lowSun * 0.80 * (1.0 - uNight));
-
-  // ---- opacity -------------------------------------------------------------
-  // Essentially opaque: terrain.js draws the sea bed and its coarse per-vertex
-  // depth tint used to show straight through the old 0.60-alpha shallows as
-  // hard triangle seams across the lake.
-  float alpha = mix(uOpacityShore, uOpacityDeep, smoothstep(0.0, 0.10, depthT));
-  alpha = clamp(max(alpha, foam), 0.0, 1.0);
-  // Kill the sub-pixel sliver outside the water mask (bridge/tile seams).
-  alpha *= smoothstep(0.02, 0.30, sh.g);
-
-  // ---- aerial perspective ---------------------------------------------------
-  // NOT three's <fog_fragment>. scene.fog exists for the LAND: it mixes toward
-  // fogColor, a dull haze tone, and at the far edge of a 640-unit map the fog
-  // factor is ~0.95, so the built-in chunk was overwriting everything above with
-  // the haze colour. Measured: the water immediately below the horizon came out
-  // at luminance 83 while the sky one pixel above it was 175 — a 2:1 inversion,
-  // and the single loudest "airbrushed swimming pool" tell in the frame.
-  //
-  // Distance still has to READ as distance, so the depth cue is kept; only the
-  // colour it converges on changes. Water at 500 units is seen at a grazing
-  // angle, so what it converges on is the REFLECTED SKY, which is exactly what a
-  // real lake does. uHazeRefl is how far toward that we go vs. the land's haze
-  // (1.0 = pure sky reflection, 0.0 = three's original behaviour).
-#ifdef USE_FOG
-  #ifdef FOG_EXP2
-    float fogT = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-  #else
-    float fogT = smoothstep(fogNear, fogFar, vFogDepth);
-  #endif
-  vec3 haze = mix(fogColor, refl, uHazeRefl);
-  col = mix(col, haze, fogT);
-#endif
-
-  gl_FragColor = vec4(col, alpha);
+  // Alpha 0.625 is post.js's WATER KEY: the grade spares these pixels its
+  // upper-mid dip and cool-hue saturation cut, which capped the pool at
+  // ~#1caed6 whatever colour was authored here (round 10). The material is
+  // opaque (no blending), so the alpha is written as-is. At night the key
+  // slides off (0.625 -> 0.695 is outside post's window) so the moonlit water
+  // takes the same grade as the dark city around it.
+  gl_FragColor = vec4(col, 0.625 + 0.07 * uNight);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  #include <fog_fragment>
 }
 `;
 
@@ -690,7 +770,7 @@ void main() {
   float d = vShore.r;
   vec3 col = mix(uWetSand, uSilt, smoothstep(0.03, 0.38, d));
   col = mix(col, uAbyss, smoothstep(0.32, 0.9, d));
-  col = mix(col, uWetSand, vShore.b * (1.0 - smoothstep(0.0, 0.26, d)) * 0.6);
+  col = mix(col, uWetSand, vShore.a * (1.0 - smoothstep(0.0, 0.26, d)) * 0.6);
 
   // grain
   float g = texture2D(uNormalMap, vWorld.xz * (1.0 / 6.0)).a;
@@ -731,13 +811,16 @@ export class WaterFX {
    *   n            tiles per side (default 80)
    *   tile         world units per tile (default 8)
    *   chunk        tiles per rebuild chunk (default 16)
-   *   sub          surface subdivisions per tile per axis (default 4)
-   *   shoreSub     shore-field samples per tile per axis (default 4)
+   *   sub          surface subdivisions per tile per axis (default 1 — flat)
+   *   shoreSub     shore-field samples per tile per axis (default 8 = 1 unit)
    *   waterY       surface plane height (default -0.35)
-   *   far          shore-field range in tiles (default 5)
+   *   far          coarse shore-field range in tiles (default 5)
    *   seabed       build the sculpted sea bed (default true)
    *   quality      0|1|2 (default 2)
    *   edgeIsLand   treat the map border as land for foam (default false)
+   *   landWarp     optional fn(wx, wz, out[2]) -> out: the horizontal warp the
+   *                terrain applies to its ground lattice (see setLandWarp)
+   *   warpStep     that lattice's spacing in world units (default 4)
    */
   constructor(scene, opts = {}) {
     this.scene = scene;
@@ -745,18 +828,24 @@ export class WaterFX {
       n: N_DEFAULT,
       tile: TILE,
       chunk: CHUNK,
-      sub: 4,
-      shoreSub: 4,
+      sub: 1,
+      shoreSub: 8,
       waterY: WATER_Y,
-      far: 5.0,
+      far: 8.0,              // round 7: 5 -> 8 so lake centres never saturate (depth ramp)
       seabed: true,
       quality: 2,
       edgeIsLand: false,
-      normalTexSize: 256,
-      shoreJitter: 0.40,     // tiles; breaks the rectilinear water mesh edge
-      shoreRetreat: 0.0,     // 0..1 of the jitter allowed to expose the sea bed
-      emitRes: 64,           // fake-reflection emitter map resolution
+      normalTexSize: 128,
+      shoreJitter: 0.0,      // tiles; the visible outline is terrain.js's bank
+      shoreRetreat: 0.0,
+      fineMin: -2.0,         // world units: fine signed field range
+      fineRange: 16.0,
+      landWarp: null,
+      warpStep: 4,
+      warpReach: 1.35,       // tiles offshore the land warp can possibly reach
+      emitRes: 64,
       emitReflection: true,
+      apron: 90,             // tiles of open sea continued past the map edge
     }, opts);
 
     this.N = o.n | 0;
@@ -769,9 +858,12 @@ export class WaterFX {
 
     // ---- shore field --------------------------------------------------------
     this.fieldW = this.N * this.S;
-    this._shoreData = new Uint8Array(this.fieldW * this.fieldW * 4);
-    this._distLand = new Float32Array(this.fieldW * this.fieldW);
-    this._distSand = new Float32Array(this.fieldW * this.fieldW);
+    const FW2 = this.fieldW * this.fieldW;
+    this._shoreData = new Uint8Array(FW2 * 4);
+    this._distLand = new Float32Array(FW2);
+    this._distSand = new Float32Array(FW2);
+    this._distWater = new Float32Array(FW2);
+    this._covered = new Uint8Array(FW2);     // water cell under the warped land
     this._shoreTex = new THREE.DataTexture(
       this._shoreData, this.fieldW, this.fieldW, THREE.RGBAFormat, THREE.UnsignedByteType);
     this._shoreTex.wrapS = this._shoreTex.wrapT = THREE.ClampToEdgeWrapping;
@@ -781,8 +873,16 @@ export class WaterFX {
     this._shoreTex.needsUpdate = true;
     this._shoreDirty = false;
     this._tileFlags = new Uint8Array(this.N * this.N);
-    this._buildVarField();
 
+    // ---- terrain warp lattice cache (see setLandWarp) ----------------------
+    this._warpFn = null;
+    this._warpStep = o.warpStep;
+    this._warpLN = 0;
+    this._warpDX = null; this._warpDZ = null; this._warpOK = null;
+    this._wtmp = [0, 0];
+    if (typeof o.landWarp === 'function') this._setWarp(o.landWarp, o.warpStep);
+
+    // Only the sea bed uses this now (grain + caustics); the surface is flat.
     this._normalTex = makeWaveNormalTexture(o.normalTexSize);
 
     // ---- fake-reflection emitter map (top-down city light, world XZ) -------
@@ -815,109 +915,100 @@ export class WaterFX {
     this.uniforms = Object.assign({}, shared, {
       uSunDir: { value: new THREE.Vector3(0.45, 0.72, 0.53).normalize() },
       uSkyTop: { value: srgb(0x2f7fd8) },
-      uSkyHorizon: { value: srgb(0xbfe2fa) },
-      // ---- the depth ramp -----------------------------------------------
-      // These are BODY colours, i.e. what a swimmer sees, not what the frame
-      // shows: fresnel sky, the glint and (at grazing angles) the aerial
-      // perspective all sit on top. Their linear luminances are 0.22 / 0.10 /
-      // 0.028, chosen against the measured surroundings in the region shot
-      // (grass 0.178, city 0.123) so that open water lands BELOW both — the
-      // previous set (0.49 / 0.32 / 0.081) put the lake 2.8x above the grass.
-      uShallowColor: { value: srgb(0x2f9489) },
-      uMidColor: { value: srgb(0x156081) },
-      uDeepColor: { value: srgb(0x0c305c) },
-      uBeachColor: { value: srgb(0x5f9d92) },
-      uFoamColor: { value: srgb(0xf4fdff) },
-      uGlint: { value: 1.0 },
-      uGlintGain: { value: 1.0 },
-      uGlintRough: { value: 0.0 },
-      // Near-opaque. terrain.js owns the sea bed; letting it show through was
-      // the source of the "hard triangle seams" across the lake.
-      uOpacityDeep: { value: 1.0 },
-      uOpacityShore: { value: 0.92 },
-      uDetail: { value: 0.30 },
-      // Normalised shore units: 0.050 x far(5 tiles) x TILE(8) = 2.0 world
-      // units, surging out to ~3.2. The hard gate (uFoamGate) caps it at 4.0.
-      uFoamWidth: { value: 0.050 },
-      uEnvIntensity: { value: 0.6 },
-      uSkyGain: { value: 1.0 },
-      // Night fold-down of the BODY. Retuned with the new (much darker) day
-      // body: at 0.085 the lake dimmed to a water/land night keep-RATIO of 0.52,
-      // i.e. it fell away faster than the ground it sits in. 0.20 restores 0.74.
-      uNightFloor: { value: 0.20 },
-      // Normalised shore units, so 0.085 x the ~+/-1.14 wobble amplitude x the
-      // 5-tile field range is roughly +/-0.5 tiles of meander on the WATERLINE
-      // (colour + foam), and it is faded out past uWobbleFade so it can only
-      // ever act ON the shoreline. It cannot move the mesh silhouette — see
-      // shoreRetreat.
-      uShoreWobble: { value: 0.085 },
-      uWobbleFade: { value: 0.22 },
+      // ---- the palette (sRGB hex, authored against ref05's hotel pool) ----
+      // Measured in ref05's pool: body #15d7f0 / #0acbea, darker slabs
+      // #049eda, walls #0c94d2 (lit) .. #00316e (shade), deck #fad79d.
+      // Round-2 critic: ours read "paler, washed-out, little contrast", so
+      // the body is a vivid pool blue and the slabs are real value steps.
+      // Round 6: ONE flat body colour (uMidColor) with patch tone steps
+      // either side: light2 / light1 / BODY / dark1 / dark2.
+      // Round 7: a depth ramp shallow -> mid -> deep (ref05's pool goes from
+      // #1adcf5 by the rim to #0292ce in the middle); uEdgeColor is what a
+      // light patch leans toward, uDark2Color a darker patch's multiplier.
+      // Round 8 (critic r7: "dull teal-navy #0e6b9c..#128cb0, darkest in the
+      // middle"): post.js's grade (exposure 0.92, luma curve gamma 1.3 + dip,
+      // coolSat 0.15 at 195 deg, highlight knee) maps a flat #2ea3ee to
+      // #1691d4 and caps blue near 0xe8. Measured, flat lake, gain 1.35:
+      // #2194e6 -> #1e94e7, #4dbff5 -> #3cafe4, #8fe6fa -> #7cd9eb. So the
+      // body is authored bright + cyan and uGain (1.35, lake only; the open
+      // sea keeps terrain's colour) lifts it so the SCREEN lands on ref05's
+      // pool blue (~#2ea3ee) with a light cyan rim. Retune if post changes.
+      // Round 9 (critic r8: "pale, pastel, flat; tiles barely differ; inner
+      // wall washed-out light blue"): the HDR gain was the problem — above 1.0
+      // the tonemap shoulder + coolSat add red and grey the pool out. Now gain
+      // 1.0 and every body colour has R = 0 with its peak channel <= 1, which
+      // measured flat: #00a8ff -> #1996e0, #0090f0 -> #1186d5, #00c8ff ->
+      // #1bacd7 (the most saturated the grade allows). Dark patches are ~18%
+      // darker; walls are a strong saturated blue under the cream coping.
+      // Round 10 (critic r9: "darker, flatter cobalt; deep patches #0f75cb;
+      // light/dark patches low contrast; ref05 is a luminous turquoise"):
+      // the water now writes post.js's WATER KEY (alpha 0.625), so the grade's
+      // dip + cool-hue cut no longer apply and a flat lake renders ~as authored
+      // (measured flat: #00ccff -> #0bc9fb, #0098e0 -> #0098e1, #40e8ff ->
+      // #19e5fa). Palette authored straight off ref05's pool pixels: rim
+      // #20d9f8, body #0cbff1, dark tiles #0092d4, pale patches #5de8fd.
+      // Round 11 (critic r10: "too cyan and too light, #00c6f5..#23dafa vs
+      // the ref pool's #0495d4..#02aede; values in a narrow band -> one flat
+      // glowing sheet"): the whole ramp moves down to ref05's azure, base
+      // #0a9fe0, and spreads out — shallow -> deep is now a ~20% value drop,
+      // the wall band is narrower and only a step lighter, light patches lean
+      // to #3cd6f6 instead of near-white cyan.
+      // Round 12 (critic r11: "a bit more royal-blue and less turquoise than
+      // the ref pool"; ref05 samples: near edge / step #5ddfec, centre
+      // #10cfee, under the far wall #058ecc): the ramp runs pale turquoise at
+      // the near edge -> bright cyan -> azure under the far walls.
+      // Round 14 (critic r13: "random dark rectangles read as checkerboard
+      // blotches, rims washed-out pale cyan; ref05 is a saturated pool blue
+      // that darkens steadily toward the centre"): five saturated steps keyed
+      // to distance from the walls (uTerr), rim -> abyss. Samples off ref05's
+      // pool: by the wall #13d0ee, then #0cc3eb, #00b0df, #029cd2, #0087c9.
+      uEdgeColor: { value: srgb(0x62e2f2) },
+      uPatchColor: { value: srgb(0x16cbf2) },   // rim step hugging every wall (saturated, not pale)
+      uShallowColor: { value: srgb(0x0abbee) },
+      uMidColor: { value: srgb(0x02a9e6) },
+      uDeepColor: { value: srgb(0x0499de) },
+      uCoreColor: { value: srgb(0x048fd9) },
+      uAbyssColor: { value: srgb(0x0684d2) },
+      uTerr: { value: new THREE.Vector4(6.0, 12.0, 19.0, 28.0) },
+      uTerr2: { value: new THREE.Vector2(5.0, 0.0) },
+      uSeaColor: { value: srgb(0x0394d8) },
+      uWallLine: { value: srgb(0x0877c2) },
+      uFoamColor: { value: srgb(0xeafcff) },
+      uNightTint: { value: new THREE.Color(0.10, 0.17, 0.34) },
+      // Shadowed water stays clearly blue (ref04/05 shadows are light and
+      // colourful, never grey).
+      uShadowTint: { value: new THREE.Color(0.62, 0.74, 0.90) },
+      uGain: { value: 1.0 },
+      uNightFloor: { value: 0.0 },
+      uFar: { value: o.far * this.TILE },
+      uFine: { value: new THREE.Vector2(o.fineMin, o.fineRange) },
+      // round 13: LINEAR multiplier sized for ~-24% G / -9% B on screen (was ~-6%)
+      uDark2Color: { value: new THREE.Color(0.42, 0.60, 0.83) },
+      uCausticHi: { value: srgb(0x8aeafc) },
+      uDepth: { value: new THREE.Vector2(3.0, 30.0) },
+      // patch cell sizes (world units; a tile is 8): layer A 19x13, layer B
+      // 11x16, layer C is B scaled to ~7x7 — odd sizes so no grid lines up.
+      uPatch: { value: new THREE.Vector4(26.0, 18.0, 14.0, 17.0) },   // round 13: bigger blocks
+      // (tone strength, drift u/s, -)
+      uPatchMix: { value: new THREE.Vector3(1.0, 0.28, 0.0) },
+      // specular flecks (strength, density per cell, cell size, -)
+      // round 13: (strength, streak-cell density, streak cell size, sparkle cell size)
+      uSpark: { value: new THREE.Vector4(1.0, 0.30, 14.0, 7.0) },
+      // (foam line width, pale ledge width, lap breathing reach, lap strength)
+      uFoam: { value: new THREE.Vector4(0.45, 2.4, 0.6, 0.45) },   // round 14: .y = rim step width
+      // (depth wobble amplitude, noise scale, drift speed) — see the shader
+      uEdgeFade: { value: 20.0 },
+      uTileSize: { value: this.TILE },
+      uFloatPos: { value: Array.from({ length: MAX_FLOATS }, () => new THREE.Vector4(0, 0, 0, 0)) },
+      // far-wall shade band (round 12): (-x width, -z width, -x strength,
+      // -z strength). The -x walls face the key light's far side (ref05's
+      // top-left wall), so they throw the wider, darker band.
+      uWallShade: { value: new THREE.Vector4(1.2, 0.9, 0.8, 0.6) },   // round 13: a narrow shadow step only
+      uShadeColor: { value: new THREE.Color(0.50, 0.72, 0.86) },
+      uNearRamp: { value: new THREE.Vector2(3.0, 44.0) },
       uEmitStrength: { value: 0.0 },
-      // (march step in world units, per-step exponential decay). 10 taps x 30
-      // units = 300 units of reach; the step stays near the emitter map's own
-      // 10-unit texel size so the streak does not alias into bands.
       uEmitParams: { value: new THREE.Vector2(30.0, 0.20) },
-      // How far above `uSkyHorizon` the reflected horizon band sits. The colour
-      // engine.js hands us is the FOG colour, which is deliberately duller than
-      // the sky dome it is supposed to match; reflecting it verbatim is what
-      // made the far lake darker than the sky directly above it.
-      // 2.35 was a 2.35x SKY, not a lifted fog colour: reflected through the
-      // grazing floor and then again through the aerial-perspective haze it
-      // made the far half of every lake the brightest surface in the frame.
-      // 1.25 is enough to clear the (deliberately dull) fog tone so the grazing
-      // far edge still reads brighter than the sky above it.
-      uHorizonLift: { value: 1.45 },
-      // Aerial perspective converges on the reflected sky rather than the land
-      // haze colour (see the fog block at the bottom of the surface shader).
-      uHazeRefl: { value: 0.86 },
-      uGrazePow: { value: 4.0 },
-      // Reflected Mie halo gain (see skyLook). Small: this is a halo, not a
-      // second sky.
-      uMieGain: { value: 0.20 },
-      // Foam gate, in RAW shore-field units: 0.10 x far(5 tiles) x TILE(8) = 4.0
-      // world units, half a tile. Nothing downstream may widen it — the surge,
-      // the lace noise and the shore wobble may only ever reduce it.
-      // (A literal 2-unit gate was measured and is invisible: terrain.js draws a
-      // 0.35-unit bank at the waterline, which occludes ~1.2 units of water at
-      // the waterfront shot's 16-degree camera, and the shore field is only
-      // sampled every 2 units. 4.0 is the narrowest band that actually reads.
-      // The nearest OPEN water is 12+ units offshore, so this cannot reach it.)
-      uFoamGate: { value: 0.10 },
-      // Off-peak GGX pedestal, and how much of the glint survives once the fine
-      // normal layers have mipped away. Both were effectively 1.0 before.
-      // (crest gate lo, hi, gain). A HIGH gain through a NARROW gate is the
-      // whole trick: total specular energy is roughly gain x (1 - gate width),
-      // so pushing the gate from 0.62 to 0.80 and the gain from 2.4 to 18 keeps
-      // the peak HDR (it still clears the bloom threshold) while cutting the
-      // number of pixels that carry any specular at all by ~5x. Measured on the
-      // waterfront shot: 0.45 % of water pixels gain >30/255 from the glint,
-      // against 35.85 % with the old 0.45 pedestal.
-      uSparkFloor: { value: 0.010 },
-      uSparkGate: { value: new THREE.Vector3(0.80, 0.99, 18.0) },
-      uSwellSpark: { value: 0.85 },
-      uGlintFar: { value: 0.15 },
-      // GGX roughness of the sun lobe, and the HDR scale of its peak. The peak
-      // is 1/(pi*rough^2) ~= 130, so uSpecScale lands it well above the bloom
-      // threshold on the facets that align, and near zero everywhere else.
-      // Measured trade-off (waterfront shot, 63-degree sun): slope 6 / scale
-      // 0.40 puts ~20 pixels per frame over 245/255 pure white while the mean
-      // water chroma only falls 0.349 -> 0.32. Pushing to slope 8 / 0.5 doubles
-      // the sparkle but takes chroma to 0.30 and starts frosting the turquoise.
-      uGlintRough2: { value: 0.10 },
-      uSpecScale: { value: 2.2 },
-      // MEASURED, not guessed. The half-vector angle off vertical is what
-      // decides whether a glint is reachable at all, and it is completely
-      // different per shot: region (polar 0.72, sun at 63 deg, camera 126 deg
-      // round from the sun) puts H only 18 deg off vertical, while waterfront
-      // (polar 1.28) puts it at 49 deg. A specular normal that can only tilt
-      // ~26 deg therefore sparkles in one shot and is mathematically dead in the
-      // other — which is why the old build needed a 0.45 pedestal (a haze over
-      // everything) to show any highlight at the waterfront at all. Slope 11
-      // reaches the 49-degree facets, so the highlight can come from the LOBE
-      // instead of from a pedestal.
-      uGlintSlope: { value: 11.0 },
       uEmitMap: { value: this._emitTex },
-      uEnvMap: { value: null },
       fogColor: { value: new THREE.Color(0xffffff) },
       fogDensity: { value: 0.00025 },
       fogNear: { value: 1 },
@@ -938,16 +1029,19 @@ export class WaterFX {
       fogFar: { value: 2000 },
     });
 
+    // Opaque: the surface is fully authored colour, and an opaque pass keeps it
+    // out of the transparent sort and lets post.js's AO see a solid plane.
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
       vertexShader: SURFACE_VERT,
       fragmentShader: SURFACE_FRAG,
-      transparent: true,
+      transparent: false,
       depthWrite: true,
       depthTest: true,
       side: THREE.FrontSide,
       fog: true,
     });
+    this.material.extensions = { derivatives: true };
     this.material.name = 'WaterFX.surface';
 
     this.bedMaterial = new THREE.ShaderMaterial({
@@ -960,17 +1054,51 @@ export class WaterFX {
     });
     this.bedMaterial.name = 'WaterFX.bed';
 
+    // ---- the voxel basin: sand deck, coping, pool walls, floats -------------
+    // A lit, flat-shaded vertex-colour material, so the three face tones come
+    // from the same sun/sky rig as every building (engine.js patches it for
+    // the CSM cascades). Colours are authored per face, never textured.
+    this.bankMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.92, metalness: 0.0, envMapIntensity: 0.35,
+    });
+    this.bankMaterial.name = 'WaterFX.bank';
+    // Round 8 (critic r7: "a thick dark-navy inner wall band runs round the
+    // whole shoreline and makes the lake look heavy and sunken"): the pool
+    // walls face away from the sun, so the lit material alone (plus post's
+    // mid-tone curve) crushed them to #062d4a. Wall vertices carry aGlow, a
+    // self-lit share of their own vertex colour, so they stay a bright,
+    // saturated pool-tile blue on both faces like ref05 — every other bank
+    // face has aGlow 0 and is lit exactly as before. Dims at night.
+    this._wallGlow = { value: 1.0 };
+    const wallGlow = this._wallGlow;
+    this.bankMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.uWallGlow = wallGlow;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aGlow;\nvarying float vGlow;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uWallGlow;\nvarying float vGlow;')
+        .replace('#include <emissivemap_fragment>',
+          '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vGlow * uWallGlow;')
+        // Round 11: the wall tiles (full glow) also write post.js's WATER KEY
+        // alpha, so the grade's upper-mid dip / cool-hue cut spare them like
+        // the surface (they went a greyed #358ef2 / #1075c8). Off at night.
+        .replace('#include <dithering_fragment>',
+          '#include <dithering_fragment>\nif (vGlow > 0.5 && uWallGlow > 0.5) gl_FragColor.a = 0.625;');
+    };
+    this.bankMaterial.customProgramCacheKey = () => 'waterbank-glow';
+    const bc = Object.assign({}, BANK_COLORS, o.bankColors || {});
+    this._bankCol = {};
+    for (const k in bc) this._bankCol[k] = srgb(bc[k]);
+    this._floats = [];
+    this._floatMeshes = null;             // made once the group exists
+
     this.group = new THREE.Group();
     this.group.name = 'WaterFX';
     this.group.matrixAutoUpdate = false;
     if (scene && scene.add) scene.add(this.group);
+    this._floatMeshes = this._makeFloatMeshes();
 
-    this._detailBase = this.uniforms.uDetail.value;
-    // Authored values that setQuality() scales DOWN from. Kept separate so a
-    // quality switch never compounds with a previous quality switch, and so
-    // setSky() can re-author them at any level.
-    this._specBase = this.uniforms.uSpecScale.value;
-    this._glintRoughBase = this.uniforms.uGlintRough2.value;
     this._emitGain = 0.85;
     this._emitters = null;
     this._lastState = null;
@@ -991,6 +1119,7 @@ export class WaterFX {
   buildSurface(state) {
     this._disposeChunks();
     this._lastState = state;
+    this._invalidateWarp(0, 0, this.N - 1, this.N - 1);
     this._buildEmitMap(state);
     this._computeShoreField(state, 0, 0, this.N - 1, this.N - 1);
     this._uploadShore();
@@ -998,6 +1127,8 @@ export class WaterFX {
     for (let cz = 0; cz < this.chunksPerSide; cz++) {
       for (let cx = 0; cx < this.chunksPerSide; cx++) this._buildChunk(state, cx, cz);
     }
+    this._buildApron(state);
+    this._placeFloats(state);
     this._built = true;
     return this;
   }
@@ -1011,12 +1142,149 @@ export class WaterFX {
     this._lastState = state;
     this._emitDirty = true;                // coalesced; flushed in update()
     const pad = Math.ceil(this.opts.far) + 2;
+    // terrain.js re-derives its warp from fields that change up to a few
+    // tiles around the edit, so the cached lattice there is stale.
+    this._invalidateWarp(x - pad, z - pad, x + pad, z + pad);
     this._computeShoreField(state, x - pad, z - pad, x + pad, z + pad);
     this._shoreDirty = true;               // coalesced; flushed in update()
-    const cx = Math.floor(x / this.CHUNK), cz = Math.floor(z / this.CHUNK);
-    this._removeChunk(cx, cz);
-    this._buildChunk(state, cx, cz);
+    // The basin's walls and deck sides depend on the 4-neighbours, so an edit
+    // on a chunk border dirties the neighbouring chunk too.
+    const seen = new Set();
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tx = x + dx, tz = z + dz;
+        if (tx < 0 || tz < 0 || tx >= this.N || tz >= this.N) continue;
+        const cx = Math.floor(tx / this.CHUNK), cz = Math.floor(tz / this.CHUNK);
+        const k = this._key(cx, cz);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        this._removeChunk(cx, cz);
+        this._buildChunk(state, cx, cz);
+      }
+    }
+    if (x <= 1 || z <= 1 || x >= this.N - 2 || z >= this.N - 2) this._buildApron(state);
+    this._placeFloats(state);
     return this;
+  }
+
+  /**
+   * The open sea past the map edge. Every water tile on the map boundary gets
+   * a long flat strip of the SAME surface running straight out to the horizon
+   * (corner tiles get the corner square too), at the same recessed height, so
+   * the coast's sea simply continues off-map — no step, no cut face, and it
+   * covers terrain's lower, flat off-map sea slab with a crisp straight edge.
+   */
+  _buildApron(state) {
+    if (this._apron) {
+      this.group.remove(this._apron);
+      this._apron.geometry.dispose();
+      this._apron = null;
+    }
+    const N = this.N, T = this.TILE, L = this.opts.apron * T, y = this.opts.waterY;
+    if (!(L > 0)) return;
+    const P = [], IX = [];
+    const rect = (ax, az, bx, bz) => {
+      const b = P.length / 3;
+      P.push(ax, y, az, bx, y, az, ax, y, bz, bx, y, bz);
+      IX.push(b, b + 2, b + 1, b + 1, b + 2, b + 3);
+    };
+    const W = N * T;
+    for (let k = 0; k < N; k++) {
+      const a = k * T, b = a + T;
+      if (this._isWater(state, k, 0)) rect(a, -L, b, 0);
+      if (this._isWater(state, k, N - 1)) rect(a, W, b, W + L);
+      if (this._isWater(state, 0, k)) rect(-L, a, 0, b);
+      if (this._isWater(state, N - 1, k)) rect(W, a, W + L, b);
+    }
+    if (this._isWater(state, 0, 0)) rect(-L, -L, 0, 0);
+    if (this._isWater(state, N - 1, 0)) rect(W, -L, W + L, 0);
+    if (this._isWater(state, 0, N - 1)) rect(-L, W, 0, W + L);
+    if (this._isWater(state, N - 1, N - 1)) rect(W, W, W + L, W + L);
+    if (!IX.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setIndex(P.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(IX, 1) : new THREE.Uint16BufferAttribute(IX, 1));
+    geo.computeBoundingSphere();
+    const m = new THREE.Mesh(geo, this.material);
+    m.name = 'water-apron';
+    m.renderOrder = 1;
+    m.matrixAutoUpdate = false;
+    m.updateMatrix();
+    this.group.add(m);
+    this._apron = m;
+  }
+
+  /**
+   * Tell the water where the land REALLY ends. terrain.js displaces its ground
+   * lattice horizontally near the shore (so the coast meanders off the tile
+   * grid) and draws the land over the water there. Handing that displacement
+   * to WaterFX lets the shore field — and so the foam line, the pale band and
+   * the depth terraces — follow the visible edge rather than the tile grid
+   * hidden underneath it.
+   * @param {(wx:number, wz:number, out:number[]) => number[]} fn  or null
+   * @param {number} [step] the terrain lattice spacing in world units
+   */
+  setLandWarp(fn, step) {
+    this._setWarp(typeof fn === 'function' ? fn : null, step || this._warpStep);
+    if (this._built && this._lastState) {
+      this._computeShoreField(this._lastState, 0, 0, this.N - 1, this.N - 1);
+      this._uploadShore();
+    }
+    return this;
+  }
+
+  _setWarp(fn, step) {
+    this._warpFn = fn;
+    this._warpStep = Math.max(0.5, +step || 4);
+    const LN = Math.round(this.worldSize / this._warpStep) + 1;
+    if (LN !== this._warpLN) {
+      this._warpLN = LN;
+      this._warpDX = new Float32Array(LN * LN);
+      this._warpDZ = new Float32Array(LN * LN);
+      this._warpOK = new Uint8Array(LN * LN);
+    } else if (this._warpOK) this._warpOK.fill(0);
+  }
+
+  _invalidateWarp(tx0, tz0, tx1, tz1) {
+    if (!this._warpOK) return;
+    const LN = this._warpLN, st = this._warpStep, T = this.TILE;
+    const i0 = Math.max(0, Math.floor(tx0 * T / st) - 1), i1 = Math.min(LN - 1, Math.ceil((tx1 + 1) * T / st) + 1);
+    const j0 = Math.max(0, Math.floor(tz0 * T / st) - 1), j1 = Math.min(LN - 1, Math.ceil((tz1 + 1) * T / st) + 1);
+    for (let j = j0; j <= j1; j++) this._warpOK.fill(0, j * LN + i0, j * LN + i1 + 1);
+  }
+
+  _latDisp(i, j) {
+    const LN = this._warpLN;
+    const k = j * LN + i;
+    if (!this._warpOK[k]) {
+      const st = this._warpStep, px = i * st, pz = j * st, o = this._wtmp;
+      o[0] = px; o[1] = pz;
+      let dx = 0, dz = 0;
+      try {
+        const r = this._warpFn(px, pz, o) || o;
+        dx = r[0] - px; dz = r[1] - pz;
+        if (!isFinite(dx) || !isFinite(dz)) { dx = 0; dz = 0; }
+      } catch (e) { dx = 0; dz = 0; }
+      this._warpDX[k] = dx; this._warpDZ[k] = dz; this._warpOK[k] = 1;
+    }
+    return k;
+  }
+
+  /** Bilinear lattice displacement at world (wx,wz), written into out. */
+  _dispAt(wx, wz, out) {
+    const LN = this._warpLN, st = this._warpStep;
+    let u = wx / st, v = wz / st;
+    if (u < 0) u = 0; else if (u > LN - 1.001) u = LN - 1.001;
+    if (v < 0) v = 0; else if (v > LN - 1.001) v = LN - 1.001;
+    const i = u | 0, j = v | 0, fu = u - i, fv = v - j;
+    const a = this._latDisp(i, j), b = this._latDisp(i + 1, j);
+    const c = this._latDisp(i, j + 1), d = this._latDisp(i + 1, j + 1);
+    const DX = this._warpDX, DZ = this._warpDZ;
+    const x0 = DX[a] + (DX[b] - DX[a]) * fu, x1 = DX[c] + (DX[d] - DX[c]) * fu;
+    const z0 = DZ[a] + (DZ[b] - DZ[a]) * fu, z1 = DZ[c] + (DZ[d] - DZ[c]) * fu;
+    out[0] = x0 + (x1 - x0) * fv;
+    out[1] = z0 + (z1 - z0) * fv;
+    return out;
   }
 
   _isWater(state, x, z) {
@@ -1032,43 +1300,16 @@ export class WaterFX {
 
   _key(cx, cz) { return cx + ',' + cz; }
 
-  /** 1 at the waterline, 0 more than ~1.6 tiles offshore. Reads the baked
-   *  distance field, so it agrees for every duplicate of a shared vertex. */
-  _fringeWeight(wx, wz) {
-    const S = this.S, W = this.fieldW;
-    let cx = Math.floor(wx / this.TILE * S), cz = Math.floor(wz / this.TILE * S);
-    if (cx < 0) cx = 0; else if (cx > W - 1) cx = W - 1;
-    if (cz < 0) cz = 0; else if (cz > W - 1) cz = W - 1;
-    let d = this._distLand[cz * W + cx];
-    if (!(d < INF)) return 0;
-    d = (d > 0.5 ? d - 0.5 : 0) / S;          // cells -> tiles from the shoreline
-    const t = 1 - Math.min(1, Math.max(0, d / 1.6));
-    return t * t * (3 - 2 * t);
-  }
-
-  /** Unit vector pointing OFFSHORE (up the shore-distance gradient) at (wx,wz).
-   *  Written into `out` = [x, z]. Returns false if the gradient is degenerate. */
-  _shoreGrad(wx, wz, out) {
-    const S = this.S, W = this.fieldW, dl = this._distLand;
-    const fx = wx / this.TILE * S, fz = wz / this.TILE * S;
-    const cl = (v) => (v < 1 ? 1 : (v > W - 2 ? W - 2 : v)) | 0;
-    const cx = cl(Math.floor(fx)), cz = cl(Math.floor(fz));
-    const at = (x, z) => { const v = dl[z * W + x]; return v < INF ? v : this.opts.far * S; };
-    let gx = at(cx + 1, cz) - at(cx - 1, cz);
-    let gz = at(cx, cz + 1) - at(cx, cz - 1);
-    const m = Math.sqrt(gx * gx + gz * gz);
-    if (m < 1e-4) return false;
-    out[0] = gx / m; out[1] = gz / m;
-    return true;
-  }
-
   _removeChunk(cx, cz) {
     const k = this._key(cx, cz);
     const c = this._chunks.get(k);
     if (!c) return;
     if (c.surf) this.group.remove(c.surf);
     if (c.bed) this.group.remove(c.bed);
+    if (c.bank) this.group.remove(c.bank);
     if (c.geo) c.geo.dispose();
+    if (c.bankGeo) c.bankGeo.dispose();
+    this._waterTiles -= c.tiles || 0;
     this._chunks.delete(k);
   }
 
@@ -1085,33 +1326,31 @@ export class WaterFX {
     const x0 = cx * this.CHUNK, z0 = cz * this.CHUNK;
     const x1 = Math.min(N, x0 + this.CHUNK), z1 = Math.min(N, z0 + this.CHUNK);
 
-    // Count first so we can allocate exact typed arrays (no push()-churn).
     let tiles = 0;
     for (let z = z0; z < z1; z++)
       for (let x = x0; x < x1; x++) if (this._isWater(state, x, z)) tiles++;
-    if (tiles === 0) return;
+    const bankGeo = this._buildBank(state, x0, z0, x1, z1);
+    let bank = null;
+    if (bankGeo) {
+      bank = new THREE.Mesh(bankGeo, this.bankMaterial);
+      bank.name = `waterbank-${cx}-${cz}`;
+      bank.castShadow = true;
+      bank.receiveShadow = true;
+      bank.matrixAutoUpdate = false;
+      bank.updateMatrix();
+      this.group.add(bank);
+    }
+    if (tiles === 0) {
+      if (bank) this._chunks.set(this._key(cx, cz), { geo: null, surf: null, bed: null, bank, bankGeo, tiles: 0 });
+      return;
+    }
 
-    const vpt = (SUB + 1) * (SUB + 1);      // verts per tile
-    const ipt = SUB * SUB * 6;              // indices per tile
+    const vpt = (SUB + 1) * (SUB + 1);
+    const ipt = SUB * SUB * 6;
     const pos = new Float32Array(tiles * vpt * 3);
     const idx = (tiles * vpt > 65535) ? new Uint32Array(tiles * ipt) : new Uint16Array(tiles * ipt);
     const step = T / SUB;
     const y = this.opts.waterY;
-
-    // Shoreline jitter: a smooth, world-space (NOT per-tile) noise field, so
-    // every copy of a shared lattice point in every neighbouring tile/chunk
-    // agrees and no triangle can fold. Only the fringe moves.
-    const jitAmp = Math.max(0, this.opts.shoreJitter) * T;
-    const jitLat = 1 / (T * 2.6);
-    // How much of the OFFSHORE (retreating) jitter component survives. Moving a
-    // fringe vertex offshore uncovers whatever terrain.js drew under the water;
-    // moving it onshore just tucks it under the bank and is always free. 0 keeps
-    // only the tangential slide (which cannot move an axis-aligned edge at all,
-    // so the shoreline stays on the grid); 1 lets the waterline genuinely
-    // meander at the cost of showing the sea bed in the gap.
-    const keepOut = Math.max(0, Math.min(1, this.opts.shoreRetreat));
-    const wsMax = this.worldSize;
-    if (!this._g2) this._g2 = [0, 0];
 
     let vp = 0, ip = 0, base = 0;
     for (let z = z0; z < z1; z++) {
@@ -1120,35 +1359,9 @@ export class WaterFX {
         const wx = x * T, wz = z * T;
         for (let j = 0; j <= SUB; j++) {
           for (let i = 0; i <= SUB; i++) {
-            let px = wx + i * step, pz = wz + j * step;
-            if (jitAmp > 0) {
-              const fr = this._fringeWeight(px, pz);
-              if (fr > 0.001) {
-                let jx = (vnoise(px * jitLat, pz * jitLat, 7717) - 0.5) * 2;
-                let jz = (vnoise(px * jitLat + 31.7, pz * jitLat - 17.3, 4409) - 0.5) * 2;
-                // Project OUT the offshore component. terrain.js draws a hard
-                // vertical bank at the tile boundary, so a vertex that retreats
-                // offshore just uncovers a black wall; a vertex that slides
-                // sideways or tucks under the land is free. The visible
-                // meander of the waterline comes from uShoreWobble in the
-                // fragment shader; this keeps the mesh off the grid without
-                // ever exposing the bank.
-                if (keepOut < 1 && this._shoreGrad(px, pz, this._g2)) {
-                  const dp = jx * this._g2[0] + jz * this._g2[1];
-                  if (dp > 0) {
-                    const cut = dp * (1 - keepOut);
-                    jx -= cut * this._g2[0]; jz -= cut * this._g2[1];
-                  }
-                }
-                px += jx * jitAmp * fr;
-                pz += jz * jitAmp * fr;
-                if (px < 0) px = 0; else if (px > wsMax) px = wsMax;
-                if (pz < 0) pz = 0; else if (pz > wsMax) pz = wsMax;
-              }
-            }
-            pos[vp++] = px;
+            pos[vp++] = wx + i * step;
             pos[vp++] = y;
-            pos[vp++] = pz;
+            pos[vp++] = wz + j * step;
           }
         }
         for (let j = 0; j < SUB; j++) {
@@ -1169,7 +1382,7 @@ export class WaterFX {
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     geo.setIndex(new THREE.BufferAttribute(idx, 1));
     geo.computeBoundingSphere();
-    geo.boundingSphere.radius += 2.5;      // room for vertex displacement
+    geo.boundingSphere.radius += 2.5;
 
     const surf = new THREE.Mesh(geo, this.material);
     surf.name = `water-${cx}-${cz}`;
@@ -1193,36 +1406,498 @@ export class WaterFX {
     }
 
     this._waterTiles += tiles;
-    this._chunks.set(this._key(cx, cz), { geo, surf, bed, tiles });
+    this._chunks.set(this._key(cx, cz), { geo, surf, bed, bank, bankGeo, tiles });
+  }
+
+  // -------------------------------------------------------------------------
+  // The voxel basin: sand deck + coping + pool walls (flat-shaded quads)
+  // -------------------------------------------------------------------------
+
+  _isDeck(state, x, z) {
+    if (x < 0 || z < 0 || x >= this.N || z >= this.N) return false;
+    const i = z * this.N + x;
+    return state.map[i] === T_SAND && !(state.bridge && state.bridge[i] === 1);
+  }
+
+  /** A deck tile with no water anywhere in its 8-neighbourhood: a lawn bed. */
+  _isLawn(state, x, z) {
+    if (!this._isDeck(state, x, z)) return false;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, nz = z + dz;
+        if (nx < 0 || nz < 0 || nx >= this.N || nz >= this.N) continue;
+        if (this._isWater(state, nx, nz)) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Hedge planters on a deck tile (round 7 — critic: "hard stepped outline and
+   * all-sand surround reads as a giant swimming pool; break the shore up with
+   * some grass"). A chunky lime box with a darker foot band runs along an edge
+   * that faces grass (the outer rim of the sand ring) or a lawn bed, on a
+   * deterministic ~55% of those edges — ref05's pool deck is hemmed by hedges.
+   */
+  _hedges(state, tx, tz, X0, Z0, T, top, faceX, faceZ, C) {
+    const w = 1.4, inset = 0.35;
+    const box = (xa, za, xb, zb, H) => {
+      top(xa, za, xb, zb, H, C.hedgeTop);
+      faceX(xa, za, zb, DECK_Y + 0.3, H, -1, C.hedge);
+      faceX(xb, za, zb, DECK_Y + 0.3, H, 1, C.hedge);
+      faceZ(za, xa, xb, DECK_Y + 0.3, H, -1, C.hedge);
+      faceZ(zb, xa, xb, DECK_Y + 0.3, H, 1, C.hedge);
+      // a darker band at the foot (ref06 bushes' lower band)
+      faceX(xa, za, zb, DECK_Y, DECK_Y + 0.3, -1, C.hedgeBase);
+      faceX(xb, za, zb, DECK_Y, DECK_Y + 0.3, 1, C.hedgeBase);
+      faceZ(za, xa, xb, DECK_Y, DECK_Y + 0.3, -1, C.hedgeBase);
+      faceZ(zb, xa, xb, DECK_Y, DECK_Y + 0.3, 1, C.hedgeBase);
+    };
+    const X1 = X0 + T, Z1 = Z0 + T;
+    const lawn = this._isLawn(state, tx, tz);
+    const sides = [[1, 0, 11], [-1, 0, 23], [0, 1, 37], [0, -1, 59]];
+    for (const [dx, dz, salt] of sides) {
+      const nx = tx + dx, nz = tz + dz;
+      if (nx < 0 || nz < 0 || nx >= this.N || nz >= this.N) continue;
+      if (this._isWater(state, nx, nz)) continue;
+      const nDeck = this._isDeck(state, nx, nz);
+      // outer rim (faces grass), or a sand tile's edge against a lawn bed
+      const want = !nDeck || (!lawn && this._isLawn(state, nx, nz));
+      if (!want || hash01(tx, tz, salt) > 0.55) continue;
+      if (dx !== 0) {
+        const xa = dx > 0 ? X1 - inset - w : X0 + inset;
+        box(xa, Z0 + inset, xa + w, Z1 - inset, DECK_Y + 1.25);
+      } else {
+        const za = dz > 0 ? Z1 - inset - w : Z0 + inset;
+        box(X0 + inset, za, X1 - inset, za + w, DECK_Y + 1.1);
+      }
+    }
+  }
+
+  /**
+   * Geometry for the basin over tiles [x0,x1) x [z0,z1). Every face is an
+   * axis-aligned quad with its own flat normal and colour — hard voxel edges,
+   * no gradients. Returns null when the window has no deck and no walls.
+   */
+  _buildBank(state, x0, z0, x1, z1) {
+    const T = this.TILE, N = this.N, C = this._bankCol;
+    const P = [], NR = [], CL = [], GL = [], IX = [];
+    let glow = 0;                     // aGlow of the faces being emitted
+    const quad = (a, b, c, d, n, col) => {
+      // wind so the face points along n
+      const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+      const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      const cxp = uy * vz - uz * vy, cyp = uz * vx - ux * vz, czp = ux * vy - uy * vx;
+      const flip = (cxp * n[0] + cyp * n[1] + czp * n[2]) < 0;
+      const base = P.length / 3;
+      for (const v of [a, b, c, d]) {
+        P.push(v[0], v[1], v[2]);
+        NR.push(n[0], n[1], n[2]);
+        CL.push(col.r, col.g, col.b);
+        GL.push(glow);
+      }
+      if (flip) IX.push(base, base + 2, base + 1, base, base + 3, base + 2);
+      else IX.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    };
+    // Horizontal rect at y.
+    const top = (ax, az, bx, bz, y, col) =>
+      quad([ax, y, az], [bx, y, az], [bx, y, bz], [ax, y, bz], [0, 1, 0], col);
+    // Vertical face on the plane x = X (normal ±x), spanning z and y.
+    const faceX = (X, za, zb, ya, yb, nx, col) =>
+      quad([X, ya, za], [X, ya, zb], [X, yb, zb], [X, yb, za], [nx, 0, 0], col);
+    // Vertical face on the plane z = Z (normal ±z), spanning x and y.
+    const faceZ = (Z, xa, xb, ya, yb, nz, col) =>
+      quad([xa, ya, Z], [xb, ya, Z], [xb, yb, Z], [xa, yb, Z], [0, 0, nz], col);
+    const inMap = (x, z) => x >= 0 && z >= 0 && x < N && z < N;
+    const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const W = COPE_W, cy = DECK_Y + LIP;
+    const wy = this.opts.waterY, wallBot = wy - WALL_SINK;
+
+    for (let tz = z0; tz < z1; tz++) {
+      for (let tx = x0; tx < x1; tx++) {
+        const X0 = tx * T, X1 = X0 + T, Z0 = tz * T, Z1 = Z0 + T;
+
+        // ---- sand deck ----------------------------------------------------
+        if (this._isDeck(state, tx, tz)) {
+          // Round 7 (critic: "all-sand surround reads as a giant swimming
+          // pool"): deck tiles with no water in their 8-neighbourhood become
+          // raised lawn beds (ref05's pool deck is ringed by grass beds), and
+          // some lawn edges that face the sand get a chunky hedge planter.
+          const lawn = this._isLawn(state, tx, tz);
+          top(X0, Z0, X1, Z1, DECK_Y, lawn ? C.lawnTop : C.deckTop);
+          this._hedges(state, tx, tz, X0, Z0, T, top, faceX, faceZ, C);
+          for (const [dx, dz] of DIRS) {
+            const nx = tx + dx, nz = tz + dz;
+            const nIn = inMap(nx, nz);
+            if (nIn && this._isWater(state, nx, nz)) {
+              // coping strip along this edge (its water face is the wall)
+              if (dx !== 0) {
+                const xa = dx > 0 ? X1 - W : X0, xb = dx > 0 ? X1 : X0 + W;
+                top(xa, Z0, xb, Z1, cy, C.copeTop);
+                // round 11: a wet-sand strip where the deck meets the coping
+                if (!lawn) top(dx > 0 ? xa - WET_SAND : xb, Z0, dx > 0 ? xa : xb + WET_SAND, Z1, DECK_Y + 0.02, C.deckWet);
+                faceX(dx > 0 ? xa : xb, Z0, Z1, DECK_Y, cy, -dx, C.copeSide);
+                faceZ(Z0, xa, xb, DECK_Y, cy, -1, C.copeSide);
+                faceZ(Z1, xa, xb, DECK_Y, cy, 1, C.copeSide);
+              } else {
+                const za = dz > 0 ? Z1 - W : Z0, zb = dz > 0 ? Z1 : Z0 + W;
+                top(X0, za, X1, zb, cy, C.copeTop);
+                if (!lawn) top(X0, dz > 0 ? za - WET_SAND : zb, X1, dz > 0 ? za : zb + WET_SAND, DECK_Y + 0.02, C.deckWet);
+                faceZ(dz > 0 ? za : zb, X0, X1, DECK_Y, cy, -dz, C.copeSide);
+                faceX(X0, za, zb, DECK_Y, cy, -1, C.copeSide);
+                faceX(X1, za, zb, DECK_Y, cy, 1, C.copeSide);
+              }
+            } else if (!nIn || !this._isDeck(state, nx, nz)) {
+              // outer side of the deck: a crisp darker band, like a lot plinth
+              const sc = lawn ? C.lawnSide : C.deckSide;
+              if (dx !== 0) faceX(dx > 0 ? X1 : X0, Z0, Z1, SIDE_BOT, DECK_Y, dx, sc);
+              else faceZ(dz > 0 ? Z1 : Z0, X0, X1, SIDE_BOT, DECK_Y, dz, sc);
+            }
+          }
+          // coping corner square where the water only touches diagonally
+          for (const dx of [-1, 1]) {
+            for (const dz of [-1, 1]) {
+              if (!inMap(tx + dx, tz + dz) || !this._isWater(state, tx + dx, tz + dz)) continue;
+              if (this._isWater(state, tx + dx, tz) || this._isWater(state, tx, tz + dz)) continue;
+              const xa = dx > 0 ? X1 - W : X0, xb = dx > 0 ? X1 : X0 + W;
+              const za = dz > 0 ? Z1 - W : Z0, zb = dz > 0 ? Z1 : Z0 + W;
+              top(xa, za, xb, zb, cy, C.copeTop);
+              faceX(dx > 0 ? xa : xb, za, zb, DECK_Y, cy, -dx, C.copeSide);
+              faceZ(dz > 0 ? za : zb, xa, xb, DECK_Y, cy, -dz, C.copeSide);
+            }
+          }
+        }
+
+        // ---- pool walls: every water edge that meets land ------------------
+        if (this._isWater(state, tx, tz)) {
+          for (const [dx, dz] of DIRS) {
+            const nx = tx + dx, nz = tz + dz;
+            if (!inMap(nx, nz)) {
+              if (this.opts.apron > 0) continue;   // the sea runs on off-map
+              // Map edge: a clean blue cut face down to terrain's off-map sea
+              // (borderY), instead of the brown border cliff showing through.
+              if (dx !== 0) faceX(dx > 0 ? X1 + WALL_EPS : X0 - WALL_EPS, Z0, Z1, EDGE_BOT, this.opts.waterY, dx, C.seaEdge);
+              else faceZ(dz > 0 ? Z1 + WALL_EPS : Z0 - WALL_EPS, X0, X1, EDGE_BOT, this.opts.waterY, dz, C.seaEdge);
+              continue;
+            }
+            if (this._isWater(state, nx, nz)) continue;
+            const deck = this._isDeck(state, nx, nz);
+            const yTop = deck ? cy : GROUND_TOP;
+            const band = deck ? COPE_FACE : 0.10;
+            const bandCol = deck ? C.copeFace : C.wallTop;
+            // per-orientation tone (outward normal is -dx / -dz)
+            const k = dx < 0 ? WALL_TONE.px : dx > 0 ? WALL_TONE.nx : dz < 0 ? WALL_TONE.pz : WALL_TONE.nz;
+            const tone = (c) => new THREE.Color(Math.min(1, c.r * k), Math.min(1, c.g * k), Math.min(1, c.b * k));
+            const cWet = tone(C.wallWet), cWall = tone(C.wall), cAlt = tone(C.wallAlt), cGrout = tone(C.wallGrout);
+            const cSeam = tone(C.wallSeam);
+            // the pale coping face only dims half as much — it stays a light lip
+            const kb = 0.5 + 0.5 * Math.min(1, k);
+            const cBand = new THREE.Color(bandCol.r * kb, bandCol.g * kb, bandCol.b * kb);
+            // Wall, bottom to top: a thin wet strip at the waterline, the
+            // pool TILES (round 11, critic r10: "make the inner wall a taller,
+            // lighter, tiled blue band"): a grid of WALL_PANEL squares with
+            // thin darker seams, both ways, counted down from the coping so
+            // the top row is always whole (ref05's tiled pool wall), then a
+            // shadow line tucked under the lip and the coping/bank band.
+            const yWet = wy + WET_BAND, yGrout = yTop - band - 0.09, yBand = yTop - band;
+            const vert = (a, b, ya, yb, col) => {
+              if (dx !== 0) faceX(dx > 0 ? X1 - WALL_EPS : X0 + WALL_EPS, a, b, ya, yb, -dx, col);
+              else faceZ(dz > 0 ? Z1 - WALL_EPS : Z0 + WALL_EPS, a, b, ya, yb, -dz, col);
+            };
+            const A = dx !== 0 ? Z0 : X0;
+            glow = WALL_GLOW;
+            vert(A, A + T, wallBot, yWet, cWet);
+            // row boundaries (seams sit just under each boundary), top down
+            // Round 14 (critic r13: "the wall faces are a flat, even blue
+            // with no tile or depth gradient; ref05's inner wall is a shaded
+            // tiled band under the rim"): rows of tiles counted down from the
+            // coping, each row a step DARKER toward the water (ref05's shade
+            // face runs #105097 at the top to #052b6a at the waterline), in
+            // 2 u columns with soft seams. The rows are separated by the tone
+            // step alone — no grout lines (critic r12: "grid too strong").
+            const ROW_H = 1.0, ROW_K = [1.0, 0.84, 0.70, 0.60];
+            const rowsY = [yGrout];
+            while (rowsY[rowsY.length - 1] - ROW_H > yWet + 0.3) rowsY.push(rowsY[rowsY.length - 1] - ROW_H);
+            rowsY.push(yWet);
+            const dim = (c, f) => new THREE.Color(c.r * f, c.g * f, c.b * f);
+            for (let k = 0; k * WALL_PANEL < T - 1e-6; k++) {
+              const a = A + k * WALL_PANEL, b = Math.min(A + T, a + WALL_PANEL);
+              const gk = Math.floor((a + 1e-3) / WALL_PANEL);
+              const cT = (gk & 1) ? cAlt : cWall;
+              for (let r = 0; r + 1 < rowsY.length; r++) {
+                const f = ROW_K[Math.min(r, ROW_K.length - 1)];
+                const yb = rowsY[r], ya = rowsY[r + 1];
+                vert(a, a + WALL_SEAM, ya, yb, dim(cSeam, f));   // vertical seam
+                vert(a + WALL_SEAM, b, ya, yb, dim(cT, f));
+              }
+            }
+            vert(A, A + T, yGrout, yBand, cGrout);
+            glow = WALL_GLOW * 0.5;
+            vert(A, A + T, yBand, yTop, cBand);
+            glow = 0;
+          }
+          // Bridge tile: a light concrete pier from below the water up to the
+          // deck, so the bridge (now well above the recessed water) stands.
+          if (state.bridge && state.bridge[tz * N + tx] === 1) {
+            const h = 1.1, mx = X0 + T * 0.5, mz = Z0 + T * 0.5;
+            const pa = mx - h, pb = mx + h, qa = mz - h, qb = mz + h;
+            faceX(pa, qa, qb, wallBot, 0.05, -1, C.pierSide);
+            faceX(pb, qa, qb, wallBot, 0.05, 1, C.pierSide);
+            faceZ(qa, pa, pb, wallBot, 0.05, -1, C.pier);
+            faceZ(qb, pa, pb, wallBot, 0.05, 1, C.pier);
+          }
+        }
+      }
+    }
+    if (!IX.length) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(NR, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(CL, 3));
+    geo.setAttribute('aGlow', new THREE.Float32BufferAttribute(GL, 1));
+    geo.setIndex(P.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(IX, 1) : new THREE.Uint16BufferAttribute(IX, 1));
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  // -------------------------------------------------------------------------
+  // Pool floats: a few voxel rings and beach balls bobbing on the water
+  // -------------------------------------------------------------------------
+
+  _makeFloatMeshes() {
+    const C = this._bankCol;
+    const build = (boxes) => {
+      const P = [], NR = [], CL = [], IX = [];
+      const F = [ // [normal, 4 corner selectors]
+        [[1, 0, 0], [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]]],
+        [[-1, 0, 0], [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]]],
+        [[0, 1, 0], [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]]],
+        [[0, -1, 0], [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]],
+        [[0, 0, 1], [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]],
+        [[0, 0, -1], [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]]],
+      ];
+      for (const b of boxes) {
+        const [x0, y0, z0, x1, y1, z1, col] = b;
+        for (const [n, cs] of F) {
+          const base = P.length / 3;
+          const pts = cs.map((c) => [c[0] ? x1 : x0, c[1] ? y1 : y0, c[2] ? z1 : z0]);
+          for (const p of pts) {
+            P.push(p[0], p[1], p[2]);
+            NR.push(n[0], n[1], n[2]);
+            CL.push(col.r, col.g, col.b);
+          }
+          const [a, b2, c2] = pts;
+          const ux = b2[0] - a[0], uy = b2[1] - a[1], uz = b2[2] - a[2];
+          const vx = c2[0] - a[0], vy = c2[1] - a[1], vz = c2[2] - a[2];
+          const dot = (uy * vz - uz * vy) * n[0] + (uz * vx - ux * vz) * n[1] + (ux * vy - uy * vx) * n[2];
+          if (dot < 0) IX.push(base, base + 2, base + 1, base, base + 3, base + 2);
+          else IX.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(NR, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(CL, 3));
+      g.setAttribute('aGlow', new THREE.Float32BufferAttribute(new Float32Array(P.length / 3), 1));
+      g.setIndex(IX);
+      g.computeBoundingSphere();
+      return g;
+    };
+    // Square swim ring, 3.0 across, bars 0.8 wide, 0.5 tall; alternating bars.
+    const ring = (a, b) => {
+      const R = 1.5, w = 0.8, h = 0.5;
+      return build([
+        [-R, 0, -R, R - w, h, -R + w, a],
+        [R - w, 0, -R, R, h, R - w, b],
+        [-R + w, 0, R - w, R, h, R, a],
+        [-R, 0, -R + w, -R + w, h, R, b],
+      ]);
+    };
+    // Beach ball: a 1.2 voxel cube in three bold stripes + white caps.
+    const s = 0.6, k = 0.2;
+    const ball = build([
+      [-s, 0, -s, -k, 2 * s, s, C.red],
+      [-k, 0, -s, k, 2 * s, s, C.white],
+      [k, 0, -s, s, 2 * s, s, C.blue],
+      [-k * 1.2, 2 * s, -k * 1.2, k * 1.2, 2 * s + 0.08, k * 1.2, C.yellow],
+    ]);
+    // Poolside parasol + sun lounger (ref05's deck), built at +x = "toward
+    // the water"; instances are yawed in 90-degree steps to face it.
+    const parasol = build([
+      [-2.6, 0, -0.14, -2.34, 2.9, 0.14, C.white],                 // pole
+      [-3.9, 2.9, -1.3, -2.6, 3.2, 0.0, C.red],                    // canopy quarters
+      [-2.6, 2.9, -1.3, -1.3, 3.2, 0.0, C.white],
+      [-3.9, 2.9, 0.0, -2.6, 3.2, 1.3, C.white],
+      [-2.6, 2.9, 0.0, -1.3, 3.2, 1.3, C.red],
+      [-3.1, 3.2, -0.5, -1.8, 3.45, 0.5, C.red],                   // top tier
+      [-2.1, 0, 1.5, 0.3, 0.32, 2.4, C.white],                     // lounger
+      [-2.1, 0.32, 1.5, -1.5, 0.85, 2.4, C.white],                 // backrest
+      [-3.6, 0, -2.2, -2.8, 0.18, -1.4, C.lounge],                 // towel
+    ]);
+    const kinds = [ring(C.red, C.white), ring(C.yellow, C.orange), ball, parasol];
+    return kinds.map((geo, i) => {
+      const m = new THREE.InstancedMesh(geo, this.bankMaterial, i === 3 ? MAX_PARASOLS : MAX_FLOATS);
+      m.name = 'waterfloat-' + i;
+      m.count = 0;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.frustumCulled = false;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.group.add(m);
+      return m;
+    });
+  }
+
+  /**
+   * Deterministic float placement, per water body: every enclosed lake gets a
+   * few (ref05's pool has four), the open sea at the map edge only a sprinkle.
+   * Open water only (not hugging a wall, not under a bridge), spaced out.
+   */
+  _placeFloats(state) {
+    const N = this.N, S = this.S, W = this.fieldW, T = this.TILE;
+    const dl = this._distLand;
+    const body = this._bodyId || (this._bodyId = new Int32Array(N * N));
+    body.fill(-1);
+    const bodies = [];
+    const stack = [];
+    for (let i0 = 0; i0 < N * N; i0++) {
+      if (body[i0] >= 0 || state.map[i0] !== T_WATER) continue;
+      const id = bodies.length;
+      const info = { tiles: 0, edge: false, cand: [] };
+      bodies.push(info);
+      body[i0] = id; stack.push(i0);
+      while (stack.length) {
+        const i = stack.pop();
+        const x = i % N, z = (i / N) | 0;
+        info.tiles++;
+        if (x === 0 || z === 0 || x === N - 1 || z === N - 1) info.edge = true;
+        if (!(state.bridge && state.bridge[i] === 1)) {
+          const c = (z * S + (S >> 1)) * W + x * S + (S >> 1);
+          const d = dl[c] >= INF ? 99 : dl[c] / S;
+          if (d >= 1.5 && d <= 5) info.cand.push([hash01(x, z, 4242), x, z]);
+        }
+        if (x > 0 && body[i - 1] < 0 && state.map[i - 1] === T_WATER) { body[i - 1] = id; stack.push(i - 1); }
+        if (x < N - 1 && body[i + 1] < 0 && state.map[i + 1] === T_WATER) { body[i + 1] = id; stack.push(i + 1); }
+        if (z > 0 && body[i - N] < 0 && state.map[i - N] === T_WATER) { body[i - N] = id; stack.push(i - N); }
+        if (z < N - 1 && body[i + N] < 0 && state.map[i + N] === T_WATER) { body[i + N] = id; stack.push(i + N); }
+      }
+    }
+    // lakes first (they are the pools), then the sea
+    bodies.sort((p, q) => (p.edge - q.edge) || (q.tiles - p.tiles));
+    const picked = [];
+    for (const b of bodies) {
+      if (b.tiles < 10) continue;
+      let nth = 0;
+      let want = b.edge ? Math.min(4, Math.floor(b.tiles / 90)) : Math.max(1, Math.min(5, Math.round(b.tiles / 22)));
+      b.cand.sort((p, q) => p[0] - q[0]);
+      for (const [h, x, z] of b.cand) {
+        if (want <= 0 || picked.length >= MAX_FLOATS) break;
+        let ok = true;
+        for (const p of picked) if (Math.abs(p.x - x) < 3 && Math.abs(p.z - z) < 3) { ok = false; break; }
+        if (!ok) continue;
+        want--;
+        picked.push({
+          x, z,
+          kind: (nth++ + Math.floor(hash01(x, z, 911) * 3)) % 3,
+          wx: (x + 0.5) * T + (hash01(x, z, 17) - 0.5) * 3.0,
+          wz: (z + 0.5) * T + (hash01(x, z, 29) - 0.5) * 3.0,
+          yaw: hash01(x, z, 53) < 0.5 ? 0 : Math.PI / 2,
+          ph: h * 40.0,
+        });
+      }
+    }
+    // Parasols on the sand deck, on tiles that front the water.
+    const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const deckC = [];
+    for (let z = 0; z < N; z++) {
+      for (let x = 0; x < N; x++) {
+        if (!this._isDeck(state, x, z)) continue;
+        if (state.occ && state.occ[z * N + x]) continue;
+        for (let k = 0; k < 4; k++) {
+          const [dx, dz] = DIRS[k];
+          if (!this._isWater(state, x + dx, z + dz)) continue;
+          // the tile behind must be deck or grass, so the set is not on a spit
+          deckC.push([hash01(x, z, 7771 + k), x, z, dx, dz]);
+          break;
+        }
+      }
+    }
+    deckC.sort((p, q) => p[0] - q[0]);
+    const want = Math.min(MAX_PARASOLS, Math.round(deckC.length / 7));
+    let np = 0;
+    for (const [h, x, z, dx, dz] of deckC) {
+      if (np >= want) break;
+      let ok = true;
+      for (const p of picked) if (p.kind === 3 && Math.abs(p.x - x) < 3 && Math.abs(p.z - z) < 3) { ok = false; break; }
+      if (!ok) continue;
+      np++;
+      // local +x points at the water: yaw = atan2(-dz, dx)
+      picked.push({
+        x, z, kind: 3, fixed: true,
+        wx: (x + 0.5) * T + dx * 0.8, wz: (z + 0.5) * T + dz * 0.8,
+        yaw: Math.atan2(-dz, dx),
+        ph: 0,
+      });
+    }
+    this._floats = picked;
+    this._animFloats(this._shared.uTime.value);
+  }
+
+  _animFloats(t) {
+    const meshes = this._floatMeshes;
+    if (!meshes) return;
+    const m4 = this._fm4 || (this._fm4 = new THREE.Matrix4());
+    const q = this._fq || (this._fq = new THREE.Quaternion());
+    const e = this._fe || (this._fe = new THREE.Euler());
+    const v = this._fv || (this._fv = new THREE.Vector3());
+    const one = this._f1 || (this._f1 = new THREE.Vector3(1, 1, 1));
+    const counts = [0, 0, 0, 0];
+    const y0 = this.opts.waterY;
+    const fpos = this.uniforms.uFloatPos.value;
+    let nf = 0;
+    for (const f of this._floats) {
+      const m = meshes[f.kind];
+      const k = counts[f.kind]++;
+      if (f.fixed) {
+        v.set(f.wx, DECK_Y, f.wz);
+        e.set(0, f.yaw, 0);
+        q.setFromEuler(e);
+        const sc = this._fsc || (this._fsc = new THREE.Vector3(1.3, 1.3, 1.3));
+        m4.compose(v, q, sc);
+        m.setMatrixAt(k, m4);
+        continue;
+      }
+      const ph = f.ph + t;
+      const sink = f.kind === 2 ? 0.35 : 0.22;
+      v.set(f.wx + Math.sin(ph * 0.11) * 0.5, y0 - sink + Math.sin(ph * 1.7) * 0.05,
+            f.wz + Math.cos(ph * 0.09) * 0.5);
+      e.set(Math.sin(ph * 1.3) * 0.05, f.yaw + Math.sin(ph * 0.21) * 0.10, Math.cos(ph * 1.1) * 0.05);
+      q.setFromEuler(e);
+      m4.compose(v, q, one);
+      m.setMatrixAt(k, m4);
+      // splash halo in the surface shader (ring 3.0 across, ball 1.2)
+      if (nf < fpos.length) fpos[nf++].set(v.x, v.z, f.kind === 2 ? 0.6 : 1.5, 1);
+    }
+    for (let i = nf; i < fpos.length; i++) fpos[i].w = 0;
+    for (let i = 0; i < meshes.length; i++) {
+      meshes[i].count = counts[i];
+      meshes[i].instanceMatrix.needsUpdate = true;
+    }
   }
 
   // -------------------------------------------------------------------------
   // Shore distance field (baked -> DataTexture; NO depth-buffer read)
   // -------------------------------------------------------------------------
 
-  /** Low-frequency water-body variation, sampled on tile corners. Positional
-   *  only — computed once, never recomputed on a rebuild. */
-  _buildVarField() {
-    const N = this.N;
-    const f = new Float32Array((N + 1) * (N + 1));
-    for (let z = 0; z <= N; z++) {
-      for (let x = 0; x <= N; x++) {
-        const v = vnoise(x * 0.09, z * 0.09, 9911) * 0.65 +
-                  vnoise(x * 0.31, z * 0.31, 5533) * 0.35;
-        f[z * (N + 1) + x] = v < 0 ? 0 : (v > 1 ? 1 : v);
-      }
-    }
-    this._varField = f;
-  }
-
   /**
-   * Chamfer distance transform over the sub-cell grid, restricted to a window.
-   * A window padded by >= `far` tiles is exact for the interior, because any
-   * distance beyond `far` is clamped anyway. Hot path — kept branch-light and
-   * free of closures/allocations.
+   * Chamfer distance transforms over the sub-cell grid, restricted to a window.
+   * Three fields: distance to land (offshore side), to water (onshore side, so
+   * the fine channel is SIGNED and its zero sits exactly on the waterline) and
+   * to sand. Land is the tile map PLUS whatever water terrain.js's warped bank
+   * covers (see setLandWarp).
    */
   _computeShoreField(state, tx0, tz0, tx1, tz1) {
-    const S = this.S, W = this.fieldW, N = this.N;
+    const S = this.S, W = this.fieldW, N = this.N, T = this.TILE;
     const far = this.opts.far;
     const pad = Math.ceil(far) + 2;
     const ttx0 = Math.max(0, tx0 - pad), ttz0 = Math.max(0, tz0 - pad);
@@ -1231,7 +1906,6 @@ export class WaterFX {
     const cx0 = ttx0 * S, cz0 = ttz0 * S;
     const cx1 = (ttx1 + 1) * S - 1, cz1 = (ttz1 + 1) * S - 1;
 
-    // Per-tile classification once, so the per-sub-cell loops are pure indexing.
     const flags = this._tileFlags;            // 1 = water, 2 = sand, 0 = other land
     for (let tz = ttz0; tz <= ttz1; tz++) {
       for (let tx = ttx0; tx <= ttx1; tx++) {
@@ -1240,10 +1914,11 @@ export class WaterFX {
       }
     }
 
-    const dl = this._distLand, ds = this._distSand;
+    const dl = this._distLand, ds = this._distSand, dw = this._distWater;
+    const cov = this._covered;
     const edgeLand = this.opts.edgeIsLand;
 
-    // ---- seed --------------------------------------------------------------
+    // ---- seed (tile map) ---------------------------------------------------
     for (let cz = cz0; cz <= cz1; cz++) {
       const tzRow = ((cz / S) | 0) * N;
       const row = cz * W;
@@ -1252,100 +1927,136 @@ export class WaterFX {
         const i = row + cx;
         dl[i] = f === 1 ? INF : 0;
         ds[i] = f === 2 ? 0 : INF;
+        cov[i] = 0;
       }
     }
 
-    // ---- two-pass chamfer (weights 1 / sqrt2) ------------------------------
-    //
-    // BUGFIX. The neighbour reads used to be clamped to the *window* (cx0/cz0
-    // and cx1/cz1) rather than to the array. The forward pass is the one that
-    // carries distance in from land lying to the -X / -Z side, so on an
-    // incremental refreshTiles() the window's north and west borders started
-    // with no inflow at all and every cell behind them inherited a bogus
-    // saturated distance. Symptom: after a city build (hundreds of windowed
-    // refreshes) the north and west shores of a lake had no shallow band, no
-    // depth ramp and NO FOAM, while the south and east shores were correct —
-    // exactly the "edge-normal sign bug" the reviewers smelled.
-    //
-    // The cells immediately outside the window are untouched and already hold
-    // final, correct distances, and the window is padded by >= `far` tiles, so
-    // reading them is not just safe, it is the correct boundary condition.
-    const pass = (arr) => {
+    // ---- warped bank: water cells the terrain's land actually covers -------
+    // Tile-grid distance first (cheap, one pass) to find the thin strip of
+    // water the warp can reach, then invert the warp there by fixed-point
+    // iteration (the displacement is a contraction, so p = q - disp(p)
+    // converges in a handful of steps) and ask which TILE the pre-image is on.
+    if (this._warpFn) {
+      this._chamfer(dl, cx0, cz0, cx1, cz1, edgeLand);
+      const reach = this.opts.warpReach * S;
+      const cell = T / S, g = this._wtmp2 || (this._wtmp2 = [0, 0]);
+      const ws = this.worldSize;
       for (let cz = cz0; cz <= cz1; cz++) {
         const row = cz * W;
-        const hasUp = cz > 0;
         for (let cx = cx0; cx <= cx1; cx++) {
           const i = row + cx;
-          let d = arr[i];
-          if (d === 0) continue;
-          if (cx > 0) { const v = arr[i - 1] + 1; if (v < d) d = v; }
-          else if (edgeLand) { if (1 < d) d = 1; }
-          if (hasUp) {
-            let v = arr[i - W] + 1; if (v < d) d = v;
-            if (cx > 0) { v = arr[i - W - 1] + SQRT2; if (v < d) d = v; }
-            if (cx < W - 1) { v = arr[i - W + 1] + SQRT2; if (v < d) d = v; }
-          } else if (edgeLand) { if (1 < d) d = 1; }
-          arr[i] = d;
+          const d = dl[i];
+          if (d === 0 || d > reach) continue;
+          const qx = (cx + 0.5) * cell, qz = (cz + 0.5) * cell;
+          let px = qx, pz = qz;
+          for (let k = 0; k < 5; k++) {
+            this._dispAt(px, pz, g);
+            px = qx - g[0]; pz = qz - g[1];
+          }
+          if (px < 0 || pz < 0 || px >= ws || pz >= ws) continue;
+          const tx = (px / T) | 0, tz = (pz / T) | 0;
+          if (!this._isWater(state, tx, tz)) cov[i] = 1;
         }
       }
-      for (let cz = cz1; cz >= cz0; cz--) {
+      // re-seed with the covered cells counted as land
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const tzRow = ((cz / S) | 0) * N;
         const row = cz * W;
-        const hasDn = cz < W - 1;
-        for (let cx = cx1; cx >= cx0; cx--) {
+        for (let cx = cx0; cx <= cx1; cx++) {
           const i = row + cx;
-          let d = arr[i];
-          if (d === 0) continue;
-          if (cx < W - 1) { const v = arr[i + 1] + 1; if (v < d) d = v; }
-          else if (edgeLand) { if (1 < d) d = 1; }
-          if (hasDn) {
-            let v = arr[i + W] + 1; if (v < d) d = v;
-            if (cx < W - 1) { v = arr[i + W + 1] + SQRT2; if (v < d) d = v; }
-            if (cx > 0) { v = arr[i + W - 1] + SQRT2; if (v < d) d = v; }
-          } else if (edgeLand) { if (1 < d) d = 1; }
-          arr[i] = d;
+          dl[i] = (flags[tzRow + ((cx / S) | 0)] === 1 && !cov[i]) ? INF : 0;
         }
       }
-    };
-    pass(dl);
-    pass(ds);
+    }
+    for (let cz = cz0; cz <= cz1; cz++) {
+      const tzRow = ((cz / S) | 0) * N;
+      const row = cz * W;
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const i = row + cx;
+        dw[i] = (flags[tzRow + ((cx / S) | 0)] === 1 && !cov[i]) ? 0 : INF;
+      }
+    }
+
+    this._chamfer(dl, cx0, cz0, cx1, cz1, edgeLand);
+    this._chamfer(ds, cx0, cz0, cx1, cz1, false);
+    this._chamfer(dw, cx0, cz0, cx1, cz1, !edgeLand);
 
     // ---- pack -> RGBA ------------------------------------------------------
     const out = this._shoreData;
-    const vf = this._varField, VW = N + 1;
     const invFarCells = 1 / (far * S);
     const maxCells = far * S;
     const sandFarCells = 2.5 * S;
     const invSand = 1 / sandFarCells;
-    const invS = 1 / S;
+    const cellW = T / S;
+    const fMin = this.opts.fineMin, fInv = 1 / this.opts.fineRange;
     for (let cz = cz0; cz <= cz1; cz++) {
       const row = cz * W;
       const tzRow = ((cz / S) | 0) * N;
-      // bilinear weights for the variation field (tile-corner lattice)
-      const vz = (cz + 0.5) * invS;
-      const vz0 = vz | 0, fz = vz - vz0;
-      const vrow0 = Math.min(vz0, N) * VW, vrow1 = Math.min(vz0 + 1, N) * VW;
       for (let cx = cx0; cx <= cx1; cx++) {
         const i = row + cx;
         const water = flags[tzRow + ((cx / S) | 0)] === 1;
         let d = dl[i];
-        // distance from the shoreline, not from the land cell centre
         d = d >= INF ? maxCells : (d > 0.5 ? d - 0.5 : 0);
         let r = d * invFarCells; if (r > 1) r = 1;
-        const sd = ds[i] >= INF ? sandFarCells : ds[i];
-        let beach = 1 - sd * invSand; if (beach < 0) beach = 0;
-        const vx = (cx + 0.5) * invS;
-        const vx0 = vx | 0, fx = vx - vx0;
-        const c0 = Math.min(vx0, N), c1 = Math.min(vx0 + 1, N);
-        const a = vf[vrow0 + c0] + (vf[vrow0 + c1] - vf[vrow0 + c0]) * fx;
-        const b = vf[vrow1 + c0] + (vf[vrow1 + c1] - vf[vrow1 + c0]) * fx;
+        // Signed fine distance: + offshore, - onshore, 0 on the waterline.
+        let sd;
+        if (dl[i] > 0) sd = (dl[i] >= INF ? maxCells : dl[i] - 0.5) * cellW;
+        else sd = -((dw[i] >= INF ? maxCells : dw[i]) - 0.5) * cellW;
+        let fine = (sd - fMin) * fInv; if (fine < 0) fine = 0; else if (fine > 1) fine = 1;
+        const sdd = ds[i] >= INF ? sandFarCells : ds[i];
+        let beach = 1 - sdd * invSand; if (beach < 0) beach = 0;
         const o = i * 4;
-        out[o] = (r * 255) | 0;
+        out[o] = (r * 255 + 0.5) | 0;
         out[o + 1] = water ? 255 : 0;
-        out[o + 2] = (beach * 255) | 0;
-        out[o + 3] = ((a + (b - a) * fz) * 255) | 0;
+        out[o + 2] = (fine * 255 + 0.5) | 0;
+        out[o + 3] = (beach * 255) | 0;
       }
     }
     this._shoreDirty = true;
+  }
+
+  /**
+   * Two-pass chamfer (1 / sqrt2) in a window. Neighbour reads are clamped to
+   * the ARRAY, not the window: cells just outside the window already hold
+   * final distances and are the correct boundary condition for an incremental
+   * refresh (reading only inside the window starved its north/west borders).
+   */
+  _chamfer(arr, cx0, cz0, cx1, cz1, edgeSeed) {
+    const W = this.fieldW;
+    for (let cz = cz0; cz <= cz1; cz++) {
+      const row = cz * W;
+      const hasUp = cz > 0;
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const i = row + cx;
+        let d = arr[i];
+        if (d === 0) continue;
+        if (cx > 0) { const v = arr[i - 1] + 1; if (v < d) d = v; }
+        else if (edgeSeed) { if (1 < d) d = 1; }
+        if (hasUp) {
+          let v = arr[i - W] + 1; if (v < d) d = v;
+          if (cx > 0) { v = arr[i - W - 1] + SQRT2; if (v < d) d = v; }
+          if (cx < W - 1) { v = arr[i - W + 1] + SQRT2; if (v < d) d = v; }
+        } else if (edgeSeed) { if (1 < d) d = 1; }
+        arr[i] = d;
+      }
+    }
+    for (let cz = cz1; cz >= cz0; cz--) {
+      const row = cz * W;
+      const hasDn = cz < W - 1;
+      for (let cx = cx1; cx >= cx0; cx--) {
+        const i = row + cx;
+        let d = arr[i];
+        if (d === 0) continue;
+        if (cx < W - 1) { const v = arr[i + 1] + 1; if (v < d) d = v; }
+        else if (edgeSeed) { if (1 < d) d = 1; }
+        if (hasDn) {
+          let v = arr[i + W] + 1; if (v < d) d = v;
+          if (cx < W - 1) { v = arr[i + W + 1] + SQRT2; if (v < d) d = v; }
+          if (cx > 0) { v = arr[i + W - 1] + SQRT2; if (v < d) d = v; }
+        } else if (edgeSeed) { if (1 < d) d = 1; }
+        arr[i] = d;
+      }
+    }
   }
 
   _uploadShore() {
@@ -1354,14 +2065,7 @@ export class WaterFX {
   }
 
   // -------------------------------------------------------------------------
-  // Fake reflection: a coarse top-down map of the emissive city.
-  //
-  // A full planar reflection pass needs the renderer (which this module is not
-  // given) and a second scene render. Instead we bake where the light IS, in
-  // world XZ, and the shader marches that map along the reflection ray with an
-  // exponential decay — mathematically the same thing as a mirrored render
-  // target that has been crushed with a heavy vertical blur, for the cost of
-  // six texture fetches on water pixels only.
+  // Fake reflection: a coarse top-down map of the emissive city (night only).
   // -------------------------------------------------------------------------
 
   /** Rebuild the emitter map from `state.buildings`. Cheap; ~0.2 ms for 300. */
@@ -1370,7 +2074,7 @@ export class WaterFX {
     data.fill(0);
     const list = (state && state.buildings) || this._emitters;
     if (!list || !list.length) { this._emitTex.needsUpdate = true; return; }
-    const cell = this.worldSize / R;             // world units per emitter texel
+    const cell = this.worldSize / R;
     const acc = this._emitAcc || (this._emitAcc = new Float32Array(R * R * 4));
     acc.fill(0);
     for (let b = 0; b < list.length; b++) {
@@ -1378,19 +2082,15 @@ export class WaterFX {
       const tx = (e.x != null ? e.x : 0) + ((e.tw || 1) - 1) * 0.5;
       const tz = (e.z != null ? e.z : 0) + ((e.td || 1) - 1) * 0.5;
       const wx = (tx + 0.5) * this.TILE, wz = (tz + 0.5) * this.TILE;
-      // No model access here — estimate a plausible height so tall downtown
-      // towers throw a longer streak than a cottage.
       const lvl = (e.level != null ? e.level : (e.variant || 0));
       const foot = (e.tw || 1) * (e.td || 1);
       let h = 6 + lvl * 5 + foot * 2.5;
       if (e.cat === 'work' || e.cat === 'shops') h *= 1.35;
       if (h > 64) h = 64;
-      // Warm office/window light; shops a touch pinker.
       let cr = 1.0, cg = 0.82, cb = 0.52;
       if (e.cat === 'shops') { cr = 1.0; cg = 0.70; cb = 0.62; }
       else if (e.cat === 'homes') { cr = 1.0; cg = 0.86; cb = 0.60; }
       const w = h * (0.35 + 0.65 * Math.min(1, foot / 4));
-      // 3x3 gaussian splat so the map is smooth at 64x64.
       const gx = wx / cell - 0.5, gz = wz / cell - 0.5;
       const ix = Math.round(gx), iz = Math.round(gz);
       for (let dz = -1; dz <= 1; dz++) {
@@ -1404,7 +2104,6 @@ export class WaterFX {
         }
       }
     }
-    // Normalise: RGB -> hue (0..1), A -> light density (0..1).
     let maxW = 1e-4;
     for (let i = 0; i < acc.length; i += 4) {
       const m = Math.max(acc[i], Math.max(acc[i + 1], acc[i + 2]));
@@ -1422,11 +2121,7 @@ export class WaterFX {
     this._emitDirty = false;
   }
 
-  /**
-   * Optional explicit emitter list for the fake reflection, if engine.js ever
-   * wants to feed something richer than `state.buildings`:
-   *   [{ x, z, tw, td, level, cat }]
-   */
+  /** Optional explicit emitter list: [{ x, z, tw, td, level, cat }] */
   setEmitters(list) {
     this._emitters = Array.isArray(list) ? list : null;
     this._buildEmitMap(null);
@@ -1448,68 +2143,46 @@ export class WaterFX {
 
     const night = clamp01(c.nightEff != null ? c.nightEff : (c.nightT != null ? c.nightT : 0));
     s.uNight.value = night;
+    if (this._wallGlow) this._wallGlow.value = 1.0 - 0.85 * night;
 
     const rain = c.weather ? clamp01(c.weather.rain || 0) : 0;
     s.uRain.value = rain;
 
     if (c.quality != null) this.setQuality(c.quality);
 
-    // Sun colour warms at low elevation, cools at noon.
     if (!this._sunLocked) {
       const h = clamp01(u.uSunDir.value.y);
       const warm = Math.pow(1 - h, 2.2);
-      const col = s.uSunColor.value;
-      col.setRGB(
-        1.00,
-        0.97 - warm * 0.34,
-        0.86 - warm * 0.60
-      );
-      const power = (0.35 + 0.85 * Math.pow(h, 0.5)) * (1 - rain * 0.72) * (1 - night * 0.85);
-      col.multiplyScalar(Math.max(0.05, power) * 1.6);
+      s.uSunColor.value.setRGB(1.00, 0.97 - warm * 0.34, 0.86 - warm * 0.60);
     }
 
-    // Wave energy rises with rain.
     u.uWaveAmp.value = 1.0 + rain * 0.75;
-    u.uDetail.value = this._detailBase + rain * 0.14;
-    u.uGlintRough.value = rain;
 
-    // Fake reflection: city windows are only lit at night, and the streak has
-    // to survive the fresnel weighting, so ramp it on the night curve.
     const emitOn = this.opts.emitReflection && this._quality > 0;
     u.uEmitStrength.value = emitOn ? this._emitGain * smoothstep01(0.30, 0.85, night) : 0;
     if (this._emitDirty && u.uEmitStrength.value > 0.002) this._buildEmitMap(this._lastState);
 
     if (this._shoreDirty) this._uploadShore();
+    if (this._floats.length) this._animFloats(s.uTime.value);
     return this;
   }
 
-  /** Quality 0 low / 1 medium / 2 high. Never reallocates geometry. */
+  /** Quality 0 low / 1 medium / 2 high. Uniform writes only; never recompiles. */
   setQuality(level) {
     const q = Math.max(0, Math.min(2, level | 0));
     if (q === this._quality) return this;      // called every frame from update()
     this._quality = q;
     this._shared.uQuality.value = q;
     this.bedUniforms.uCaustics.value = q === 0 ? 0.32 : 0.55;
-    this.uniforms.uGlint.value = q === 0 ? 0.85 : 1.0;
-    // uQuality gates the two finest scrolling normal layers, and those are
-    // exactly the layers that supply the steep facets the GGX lobe spikes on.
-    // Dropping them without widening the lobe does not make the glint cheaper,
-    // it deletes it. So: fewer facets -> rougher lobe (more pixels catch a
-    // dimmer highlight) and a lower HDR peak so the result is a soft sun sheen
-    // rather than a bright wash. Both are plain uniform writes — no recompile,
-    // no reallocation, nothing to stutter on. (§6)
-    this.uniforms.uGlintRough2.value =
-      q === 0 ? Math.max(this._glintRoughBase, 0.20)
-              : (q === 1 ? Math.max(this._glintRoughBase, 0.14) : this._glintRoughBase);
-    this.uniforms.uSpecScale.value = this._specBase * (q === 0 ? 0.55 : (q === 1 ? 0.80 : 1.0));
-    if (this._normalTex) this._normalTex.anisotropy = q === 0 ? 1 : (q === 1 ? 4 : 8);
     return this;
   }
 
   /**
-   * Override the sky/sun look. All fields optional; colours are sRGB hex,
-   * THREE.Color, or arrays.
-   * { skyTop, skyHorizon, sunColor, shallow, mid, deep, foam, glint, envIntensity }
+   * Override the look. All fields optional; colours are sRGB hex, THREE.Color,
+   * or [r,g,b] linear arrays.
+   * { skyTop, sunColor, edge, shallow, mid, deep, patch, foam, gain,
+   *   nightFloor, reflection, foamWidth, block, slabs, dashes }
+   * (skyHorizon and the old realistic-water knobs are accepted and ignored.)
    */
   setSky(p = {}) {
     const set = (uni, v) => {
@@ -1518,80 +2191,58 @@ export class WaterFX {
       else if (Array.isArray(v)) uni.value.setRGB(v[0], v[1], v[2]);
       else uni.value.copy(srgb(v));
     };
-    set(this.uniforms.uSkyTop, p.skyTop);
-    set(this.uniforms.uSkyHorizon, p.skyHorizon);
-    set(this.uniforms.uShallowColor, p.shallow);
-    set(this.uniforms.uMidColor, p.mid);
-    set(this.uniforms.uDeepColor, p.deep);
-    set(this.uniforms.uFoamColor, p.foam);
+    const u = this.uniforms;
+    set(u.uSkyTop, p.skyTop);
+    set(u.uEdgeColor, p.edge);
+    set(u.uShallowColor, p.shallow);
+    set(u.uMidColor, p.mid);
+    set(u.uDeepColor, p.deep);
+    set(u.uSeaColor, p.sea);
+    set(u.uPatchColor, p.patch);
+    set(u.uFoamColor, p.foam);
     if (p.sunColor != null) { set(this._shared.uSunColor, p.sunColor); this._sunLocked = true; }
     if (p.sunColor === null) this._sunLocked = false;
-    if (p.glint != null) this.uniforms.uGlint.value = p.glint;
-    if (p.glintGain != null) this.uniforms.uGlintGain.value = p.glintGain;
-    if (p.envIntensity != null) this.uniforms.uEnvIntensity.value = p.envIntensity;
-    if (p.detail != null) { this._detailBase = p.detail; this.uniforms.uDetail.value = p.detail; }
-    if (p.foamWidth != null) this.uniforms.uFoamWidth.value = p.foamWidth;
-    if (p.opacityShore != null) this.uniforms.uOpacityShore.value = p.opacityShore;
-    if (p.caustics != null) this.bedUniforms.uCaustics.value = p.caustics;
-    if (p.skyGain != null) this.uniforms.uSkyGain.value = p.skyGain;
-    if (p.nightFloor != null) this.uniforms.uNightFloor.value = p.nightFloor;
-    if (p.shoreWobble != null) this.uniforms.uShoreWobble.value = p.shoreWobble;
+    if (p.gain != null) u.uGain.value = Math.max(0, p.gain);
+    if (p.nightFloor != null) u.uNightFloor.value = clamp01(p.nightFloor);
     if (p.reflection != null) this._emitGain = p.reflection;
-    set(this.uniforms.uBeachColor, p.beach);
-    // Reflection / aerial-perspective knobs (see the fog block in the surface
-    // shader). horizonLift lifts the reflected horizon band above the fog colour
-    // engine.js hands us as `skyHorizon`; hazeRefl is how far the distance haze
-    // converges on the reflected sky instead of the land's haze colour.
-    if (p.horizonLift != null) this.uniforms.uHorizonLift.value = p.horizonLift;
-    if (p.hazeRefl != null) this.uniforms.uHazeRefl.value = clamp01(p.hazeRefl);
-    if (p.grazePow != null) this.uniforms.uGrazePow.value = Math.max(0.5, p.grazePow);
-    if (p.mieGain != null) this.uniforms.uMieGain.value = Math.max(0, p.mieGain);
-    // Foam containment. foamGate is a HARD cap in raw shore-field units;
-    // wobbleFade is how far offshore the shoreline meander is allowed to reach.
-    if (p.foamGate != null) this.uniforms.uFoamGate.value = Math.max(1e-4, p.foamGate);
-    if (p.wobbleFade != null) this.uniforms.uWobbleFade.value = Math.max(1e-4, p.wobbleFade);
-    if (p.sparkFloor != null) this.uniforms.uSparkFloor.value = Math.max(0, p.sparkFloor);
-    if (Array.isArray(p.sparkGate)) this.uniforms.uSparkGate.value.set(p.sparkGate[0], p.sparkGate[1], p.sparkGate[2]);
-    if (p.swellSpark != null) this.uniforms.uSwellSpark.value = clamp01(p.swellSpark);
-    if (p.glintFar != null) this.uniforms.uGlintFar.value = clamp01(p.glintFar);
-    // Glint knobs. specScale is the HDR gain on the GGX peak (this is what feeds
-    // bloom); glintSlope steepens the specular-only normal so the sparkle
-    // density can be tuned without roughening the body shading.
-    if (p.specScale != null) { this._specBase = p.specScale; this.uniforms.uSpecScale.value = p.specScale; }
-    if (p.glintRough != null) {
-      this._glintRoughBase = Math.max(0.005, p.glintRough);
-      this.uniforms.uGlintRough2.value = this._glintRoughBase;
-    }
-    if (p.glintSlope != null) this.uniforms.uGlintSlope.value = Math.max(0, p.glintSlope);
-    if (p.opacityDeep != null) this.uniforms.uOpacityDeep.value = clamp01(p.opacityDeep);
-    // Re-authoring a base that setQuality() derives from has to re-derive, or
-    // the new value silently outranks the current quality level.
-    if (p.specScale != null || p.glintRough != null) {
-      const q = this._quality;
-      this._quality = -1;
-      this.setQuality(q < 0 ? this.opts.quality : q);
-    }
+    if (p.foamWidth != null) u.uFoam.value.x = Math.max(0.05, p.foamWidth);
+    // 'block' = layer B's cell width (world units); the other layers keep ratio.
+    if (p.block != null) u.uPatch.value.multiplyScalar(Math.max(2, p.block) / u.uPatch.value.z);
+    // 'slabs' scales the patchwork tone steps, 'dashes' the specular flecks.
+    if (p.slabs != null) u.uPatchMix.value.x = Math.max(0, p.slabs);
+    if (p.dashes != null) u.uSpark.value.x = Math.max(0, p.dashes);
     return this;
   }
 
   /**
-   * Optional environment reflection. Only a genuine CubeTexture is used (a PMREM
-   * / CubeUV target cannot be sampled without three's private chunks); anything
-   * else is ignored and the analytic sky reflection is kept. Never throws.
+   * Receive the sun's cascaded shadows. engine.js hands over lighting.js's
+   * shared CSM uniform bag and GLSL (kept as an argument so this module stays
+   * import-free): { uniforms, fragPars, vertPars, vertMain }. The fragment
+   * GLSL must define csmApply(lightColor, viewNormal, viewLightDir). Passing
+   * null (or anything malformed) turns shadow receiving off again.
    */
-  setEnvironment(tex) {
-    const ok = !!(tex && tex.isCubeTexture && !tex.isRenderTargetTexture);
-    this.uniforms.uEnvMap.value = ok ? tex : null;
-    const want = ok;
-    const has = !!(this.material.defines && this.material.defines.USE_ENVCUBE);
-    if (want !== has) {
-      this.material.defines = this.material.defines || {};
-      if (want) this.material.defines.USE_ENVCUBE = '';
-      else delete this.material.defines.USE_ENVCUBE;
-      this.material.needsUpdate = true;
+  setShadowSource(src) {
+    const ok = !!(src && src.uniforms && typeof src.fragPars === 'string' &&
+      src.fragPars.indexOf('csmApply') >= 0 && typeof src.vertPars === 'string' &&
+      typeof src.vertMain === 'string');
+    this._csm = ok ? src : null;
+    const m = this.material;
+    if (ok) {
+      for (const k in src.uniforms) this.uniforms[k] = src.uniforms[k];
+      m.vertexShader = src.vertPars + SURFACE_VERT.replace('// @CSM_VERTEX_MAIN', src.vertMain);
+      m.fragmentShader = src.fragPars + SURFACE_FRAG;
+      m.defines = Object.assign({}, m.defines, { USE_WATER_CSM: '' });
+    } else {
+      m.vertexShader = SURFACE_VERT;
+      m.fragmentShader = SURFACE_FRAG;
+      if (m.defines) delete m.defines.USE_WATER_CSM;
     }
+    m.needsUpdate = true;
     return this;
   }
+
+  /** No env reflection in the stylised look; kept for API compatibility. */
+  setEnvironment(_tex) { return this; }
 
   /** Contract §3 uniformity — water has no render targets, so this is a no-op. */
   setSize(_w, _h, _pixelRatio) { return this; }
@@ -1600,38 +2251,49 @@ export class WaterFX {
   stats() {
     let verts = 0, tris = 0;
     for (const c of this._chunks.values()) {
-      const p = c.geo.getAttribute('position');
-      verts += p.count;
-      tris += c.geo.index.count / 3;
+      for (const g of [c.geo, c.bankGeo]) {
+        if (!g) continue;
+        verts += g.getAttribute('position').count;
+        tris += g.index.count / 3;
+      }
     }
+    let covered = 0;
+    if (this._covered) for (let i = 0; i < this._covered.length; i++) covered += this._covered[i];
     return {
       chunks: this._chunks.size,
       waterTiles: this._waterTiles,
       vertices: verts,
       triangles: tris,
       shoreField: this.fieldW + '²',
+      warpedCells: covered,
+      floats: this._floats.length,
       quality: this._quality,
     };
   }
 
   dispose() {
-    if (this._disposed) return this;      // idempotent: engine teardown + selfTest both call it
+    if (this._disposed) return this;
     this._disposed = true;
     this._disposeChunks();
+    if (this._apron) { this._apron.geometry.dispose(); this._apron = null; }
     if (this.group.parent) this.group.parent.remove(this.group);
     this.material.dispose();
     this.bedMaterial.dispose();
+    if (this._floatMeshes) for (const m of this._floatMeshes) { m.geometry.dispose(); m.dispose && m.dispose(); }
+    this._floatMeshes = null;
+    this._floats = [];
+    this.bankMaterial.dispose();
     this._shoreTex.dispose();
     this._normalTex.dispose();
     this._emitTex.dispose();
-    // The CPU-side fields are the big allocation here, not the GPU textures: the
-    // two distance buffers plus the packed RGBA are ~1.6 MB on an 80x80 map at
-    // shoreSub 4, and they outlive the textures unless they are dropped.
     this._shoreData = null;
     this._distLand = null;
     this._distSand = null;
-    this._varField = null;
+    this._distWater = null;
+    this._covered = null;
     this._tileFlags = null;
+    this._warpDX = this._warpDZ = this._warpOK = null;
+    this._warpFn = null;
     this._emitData = null;
     this._emitAcc = null;
     this._emitters = null;
@@ -1719,6 +2381,7 @@ export function selfTest(opts = {}) {
   // geometry sanity
   let nanCount = 0, yBad = 0, oob = 0;
   for (const c of water._chunks.values()) {
+    if (!c.geo) continue;
     const p = c.geo.getAttribute('position');
     const a = p.array;
     for (let i = 0; i < a.length; i += 3) {
@@ -1744,6 +2407,7 @@ export function selfTest(opts = {}) {
   const bx = 34, bz = 30;
   let covered = false;
   for (const c of water._chunks.values()) {
+    if (!c.geo) continue;
     const a = c.geo.getAttribute('position').array;
     for (let i = 0; i < a.length; i += 3) {
       if (a[i] >= bx * TILE && a[i] <= (bx + 1) * TILE && a[i + 2] >= bz * TILE && a[i + 2] <= (bz + 1) * TILE) { covered = true; break; }

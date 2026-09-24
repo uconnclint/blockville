@@ -247,6 +247,14 @@ uniform vec3  uGroundDeep;   // dome colour looking straight down
 uniform vec4  uCityGlow;     // xy = unit horizontal dir to the city centroid,
                              // z = amount 0..1, w = directional focus exponent
 uniform vec3  uCityGlowColor;
+// Art-directed IBL (ENV_PASS only — the PMREM bake, never the visible dome).
+// See "DAYTIME ART DIRECTION" in the Sky constructor.
+uniform float uEnvArt;       // 0 = physical sky IBL .. 1 = the authored studio dome
+uniform vec3  uEnvUp;        // radiance straight up
+uniform vec3  uEnvHor;       // radiance at the horizon
+uniform vec3  uEnvGnd;       // radiance straight down (sunlit ground bounce)
+uniform vec3  uEnvSun;       // broad lobe toward the key (colour * strength)
+uniform float uEnvUpPow;     // zenith concentration of the up-dome gradient (higher = top-heavier)
 
 const float PI = 3.141592653589793;
 
@@ -765,6 +773,28 @@ void main() {
 
   col = max(col, vec3(0.0));
 
+#ifdef ENV_PASS
+  // ---- authored daytime IBL ("Isometric City Voxel" studio sky) -----------
+  // The physical dome is a saturated Rayleigh blue over a dark ground; as an
+  // irradiance source that is exactly the blue-grey cast the art direction
+  // bans: every shadow and every away-facing wall is lit by it and nothing
+  // else. The reference is a Blender-style render: a bright, nearly WHITE
+  // sky, a light warm ground bounce, and a broad glow on the key side, so the
+  // walls facing the key get more fill than the walls facing away (that is
+  // half of the three-tone separation). Only the PMREM sees this; the dome the
+  // player can see is untouched.
+  if (uEnvArt > 0.0) {
+    float yUp = clamp(dir.y, -1.0, 1.0);
+    vec3 art;
+    if (yUp >= 0.0) art = mix(uEnvHor, uEnvUp, pow(yUp, uEnvUpPow));
+    else art = mix(uEnvHor, uEnvGnd, smoothstep(0.0, 0.22, -yUp));
+    vec3 kd = normalize(vec3(uSunDir.x, max(uSunDir.y, 0.05), uSunDir.z));
+    float lobe = max(dot(dir, kd), 0.0);
+    art += uEnvSun * (lobe * lobe) * smoothstep(-0.15, 0.10, yUp);
+    col = mix(col, art, uEnvArt);
+  }
+#endif
+
   // ---- low-bit dither -----------------------------------------------------
   // Belt and braces on top of the profiles above: a sub-count, value-relative
   // triangular dither so that even a stretch of sky whose analytic gradient is
@@ -858,6 +888,97 @@ export class Sky {
       opts.warmCloudHex != null ? opts.warmCloudHex : 0xffb877, THREE.SRGBColorSpace);
     this._skyWarm = 0;
 
+    // ---- DAYTIME ART DIRECTION ---------------------------------------------
+    // Target: Pablo Gamedev's "Isometric City Voxel" (tools/rendertest/
+    // ART-DIRECTION.md). The physical model above is right about the SKY and
+    // wrong about the LIGHT for this look: at a 63 deg noon it hands back a
+    // key of linear (1.00, 0.75, 0.40) — orange — over a Rayleigh zenith of
+    // (0.07, 0.45, 1.14) that fills every shadow and every away-facing wall.
+    // Orange key + blue fill is the blue-grey murk the art direction bans.
+    //
+    // The reference is lit like a Blender product render: one warm-WHITE key
+    // and a bright, nearly neutral sky, so each block shows three clean tones
+    // of its own colour (top brightest, key-side wall mid, far wall darkest but
+    // still saturated) and shadows are light and soft. So, by day, the LIGHTS
+    // (not the dome — water and the visible sky keep the physical colours) are
+    // pulled onto an authored key/fill, and the PMREM is baked from an authored
+    // studio sky (ENV_PASS in FRAG). `artAmount` fades it out over sun
+    // elevation 24 -> 12 deg and into the night so dusk and night keep their
+    // physical, warm/cool grade untouched.
+    //
+    // Levels are LINEAR and in the engine's final units (engine.js applies no
+    // further gain to the art values — see _applySkyLighting).
+    //
+    // The fill is deliberately TOP-HEAVY: a bright sky (hemi up + env upper
+    // dome) over a DIM ground bounce. Tops and open ground get lots of fill
+    // (light, soft cast shadows) while walls, which see half sky / half ground,
+    // get much less — so the key still separates the two walls. Tuned on
+    // probe cubes (white/orange/red/blue/lime, 8^3, open grass, iso view),
+    // sRGB luma top : key wall : far wall, measured after post:
+    //   physical noon (before)   red 66/76/73   blue 114/76/65 (far wall > key wall)
+    //   authored, this block     red 108/84/61  blue 122/95/71  org 161/144/114
+    // i.e. ~1 : 0.80 : 0.60 (saturated) .. 1 : 0.89 : 0.71 (light), against
+    // ref04 (Blender) ~1 : 0.92 : 0.75. Lit lime grass lands (176,215,85).
+    // The fill is NEUTRAL, not sky-blue: a cool fill is exactly what turned
+    // every far wall blue-grey (white block far wall measured (140,148,150)
+    // with a #eef4fb/#dce8f6 fill).
+    // Symmetric fill (hemi/ambient) changes the two walls equally and moves
+    // that ratio by < 2 luma — the separation lives in the key direction and
+    // the env's key-side lobe (`envSun`).
+    //
+    // Round 3 (critic: "buildings cast almost no visible shadow", "the white
+    // and cream facades read at nearly the same value on both visible sides",
+    // "slightly soft, low-contrast, faintly hazy"). Measured with the fill
+    // switched off piece by piece: the KEY was only ~1/3 of what lit open
+    // ground, and the fill alone (hemi + a studio env whose HORIZON was the
+    // brightest band, #fbf7ee) lit a top face to 223/226 — so tops sat in the
+    // tone curve's shoulder, walls facing away got as much horizon fill as
+    // walls facing the key, and a cast shadow only removed a sliver of the
+    // light. Now the key carries the frame and the fill is genuinely
+    // top-heavy: bright zenith, a DIM horizon (#7a776f) and a near-black
+    // ground (#1a1914) for both hemi and env, so a vertical wall sees about
+    // half the fill a roof does. Probe cubes, sRGB luma top/left/right:
+    //   r2 authored   cream 226/206/158 (.91/.70)  brick 107/93/71 (.87/.66)
+    //   r3 authored   cream 225/189/130 (.84/.58)  brick 103/86/53 (.83/.51)
+    // and open-ground cast shadow / lit ground 0.60 -> 0.54 (clearer but still
+    // light and colourful; lit grass unchanged at ~184). Then +15% on key and
+    // fill together (3.0 / 1.6 / env 1.03): iso-mid frame p50 0.453 -> 0.475,
+    // p90 0.78 -> 0.85 (ref05 0.548 / 0.895) — tops read bright again.
+    // Round 6 (critic r5: "left and right walls nearly the same light grey";
+    // wants the right face ~25-30% darker than the left and slightly cool, tops
+    // the lightest plane). With the key moved to 30 deg off the left-wall
+    // normal (engine.js, 3.2), the fill had to stop lighting walls as much as
+    // roofs: the env's up-dome gradient pow(y, 0.55) -> pow(y, 1.0) keeps the
+    // bright part near the zenith (tops) so a vertical wall integrates less of
+    // it, and the sky side gets a touch cooler so the far wall reads as a cool,
+    // darker version of its colour (ref05 bank right face ~ (137,162,168)).
+    // iso-mid SKY tower lit/away 216/140 -> 231/135, away (126,136,149).
+    const A = opts.art || {};
+    const hex = (h, d) => new THREE.Color().setHex(h != null ? h : d, THREE.SRGBColorSpace);
+    this._art = {
+      amount: A.amount != null ? A.amount : 1.0,
+      elevLo: A.elevLo != null ? A.elevLo : 12,     // deg: fully physical at/below
+      elevHi: A.elevHi != null ? A.elevHi : 24,     // deg: fully authored at/above
+      key: hex(A.keyHex, 0xfffaf2),                 // warm white (neutrals measured B-R -10 at #fff6ea; ref05 is 0)
+      keyI: A.keyIntensity != null ? A.keyIntensity : 3.3,  // r8: 3.2 -> 3.3 (key at 50 deg: tops keep their value)             // r4: 3.0 -> 2.6; r5: 2.9 (bounce trimmed + deeper open shadows, see engine.js DAY_BOUNCE_SCALE)
+      sky: hex(A.skyHex, 0xe4ecf6),                 // hemisphere up: near-white, a touch cool (r6: #f1f3f4)
+      gnd: hex(A.groundHex, 0x4a463c),              // hemisphere down: warm grey bounce (r3 #1a1914 read navy/black in canyons)
+      hemiI: A.hemiIntensity != null ? A.hemiIntensity : 1.85,         // r4: 1.6 -> 1.75 + brighter ground (light, airy shade sides like ref05)
+      amb: hex(A.ambientHex, 0xf2f0ea),
+      ambI: A.ambientIntensity != null ? A.ambientIntensity : 0.03,
+      envUp: hex(A.envUpHex, 0xe2eaf4),             // r6: #eceef0
+      envHor: hex(A.envHorizonHex, 0x7a776f),        // r3: was the brightest band (#fbf7ee)
+      envGnd: hex(A.envGroundHex, 0x4a463c),
+      envLevel: A.envLevel != null ? A.envLevel : 1.2,                // r4: 1.03 -> 1.2
+      envSun: A.envSun != null ? A.envSun : 1.0,    // key-side lobe, x key colour
+      envUpPow: A.envUpPow != null ? A.envUpPow : 1.0,   // r6: 0.55 -> 1.0 (zenith-heavier: walls see less of it)
+    };
+    this._artAmt = 0;
+    this._keyColor = new THREE.Color(1, 1, 1);
+    this._fillSky = new THREE.Color(1, 1, 1);
+    this._fillGround = new THREE.Color(0.5, 0.5, 0.4);
+    this._fillAmbient = new THREE.Color(1, 1, 1);
+
     // ---- scratch (never allocate per frame) -------------------------------
     // Moon elevation at deep night, radians. Deliberately LOW: the game camera
     // tops out at polar 1.2, which puts the top of the frame ~4° above the
@@ -913,6 +1034,17 @@ export class Sky {
       moonDir: this._moonDir,
       keyDir: this._keyDir,
       isMoon: false,
+      // --- authored daytime light (see DAYTIME ART DIRECTION) ---------------
+      // 0..1: how far the lights should be pulled from the physical solution
+      // above onto these. engine.js does the blend; the values are final.
+      artAmount: 0,
+      keyColor: this._keyColor,
+      keyIntensity: 3.0,
+      fillSky: this._fillSky,
+      fillGround: this._fillGround,
+      fillAmbient: this._fillAmbient,
+      fillHemiIntensity: 1.6,
+      fillAmbientIntensity: 0.03,
     };
 
     // ---- state ------------------------------------------------------------
@@ -982,6 +1114,12 @@ export class Sky {
       uGroundDeep: { value: new THREE.Vector3(0.10, 0.16, 0.22) },
       uCityGlow: { value: new THREE.Vector4(0, 1, 0, 3.0) },
       uCityGlowColor: { value: new THREE.Vector3(1.00, 0.62, 0.28) },
+      uEnvArt: { value: 0 },
+      uEnvUp: { value: new THREE.Vector3(1, 1, 1) },
+      uEnvHor: { value: new THREE.Vector3(1, 1, 1) },
+      uEnvGnd: { value: new THREE.Vector3(0.5, 0.5, 0.4) },
+      uEnvSun: { value: new THREE.Vector3(0, 0, 0) },
+      uEnvUpPow: { value: 0.55 },
     };
 
     this.material = new THREE.ShaderMaterial({
@@ -1016,7 +1154,22 @@ export class Sky {
     this._envInterval = opts.envInterval != null ? opts.envInterval : 2.0;
     this._envNightDelta = opts.envNightDelta != null ? opts.envNightDelta : 0.02;
     this._envScene = new THREE.Scene();
-    this._envMesh = new THREE.Mesh(this._geo, this.material);
+    // The PMREM bake gets its own compile of the same shader (ENV_PASS) so the
+    // art-directed IBL grade never touches the visible dome. Same uniforms
+    // object: nothing to keep in sync but the quality defines.
+    this._envMaterial = new THREE.ShaderMaterial({
+      uniforms: this.uniforms,
+      vertexShader: VERT,
+      fragmentShader: FRAG,
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest: false,
+      fog: false,
+      transparent: false,
+      toneMapped: false,
+      defines: Object.assign({ ENV_PASS: 1 }, this._definesFor(this._quality)),
+    });
+    this._envMesh = new THREE.Mesh(this._geo, this._envMaterial);
     this._envMesh.frustumCulled = false;
     this._envMesh.scale.setScalar(6);
     this._envScene.add(this._envMesh);
@@ -1071,6 +1224,11 @@ export class Sky {
     this.material.defines.QSLICES = d.QSLICES;
     this.material.defines.HIGHLAYER = d.HIGHLAYER;
     this.material.needsUpdate = true;
+    if (this._envMaterial) {
+      this._envMaterial.defines.QSLICES = d.QSLICES;
+      this._envMaterial.defines.HIGHLAYER = d.HIGHLAYER;
+      this._envMaterial.needsUpdate = true;
+    }
     this._envSize = q >= 2 ? 128 : 64;
     this._disposeEnvTargets();   // rebuilt lazily at the next bake
     this._envDirty = true;
@@ -1120,6 +1278,22 @@ export class Sky {
     if (p.sunDiscSize != null) u.uSunDiscSize.value = p.sunDiscSize;
     if (p.sunDiscPower != null) u.uSunDiscPower.value = p.sunDiscPower;
     if (p.windSpeed != null) u.uWind.value.set(1, 0.36).multiplyScalar(p.windSpeed);
+    if (p.art) {
+      const a = p.art, ar = this._art;
+      const setHex = (c, h) => { if (h != null) c.setHex(h, THREE.SRGBColorSpace); };
+      if (a.amount != null) ar.amount = a.amount;
+      if (a.elevLo != null) ar.elevLo = a.elevLo;
+      if (a.elevHi != null) ar.elevHi = a.elevHi;
+      setHex(ar.key, a.keyHex); setHex(ar.sky, a.skyHex); setHex(ar.gnd, a.groundHex);
+      setHex(ar.amb, a.ambientHex); setHex(ar.envUp, a.envUpHex);
+      setHex(ar.envHor, a.envHorizonHex); setHex(ar.envGnd, a.envGroundHex);
+      if (a.keyIntensity != null) ar.keyI = a.keyIntensity;
+      if (a.hemiIntensity != null) ar.hemiI = a.hemiIntensity;
+      if (a.ambientIntensity != null) ar.ambI = a.ambientIntensity;
+      if (a.envLevel != null) ar.envLevel = a.envLevel;
+      if (a.envSun != null) ar.envSun = a.envSun;
+      if (a.envUpPow != null) ar.envUpPow = a.envUpPow;
+    }
     if (p.azimuth != null) this._azimuth = p.azimuth;
     if (p.maxElevation != null) this._maxElev = p.maxElevation;
     this._envDirty = true;
@@ -1454,7 +1628,49 @@ export class Sky {
     // Published so engine.js can cross-check against lighting.js's own
     // `skylightWarmth` (they are computed from the same 34->18 deg curve).
     o.skylightWarmth = this._skyWarm;
+
+    // --- authored daytime key/fill (DAYTIME ART DIRECTION) -----------------
+    const art = this._art;
+    const artAmt = clamp(art.amount, 0, 1)
+      * smoothstep01((elevDeg - art.elevLo) / Math.max(1e-3, art.elevHi - art.elevLo))
+      * (1 - n) * (1 - oc * 0.85);
+    this._artAmt = artAmt;
+    o.artAmount = artAmt;
+    this._keyColor.copy(art.key);
+    // Overcast still flattens the authored key toward grey, like the physical one.
+    o.keyIntensity = art.keyI * (1 - oc * 0.72);
+    this._fillSky.copy(art.sky);
+    this._fillGround.copy(art.gnd);
+    this._fillAmbient.copy(art.amb);
+    o.fillHemiIntensity = art.hemiI;
+    o.fillAmbientIntensity = art.ambI;
     return o;
+  }
+
+  /**
+   * Place the key for the frame. `azimuth` is the noon azimuth (radians, same
+   * convention as the constructor option: dir = (sin az, ., cos az)) and
+   * `maxElevation` the noon elevation (radians). engine.js calls this every
+   * frame to keep the key at a fixed angle to the ISO VIEW (upper-left), so it
+   * is cheap when nothing changed and never re-bakes the PMREM by itself.
+   */
+  setSunFrame(azimuth, maxElevation) {
+    let moved = false;
+    if (Number.isFinite(azimuth) && Math.abs(azimuth - this._azimuth) > 1e-5) {
+      this._azimuth = azimuth; moved = true;
+    }
+    if (Number.isFinite(maxElevation) && Math.abs(maxElevation - this._maxElev) > 1e-5) {
+      this._maxElev = maxElevation; moved = true;
+    }
+    if (moved) {
+      this._computeSun(this._nightT);
+      // The env's key-side lobe follows the key; a whole 90-degree camera
+      // snap is worth a re-bake, a sub-degree ease step is not.
+      const d = Math.abs(Math.atan2(Math.sin(azimuth - (this._envLastAz || 0)),
+        Math.cos(azimuth - (this._envLastAz || 0))));
+      if (d > 0.08) { this._envDirty = true; this._envLastAz = azimuth; }
+    }
+    return moved;
   }
 
   /**
@@ -1527,6 +1743,19 @@ export class Sky {
       f.g * dk + gc.g * 0.18,
       f.b * dk + gc.b * 0.14
     );
+    // Art-directed IBL (ENV_PASS). Levels ride the authored fill, not the
+    // physical dome, so the studio sky is the same brightness at any hour it
+    // is active; `uEnvArt` fades it out toward dusk/night.
+    {
+      const ar = this._art, L = ar.envLevel;
+      u.uEnvArt.value = this._artAmt;
+      u.uEnvUpPow.value = ar.envUpPow;
+      u.uEnvUp.value.set(ar.envUp.r * L, ar.envUp.g * L, ar.envUp.b * L);
+      u.uEnvHor.value.set(ar.envHor.r * L, ar.envHor.g * L, ar.envHor.b * L);
+      u.uEnvGnd.value.set(ar.envGnd.r * L, ar.envGnd.g * L, ar.envGnd.b * L);
+      const ks = ar.envSun * L;
+      u.uEnvSun.value.set(ar.key.r * ks, ar.key.g * ks, ar.key.b * ks);
+    }
     // City sky glow: warm sodium by default, cooled a touch by overcast.
     u.uCityGlow.value.set(this._cityDir.x, this._cityDir.y,
       this._cityAmt * lerp(1.0, 1.35, this._overcast), 3.0);
@@ -1685,6 +1914,7 @@ export class Sky {
     if (this._pmrem) { this._pmrem.dispose(); this._pmrem = null; }
     this._geo.dispose();
     this.material.dispose();
+    if (this._envMaterial) this._envMaterial.dispose();
     this._noise.dispose();
     if (this._applyEnv && this.scene.environment === this._envTexture) this.scene.environment = null;
     if (this.scene.background === null) this.scene.background = this._prevBackground || null;

@@ -47,9 +47,9 @@ Read this before touching anything in `src/render/`.
 | `MAP_W` (world size) | `640` |
 | Map spans world XZ | `0 .. 640` |
 | Map centre | `(320, 0, 320)` |
-| Ground top Y | `0` (grass/sand/road), `-0.35` (water), `0..16` (mountain columns) |
+| Ground top Y | `0` (grass/sand/road), `-2.6` (water, recessed basin — water.js round 11), `0..16` (mountain columns) |
 | Voxel size | 1 world unit; buildings are bottom-anchored at y=0 |
-| Camera | `PerspectiveCamera(40, aspect, 1, 2000)`, orbit dist 30..380, polar 0.35..1.2 |
+| Camera | **True-isometric `OrthographicCamera`** (elevation 35.264°, azimuth π/4 + k·π/2, 90° snap rotation). Zoom = `camDist`-equivalent 36..~920 (ortho half-height = camDist·tan 20°); the camera sits camDist from the target along the view axis; near = −700 (negative!), far = 3200 |
 | Up axis | `+Y` |
 
 Tile types (`state.map[z*N+x]`): `0 GRASS, 1 WATER, 2 SAND, 3 ROAD, 8 TREE,
@@ -85,8 +85,12 @@ post.render(dt, ctx);       // replaces renderer.render(scene, camera)
   nightT,      // 0 = noon .. 1 = midnight (raw request)
   nightEff,    // 0..1 after the "Always bright" lock
   weather: { rain, snow, tint:[r,g,b] },
-  camera,      // THREE.PerspectiveCamera (already positioned this frame)
-  camDist,     // current orbit distance 30..380 — drive LOD / tilt-shift from this
+  camera,      // THREE.OrthographicCamera, true iso (already positioned this frame).
+               // Depth is LINEAR (viewZ = near + d*(far-near)) and near is NEGATIVE;
+               // rays are parallel — never assume camera.fov. Branch on
+               // camera.isOrthographicCamera where it matters (SSAO/DOF/CSM do).
+  camDist,     // zoom as a perspective-equivalent orbit distance, 36..~920. It is also
+               // the exact view depth of the camera target, so DOF focus = camDist.
   sunDir,      // THREE.Vector3, normalized, pointing FROM the scene TOWARD the sun
   quality,     // 0 = low, 1 = medium, 2 = high (see §6)
 }
@@ -181,7 +185,7 @@ water.update(dt, ctx)
 water.dispose()
 ```
 
-Deliver a water surface at `y = -0.35` covering every WATER/bridge tile with:
+Deliver a water surface at `y = -2.6` (was -0.35, then -1.85; lowered so the pool walls read) covering every WATER/bridge tile with:
 - **Depth-based colour** — shallow turquoise near shores → deep blue offshore,
   computed from distance to the nearest land tile (bake into a vertex attribute
   or a generated data texture; do NOT do a depth-buffer read that breaks with
@@ -275,6 +279,22 @@ with `position`, `normal`, `color`, `glowColor`, `emissiveT`), plus:
 
 `opts`: `{ ao: true, bevel: true, palette, glowPalette }`. Pure function, no
 three.js scene access beyond `BufferGeometry`.
+
+**Finer resolution + greedy meshing (v4).** A model may declare `res`
+(voxels per world unit; default 1, integer ≤ 8 for buildings; ≤ 20 is
+honoured for small dynamics such as vehicles and people). `sx/sy/sz` and block coords
+are then in fine voxels and the geometry is emitted in WORLD units (÷ res), so
+the engine places any res identically; only `makeSpinner` reads `model.sy`
+(pivot = sy / (2·res)). Models with `res > 1` (or `opts.greedy: true`, or
+`opts.aoReach > 1`) take a slice mesher: greedy merging of coplanar
+same-colour faces with identical AO corners (merged only along axes the AO is
+constant on, so shading is unchanged), no micro-bevel, AO sampled over a
+(2R)² window with R = `opts.aoReach` (auto = res → ~1 world unit ramp), and a
+`vec4 voxLat` attribute (res, lattice origin) that `materials.js` uses to keep
+its per-cell lattice at 1 world unit. `greedy` auto = on for res > 1, off for
+res 1, so every res-1 model is byte-identical to the legacy path.
+`setVoxelDefaults(patch)` patches module defaults (e.g. `{greedy:true}` for
+measurement); `modelRes(model)` returns the effective res.
 
 ### 3.7 `src/render/materials.js` → `export class MaterialLib`
 

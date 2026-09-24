@@ -37,6 +37,11 @@ export const ATTR = {
   color: 'color',             // vec3  — linear albedo (three's vertexColors)
   glowColor: 'glowColor',     // vec3  — linear night-glow colour
   emissiveT: 'emissiveT',     // float — 0 = not emissive, 1 = emissive
+  voxLat: 'voxLat',           // vec4  — OPTIONAL (res > 1 models only): (res, lattice origin xyz)
+  aoQuad: 'aoQuad',           // vec4  — OPTIONAL: all four corner AO factors of this quad (unorm8)
+  aoUV: 'aoUV',               // vec2  — OPTIONAL: this vertex's corner (0/1, 0/1) in the quad
+  paneUV: 'paneUV',           // vec2  — OPTIONAL (unorm8, 1+254*t; 0 = none): position inside the
+                              //         whole glass pane, (across, up) — surface r7
 };
 
 /** GLSL decoders. One-line changes if the conventions flip. */
@@ -56,6 +61,9 @@ const DEFAULT_ATTRIBUTE_VALUES = {
   glowColor: [0.0, 0.0, 0.0],
   emissiveT: [0.0],
   color: [1.0, 1.0, 1.0],
+  aoQuad: [0.0, 0.0, 0.0, 0.0],  // all-zero = "no quad data": shader falls back to aoT
+  aoUV: [0.0, 0.0],
+  paneUV: [0.0, 0.0],         // no pane data
 };
 
 // ===========================================================================
@@ -215,6 +223,10 @@ varying float vVoxDepth;
 varying vec3  vVoxGrid;      // object space, snapped so voxel cells are unit-aligned
 varying vec3  vVoxNormalO;   // object-space normal — picks the two in-face axes
 varying vec2  vVoxSeed;      // two per-instance seeds (see voxInstSeed)
+varying float vVoxRes;       // voxels per world unit (1 = legacy res-1 model)
+varying vec4  vVoxAOQ;      // the quad's four corner AO factors (constant over the quad)
+varying vec4  vVoxAOUV;     // xy: position inside the quad, 0..1 (bilinear weights)
+                            // zw: paneUV (raw unorm; 0 = none) — packed into one row
 `;
 
 // Per-instance seed. Hashing modelMatrix's translation directly would STROBE on
@@ -237,6 +249,10 @@ attribute float ${ATTR.aoT};
 attribute vec2  ${ATTR.matParams};
 attribute vec3  ${ATTR.glowColor};
 attribute float ${ATTR.emissiveT};
+attribute vec4  ${ATTR.voxLat};
+attribute vec4  ${ATTR.aoQuad};
+attribute vec2  ${ATTR.aoUV};
+attribute vec2  ${ATTR.paneUV};
 ${COMMON_PARS}
 ${GLSL_DECODE}
 ${GLSL_INST_SEED}
@@ -244,6 +260,8 @@ ${GLSL_INST_SEED}
 
 const VERT_BODY = /* glsl */`
 vVoxAO      = voxDecodeAO(${ATTR.aoT});
+vVoxAOQ     = ${ATTR.aoQuad};
+vVoxAOUV    = vec4(${ATTR.aoUV}, ${ATTR.paneUV});
 vVoxMat     = voxDecodeMatParams(${ATTR.matParams});
 vVoxGlow    = ${ATTR.glowColor};
 vVoxEmi     = ${ATTR.emissiveT};
@@ -262,6 +280,12 @@ vVoxEmi     = ${ATTR.emissiveT};
   // micro-bevel inset when voxel.js is built with bevel:true.
   vec3 voxOff = fract(floor(fract(position) * 2.0 + 0.5) * 0.5);
   vVoxGrid    = transformed - voxOff;
+  // Finer-resolution models (voxel.js res > 1) are emitted in world units and
+  // carry their lattice explicitly: cells stay 1 world unit (res x res fine
+  // voxels) anchored at the model's min corner. Absent attribute reads as
+  // (0,0,0,1) (or a stale <= 1 default), so res-1 geometry takes the line above.
+  if (${ATTR.voxLat}.x > 1.5) vVoxGrid = transformed - ${ATTR.voxLat}.yzw;
+  vVoxRes = max(${ATTR.voxLat}.x, 1.0);
 
   vec3 voxOrigin = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
   vVoxSeed = vec2(voxInstSeed(voxOrigin, 0.0), voxInstSeed(voxOrigin, 11.7));
@@ -328,6 +352,23 @@ uniform vec3  uTooth2;        // (joint depth, lip gain, joint width in device p
 uniform float uToothBump;     // relief strength of the sub-tile height field
 uniform vec3  uGlassCity;     // (surrounding roofline, street distance, softness)
 uniform float uGlassCityGain; // how bright the reflected city/street is
+uniform vec3  uGlassTint;     // day albedo glass is pulled toward (linear)
+uniform float uGlassTintAmt;  // how far (emissive panes; plain glass gets 60%)
+uniform float uGlassSheen;    // diagonal reflection stripe strength
+uniform vec3  uPaneGrade;     // (head, sill, jamb) albedo factors across a glass pane (r7)
+uniform vec3  uWinFrame;      // legacy res-1 window frame colour (linear)
+uniform float uMetalMax;      // metalness ceiling for the conductor class
+uniform float uSsaoKeep;      // how much of post.js's screen-space AO voxel pixels keep (scene alpha)
+uniform float uDebugAO;       // 1 = output the voxel AO factor only (harness)
+uniform float uDarkFloor;     // albedo floor (linear) so near-black paint keeps a face tone
+uniform float uSkyFillDown;   // share of the sky fill kept by down-facing faces
+uniform float uWorldAOKeep;   // share of lighting.js's world AO kept (see params)
+uniform vec4  uShadowCrisp;   // x amount, y lo, z hi: penumbra re-shaping on voxel faces
+uniform vec4  uBounce;        // x strength, y hue carry, zw unused: sun bounce into shaded faces
+uniform vec3  uBounceTint;    // colour of that bounce (linear)
+uniform vec4  uShadeSide;     // x depth, y hue carry, z away ramp: key-away faces' fill (params.shadeSide)
+uniform float uWallKey;        // direct-diffuse scale on vertical faces by day (params.wallKey)
+uniform vec4  uAOHue;          // x hue carry into AO darkening, y extra depth (params.aoHue)
 ${COMMON_PARS}
 ${GLSL_DECODE}
 ${GLSL_INST_SEED}
@@ -349,6 +390,9 @@ float voxToothK = 1.0;             // its cells-per-tile, so the bump can be
 vec2  voxPlane = vec2(0.0);        // CONTINUOUS in-face lattice coord, in tiles
 float voxFaceSalt = 0.0;           // separates the six face directions
 float voxTilePx = 8.0;             // device pixels across one voxel tile
+float voxAOv = 1.0;                // bilinear voxel AO factor (see FRAG_COLOR)
+float voxSheenV = 0.0;             // glass reflection-streak mask (FRAG_COLOR -> FRAG_AO)
+float voxPaneUp = 0.5;             // height inside the glass pane, 0 sill .. 1 head (r7)
 
 float voxHash13(vec3 p) {
   p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -464,207 +508,153 @@ vec2 voxRemapMat(vec2 mp) {
   r = mix(rd, uGlassMat.x, glass);
   r = mix(r, min(mp.x, uMetalRough), metal);
   m = mix(m, uGlassMat.y, glass);
-  m = mix(m, 1.0, metal);
+  // Toy metal: a light-grey AC unit must still READ light grey under a flat
+  // iso key, so conductors keep most of their diffuse (uMetalMax).
+  m = mix(m, uMetalMax, metal);
   return vec2(clamp(r, 0.035, 1.0), clamp(m, 0.0, 1.0));
 }
 `;
 
-// Injected right after <color_fragment>: albedo grade + procedural tooth.
+// Injected right after <color_fragment>: albedo grade.
+//
+// SURFACE ROUND 1 (target: Pablo Gamedev "Isometric City Voxel", ref04). The
+// reference's faces are CLEAN: one confident colour per face, detail only from
+// geometry and light. Every procedural layer that used to live here — per-voxel
+// seam/panel grooves, slab lips, band-limited tonal mottling, the sub-tile
+// "tooth" + joint grid + bump, per-floor banding, weathering run-off and
+// contact grime — was texture, and texture is exactly what the reference does
+// not have. They are gone, not turned down. What is left:
+//   * a whisper of per-INSTANCE tint (a row of identical towers still differs),
+//   * glass that reads as glass (blue, with a soft diagonal sheen),
+//   * a clean framed pane for LEGACY res-1 windows only (res > 1 models author
+//     their frames as real geometry, so the shader adds nothing there),
+//   * the saturation lift that keeps the palette bright through ACES.
+// Contact darkening now comes from voxel.js's ground-plane AO, per vertex.
 const FRAG_COLOR = /* glsl */`
 {
+  // --- BILINEAR VOXEL AO (surface r2) -----------------------------------------
+  // voxel.js hands every quad its four corner factors; blend them bilinearly
+  // instead of trusting the triangle interpolation of aoT (which creases along
+  // the diagonal whenever the four corners are not coplanar). Geometry without
+  // the attribute reads all-zero and falls back to the per-vertex value.
+  {
+    float qs = vVoxAOQ.x + vVoxAOQ.y + vVoxAOQ.z + vVoxAOQ.w;
+    vec2 w = clamp(vVoxAOUV.xy, 0.0, 1.0);
+    float bl = mix(mix(vVoxAOQ.x, vVoxAOQ.w, w.x), mix(vVoxAOQ.y, vVoxAOQ.z, w.x), w.y);
+    voxAOv = qs > 0.004 ? bl : vVoxAO;
+  }
   voxMatR = voxRemapMat(vVoxMat);
-  float voxRough = voxMatR.x;
-  // Glass class comes from the RAW attribute: after the remap a pane is
-  // metallic, so a "(1 - metalness)" test would no longer find it.
+  // Glass class comes from the RAW attribute (see voxRemapMat).
   voxGlass = smoothstep(0.22, 0.06, vVoxMat.x) * (1.0 - smoothstep(0.30, 0.50, vVoxMat.y));
   float voxNeon = voxNeonness(vVoxGlow);
   voxWin = step(0.5, vVoxEmi) * voxGlass * (1.0 - voxNeon);
-
-  // Distance fade for voxel-SCALE structure (seams, reveals, sills, ledges).
-  // Deliberately long: the hero/night shots sit at depth 70-190, where the old
-  // single fade had already thrown away most of the texture in the file.
-  // Sub-voxel detail is no longer scheduled off depth at all — see voxTilePx.
-  float voxDFS = 1.0 - smoothstep(190.0, 380.0, vVoxDepth);
+  // 1 on legacy res-1 geometry, 0 on authored res > 1 models. Frames only go
+  // on WALL panes: a framed roof/windscreen cell reads as bathroom tile.
+  float voxLegacy = (1.0 - step(1.5, vVoxRes)) * (1.0 - step(0.5, abs(vVoxNormalO.y)));
 
   voxUV = voxFaceUV(voxCell, voxPlane, voxFaceSalt);
-
-  // Device pixels across one voxel tile, from the lattice's own derivative.
-  // This is the LOD every procedural layer below is scheduled against — it is
-  // the honest measure of how much detail the frame can actually show, and it
-  // is the thing the old depth-based fades were a poor proxy for. MEASURED at
-  // the reference framings: street 1366, night 38.5, hero 23.5, golden 21.3.
   vec3 voxDG = fwidth(vVoxGrid);
   voxTilePx = clamp(1.0 / max(max(voxDG.x, max(voxDG.y, voxDG.z)), 1e-6), 1.0, 4096.0);
 
-  // Per-voxel tonal variation: makes a brick wall read as many bricks, not one
-  // sticker. Scaled by roughness so glass and metal stay clean. Band-limited
-  // (voxFbm3) so the SAME variance now decorrelates over 4-8 tiles instead of
-  // tile to tile — panel bays and storey banding, not a chequerboard.
-  float h1 = voxFbm3(voxPlane / uTilePeriod, voxFaceSalt + 7.13);
-  float tone = h1 * 0.230 * voxRough * uGrain * voxDFS;
-
-  // --- SUB-TILE MATERIAL TOOTH -------------------------------------------
-  // MEASURED, and the whole of "detail collapses at close range": every other
-  // texture cue in this file is voxel-scale or coarser, and at the street
-  // framing one voxel face covers ~1366 device pixels — so a 12px measurement
-  // window sits entirely INSIDE one face and saw a constant. Facade sigma/mean
-  // there was 0.0000 (p75 0.0015), i.e. byte-identical pixels, at the one shot
-  // where the facade is largest on screen.
-  //
-  // This layer subdivides the tile by a power of two picked from the tile's
-  // SCREEN size, so its finest cell stays ~8-16 device pixels whatever the
-  // distance: band-limited by construction, so it can never alias, and gated
-  // off entirely at the hero/golden/night framings (21-38 px per tile), which
-  // did NOT want more high-frequency energy. Detail is now strongest close up,
-  // which is the way round it should always have been.
-  float subGate = smoothstep(uTooth.y, uTooth.z, voxTilePx);
-  if (subGate > 0.002) {
-    float k = exp2(floor(log2(max(voxTilePx / max(uTooth.w, 1.0), 1.0))));
-    vec2 sp = voxPlane * k;
-    float t = ((voxVN(sp * 0.25, voxFaceSalt + 31.7) - 0.5) * 0.34
-             + (voxVN(sp * 0.50, voxFaceSalt + 43.1) - 0.5) * 0.46
-             + (voxVN(sp,        voxFaceSalt + 57.9) - 0.5) * 0.62) * uTooth.x;
-
-    // --- SUB-TILE PANEL JOINTS ---------------------------------------------
-    // Noise alone is aggregate, not architecture. A wall pressed against the
-    // lens also has a JOINT GRID — brick courses, precast panel edges — and a
-    // joint is worth far more per pixel than tone is: it is the thing that says
-    // "this surface is made of parts". Pitched off the same power-of-two
-    // subdivision, so the panels stay a constant size on screen, and given the
-    // same lip highlight above the horizontal joint that the tile-scale seams
-    // get, so the read is a lip and not a drawn line.
-    float kp = max(k * 0.125, 2.0);
-    vec2 sq = fract(voxUV * kp);
-    vec2 pe2 = min(sq, 1.0 - sq) / kp;             // distance to a joint, in tiles
-    float gw = uTooth2.z / voxTilePx;              // a fixed ~2 device px joint
-    float joint = 1.0 - smoothstep(0.0, gw, min(pe2.x, pe2.y));
-    float lip2  = (1.0 - smoothstep(gw, gw * 3.2, pe2.y)) * (1.0 - joint);
-    t += lip2 * uTooth2.y - joint * uTooth2.x;
-    t *= 1.0 - voxWin;
-
-    voxToothH = t * voxRough * subGate;
-    voxToothK = k;
-    tone += voxToothH * uGrain;
-  }
-  // Soft-saturated rather than clamped. The sub-tile layer runs at an amplitude
-  // whose tail would otherwise take the albedo negative, and a hard clamp turns
-  // that tail into flat black/white speckle — it also makes the amplitude knob
-  // stop responding (measured: sigma/mean went sub-linear above amp ~2). This
-  // keeps the bulk of the distribution linear and only bends the extremes.
-  diffuseColor.rgb *= max(0.10, 1.0 + tone / (1.0 + abs(tone) * 0.55));
-
-  // --- per-INSTANCE albedo jitter ----------------------------------------
-  // Twelve towers off the same model were byte-identical. Now each placement
-  // gets its own tint. Seed is smooth in world position, so a car does not
-  // strobe as it drives (see voxInstSeed).
+  // --- per-INSTANCE tint (smooth in world position, never strobes) --------
   diffuseColor.rgb *= 1.0 + (vVoxSeed.x - 0.5) * 2.0 * uInstVary;
 
-  // --- per-FLOOR albedo band ---------------------------------------------
-  // Real facades are cast/poured a storey at a time and never match exactly —
-  // but they are poured in RUNS, not one storey at a time in a random order.
-  // Hashing each floor independently was the second half of the chequerboard
-  // (CPU mirror, lag-1 floor autocorrelation 0.136); banding over ~4 storeys
-  // takes it to 0.878 at the same sd (0.277 -> 0.226 x 1.23).
-  float fb = voxVN(vec2(vVoxSeed.y * 37.0, voxCell.y * 0.25), 3.17);
-  diffuseColor.rgb *= 1.0 + (fb - 0.5) * 2.46 * uFloorVary;
-
-  // --- weathering gradient up the facade ---------------------------------
-  // Object space, so it is anchored to the BUILDING (bottom = 0), not to the
-  // world plane, and survives the growth animation's Y scale. Streaked
-  // horizontally so it reads as run-off, not as a vignette. Dielectrics only.
-  // Signed about 0.30, so the crown lifts as much as the base darkens: this adds
-  // CONTRAST without dimming the city (art direction: richer, not grittier).
+  // --- GLASS ----------------------------------------------------------------
+  // The palette's window colours are the NIGHT story (200 warm, 201 cool);
+  // by day a pane is glass: a clear mid blue carrying a little of the
+  // palette hue. Emissive panes take the full tint, plain 'glass' palette
+  // entries (skyBlue on cars, kiosks) a lighter one.
   {
-    // Pivot 0.42 is the MEAN of exp(-0.085*y) over a typical 20-voxel facade,
-    // so the term redistributes brightness instead of subtracting it. At 0.30
-    // the "contrast" gradient was quietly costing the city ~2 luma everywhere.
-    float up = exp(-max(vVoxGrid.y, 0.0) * uWeatherFall);
-    // Run-off streaks are several bays wide, not one column wide — another
-    // 1-tile alternation retired in favour of a ~4.5-tile band.
-    float streak = 0.65 + 0.35 * voxVN(vec2(voxPlane.x * 0.22, vVoxSeed.y * 29.0), voxFaceSalt + 5.1);
-    float dirt = uWeather * (up - 0.42) * streak * (1.0 - voxGlass) * (1.0 - voxMatR.y);
-    diffuseColor.rgb *= (1.0 - dirt);
-    // Grime is cooler and less saturated than the paint under it.
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(voxLuma(diffuseColor.rgb)) * vec3(0.94, 0.97, 1.04), max(dirt, 0.0) * 0.5);
+    float gAmt = voxGlass * mix(uGlassTintAmt * 0.6, uGlassTintAmt, voxWin);
+    diffuseColor.rgb = mix(diffuseColor.rgb, uGlassTint * mix(vec3(1.0), diffuseColor.rgb, 0.18) * 1.1, gAmt);
   }
 
-  // Contact grime: a soft darkening in the first couple of units above ground,
-  // so buildings and props sit ON the world instead of hovering over it.
-  float ground = exp(-max(vVoxWorld.y, 0.0) * 0.40);
-  diffuseColor.rgb *= (1.0 - uGrime * ground * voxRough);
-
-  // --- panel / seam lines -------------------------------------------------
-  // engine.js ships with voxel.js's micro-bevel OFF (it costs 5x triangles), so
-  // adjacent same-colour voxels had NOTHING separating them. A one-texel groove
-  // on every cell boundary restores that read for free. fwidth keeps it a
-  // constant ~1.5px wide, and voxDF retires it before it can alias.
-  //
-  // A groove alone still reads as a drawn line. Real cast concrete has a slab
-  // LIP: the horizontal joint is deeper than the vertical one, and the course
-  // above it catches a highlight. That asymmetry is what turns a line into
-  // geometry, and it is the cheapest storey-scale texture a blank wall can get.
+  // --- LEGACY res-1 WINDOWS: a clean painted frame + sill -------------------
+  // A res-1 window is a single glass voxel flush with the wall. A thin light
+  // frame and sill turn it into a window; nothing is randomised, so every
+  // pane on a facade is the same size, like the reference.
+  // Derivatives OUTSIDE any branch (window and wall voxels are adjacent).
+  float fw = fwidth(voxUV.x + voxUV.y) * 1.2;
   {
-    vec2 pe = min(voxUV, 1.0 - voxUV);
-    float w = max(fwidth(voxUV.x + voxUV.y) * 1.5, 0.018);
-    float seamV = 1.0 - smoothstep(0.0, w, pe.x);
-    float seamH = 1.0 - smoothstep(0.0, w, pe.y);
-    float seam = max(seamV, seamH * (1.0 + uPanelH));
-    // Highlight on the lip just above each horizontal joint.
-    float lip = (1.0 - smoothstep(w, w * 3.4, voxUV.y)) * (1.0 - seamH);
-    float notWin = 1.0 - voxWin;
-    diffuseColor.rgb *= 1.0 - uPanel * min(seam, 1.6) * voxDFS * notWin;
-    diffuseColor.rgb *= 1.0 + uLedge * lip * voxDFS * notWin;
-  }
-
-  // --- windows: frame, reveal AO, glass gradient, per-pane variation -------
-  // NOTE: derivatives are taken OUTSIDE any branch on voxWin — fwidth() in
-  // divergent control flow is undefined, and window and wall voxels are
-  // adjacent, so a branch here would garbage one pixel row along every pane.
-  {
-    // Per-pane FRAME WIDTH. This is where "every window is identical in size"
-    // gets fixed: a wider frame is a smaller pane, and because the frame also
-    // masks the emissive (see FRAG_OUT) the lit rectangle changes size too.
-    float sr = voxCellRand(voxCell, vVoxSeed.y, 13.71);
-    float rwv = uWinRevealW * mix(1.0 - uWinSizeVary, 1.0 + uWinSizeVary * 1.6, sr);
-
     float px = min(voxUV.x, 1.0 - voxUV.x);
-    float dTop = 1.0 - voxUV.y;
-    float dBot = voxUV.y;
-    float fw = fwidth(voxUV.x + voxUV.y) * 1.5;
-    float rw = max(fw, rwv);
-    // Head + jambs are a recess: they go DARK. The cill does not — see below.
-    float reveal = 1.0 - smoothstep(0.0, rw, min(px, dTop));
-    // A lintel throws a deeper shadow into the head of the reveal.
-    float lintel = reveal * smoothstep(0.45, 1.0, voxUV.y) * 0.7;
-    // One vertical mullion down the middle of the pane.
+    float rw = max(fw, uWinRevealW);
+    float frame = 1.0 - smoothstep(rw * 0.75, rw, min(px, 1.0 - voxUV.y));
+    float sill = 1.0 - smoothstep(rw * 1.05, rw * 1.3, voxUV.y);
     float mx = abs(voxUV.x - 0.5);
-    float mull = (1.0 - smoothstep(0.0, max(fw, 0.028), mx)) * uWinMullion;
-    voxFrame = clamp(reveal + lintel + mull, 0.0, 1.0) * voxWin;
-
-    // --- SILL / LEDGE ------------------------------------------------------
-    // The one piece of window geometry that faces UP. It catches sky, so it is
-    // BRIGHTER than the wall, and it throws its own shadow onto the glass just
-    // above it. Without this pair a pane is a decal; with it there is a
-    // physical shelf at the bottom of every opening.
-    float sillW = rw * 1.25;
-    voxSill = (1.0 - smoothstep(sillW * 0.62, sillW, dBot)) * voxWin;
-    float sillShadow = (1.0 - smoothstep(sillW, sillW * 2.6, dBot)) * (1.0 - voxSill);
-
-    // Sky at the head of the pane, room at the cill.
-    float grad = mix(0.80, 1.18, voxUV.y);
-    float wr = voxCellRand(voxCell, vVoxSeed.y, 7.31);
-    vec3 pane = diffuseColor.rgb * grad * (1.0 + (wr - 0.5) * 2.0 * uWinVary);
-    pane *= mix(1.0, uWinReveal, voxFrame);
-    pane *= 1.0 + uWinSill * voxSill * 1.5;              // the lit ledge
-    pane *= 1.0 - uWinSill * sillShadow * 0.55 * voxWin; // its shadow on the glass
-    diffuseColor.rgb = mix(diffuseColor.rgb, pane, voxWin);
+    float mull = (1.0 - smoothstep(max(fw, 0.022) * 0.7, max(fw, 0.022), mx)) * uWinMullion;
+    voxFrame = clamp(frame + mull, 0.0, 1.0) * voxWin * voxLegacy;
+    voxSill = sill * voxWin * voxLegacy;
+    // Soft shadow the frame head throws on the pane.
+    float head = (1.0 - smoothstep(rw, rw * 2.6, 1.0 - voxUV.y)) * (1.0 - voxFrame) * voxWin * voxLegacy;
+    diffuseColor.rgb *= 1.0 - 0.22 * head;
+    vec3 frameC = uWinFrame;
+    diffuseColor.rgb = mix(diffuseColor.rgb, frameC, max(voxFrame, voxSill) * uWinReveal);
   }
 
-  // Glass: real panes are dark and mostly reflection. Drop the DIFFUSE albedo
-  // so the specular/env lobe is what you actually see, instead of pale paint.
-  // Scaled by (1 - metalness): a metallic pane has almost no diffuse left to
-  // darken, and dimming it would only make the mirror dull.
-  diffuseColor.rgb *= mix(1.0, uGlassDarken, voxGlass * (1.0 - voxMatR.y));
+  // --- glass sheen: the "light reflection" stripe ---------------------------
+  // Two soft diagonal bands across the pane in face space (a wide one and a
+  // thin one), the classic toy-glass read. Band-limited by fwidth, so it
+  // fades instead of shimmering at city zoom.
+  {
+    // r8 (critic r7: "flat saturated blue, no reflection highlight"; r5/r6:
+    // "hard painted diagonal stripes"). The reflection is now PANE-LOCAL: every
+    // window carries the same soft "/" glint (one broad band plus a faint thin
+    // one), placed in the pane's own metric frame, so each pane reads as a
+    // sheet of glass catching the sky — no world-space band that lands on some
+    // windows and misses others. Soft-shouldered (no edge inside a pane), light
+    // sky-blue rather than white, and faded out when a pane is under ~8 px so
+    // it never shimmers at city zoom. Large curtain-wall panes repeat the glint
+    // every ~1.6 world units instead of stretching one band across the wall.
+    // Derivatives are taken here, outside any branch.
+    float hasP = step(0.5 / 255.0, min(vVoxAOUV.z, vVoxAOUV.w)) * (1.0 - voxLegacy);
+    vec2 pnS = mix(voxUV, clamp((vVoxAOUV.zw * 255.0 - 1.0) / 254.0, 0.0, 1.0), hasP);
+    vec2 gPx = vec2(dFdx(pnS.x), dFdy(pnS.x)), gPy = vec2(dFdx(pnS.y), dFdy(pnS.y));
+    vec2 gWx = vec2(dFdx(voxPlane.x), dFdy(voxPlane.x)), gWy = vec2(dFdx(voxPlane.y), dFdy(voxPlane.y));
+    float szA = mix(1.0, clamp(length(gWx) / max(length(gPx), 1e-6), 0.05, 64.0), hasP);
+    float szU = mix(1.0, clamp(length(gWy) / max(length(gPy), 1e-6), 0.05, 64.0), hasP);
+    // across coordinate increasing to SCREEN RIGHT, so glints are parallel on
+    // both wall orientations
+    float ar = dFdx(pnS.x) >= 0.0 ? pnS.x : 1.0 - pnS.x;
+    float qa = ar * szA, qu = pnS.y * szU;
+    float qRange = szA + 0.6 * szU;
+    float q = (qa - 0.6 * qu + 0.6 * szU) / max(qRange, 1e-3);
+    float nG = max(1.0, floor(qRange / 1.6 + 0.5));
+    float ph = fract(q * nG);
+    float pw = fwidth(q * nG);
+    float b1 = 1.0 - smoothstep(0.0, 0.15 + pw, abs(ph - 0.30));
+    float b2 = 1.0 - smoothstep(0.0, 0.045 + pw, abs(ph - 0.56));
+    float glint = b1 * b1 * (3.0 - 2.0 * b1) + 0.55 * b2;
+    float panePx = 1.0 / max(length(gPy), 1e-6);
+    float sheen = glint * smoothstep(6.0, 16.0, panePx) * (1.0 - smoothstep(0.35, 0.8, pw));
+    float onPane = voxGlass * (1.0 - voxFrame) * (1.0 - voxSill);
+    // A reflection is view-dependent LIGHT, not paint: most of the streak is
+    // added as indirect specular in FRAG_AO (so it survives on the shaded
+    // side, where a pane reflects the bright sky just as much); a little
+    // stays in the albedo so it also reads under the key.
+    voxSheenV = sheen * onPane;
+    diffuseColor.rgb += 0.35 * uGlassSheen * voxSheenV * vec3(0.55, 0.75, 1.0);
+    // Head of the pane a touch lighter: sky above, room below.
+    diffuseColor.rgb *= 1.0 + 0.12 * (voxUV.y - 0.5) * onPane * voxLegacy;
+    // PANE GRADE (surface r7, res > 1 glass with mesher paneUV). ref04's
+    // panes are one clear blue that deepens toward the head (the reveal and
+    // lintel shade it) and clears toward the sill, with a faint darkening at
+    // the jambs: the read of a recessed sheet of glass rather than blue paint.
+    // Smooth over the WHOLE pane, so it never forms a line inside a window.
+    {
+      float has = step(0.5 / 255.0, min(vVoxAOUV.z, vVoxAOUV.w)) * onPane * (1.0 - voxLegacy);
+      vec2 pn = clamp((vVoxAOUV.zw * 255.0 - 1.0) / 254.0, 0.0, 1.0);
+      float up = smoothstep(0.0, 1.0, pn.y);
+      float jamb = pow(abs(pn.x - 0.5) * 2.0, 3.0);
+      float grade = mix(uPaneGrade.y, uPaneGrade.x, up) * (1.0 - uPaneGrade.z * jamb);
+      diffuseColor.rgb *= mix(1.0, grade, has);
+      voxPaneUp = mix(0.5, up, has);
+    }
+  }
+
+  // Near-black paint (black/darkGray trim, signs) keeps a readable face tone
+  // under the iso key instead of collapsing into a lump: lift it toward a cool
+  // charcoal floor. No-op on anything brighter than the floor.
+  diffuseColor.rgb = max(diffuseColor.rgb, vec3(0.92, 0.96, 1.06) * uDarkFloor);
 
   // Weather tint (engine-owned uSeason). Off by default: strength 0.
   diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uSeason, uSeasonStrength);
@@ -678,13 +668,7 @@ const FRAG_COLOR = /* glsl */`
 const FRAG_ROUGHNESS = /* glsl */`
 float roughnessFactor = voxMatR.x;
 {
-  float voxDF = 1.0 - smoothstep(70.0, 190.0, vVoxDepth);
-  // Break up mirror-flat highlights. Absolute (not roughness-scaled) so metal
-  // and painted surfaces both get micro-variation instead of a plastic sheen.
-  // Band-limited like the albedo jitter: a half-voxel white-noise hash here was
-  // feeding the same tile-scale chequer through the specular lobe.
-  float h = voxVN(voxPlane * 0.34, voxFaceSalt + 3.7);
-  roughnessFactor += (h - 0.5) * 0.108 * uGrain * voxDF;
+  // No roughness noise: the reference's faces are uniform, so is the sheen.
   // Rain: up-facing surfaces get wet and glossy.
   float up = clamp(vVoxNormalW.y, 0.0, 1.0);
   roughnessFactor = mix(roughnessFactor, 0.10, uWet * up * 0.85);
@@ -711,7 +695,7 @@ float metalnessFactor = clamp(voxMatR.y, 0.0, 1.0);
 // smooth in screen space, so the derivatives stay well defined.
 const FRAG_NORMAL = /* glsl */`
 #include <normal_fragment_maps>
-if (uToothBump > 0.0) {
+if (uToothBump > 0.0 && voxToothH != 0.0) {
   // Mikkelsen compares a HEIGHT against a POSITION, so the height has to be in
   // world units or the two terms are off by many orders of magnitude and the
   // normal collapses onto the gradient (measured: it lifted the whole wall by
@@ -741,17 +725,71 @@ const FRAG_PHYSICAL = /* glsl */`
   material.specularColor = mix(vec3(f0), diffuseColor.rgb, metalnessFactor);
   material.specularF90 = 1.0;
 }
+#ifdef VOX_CSM
+// World AO (lighting.js) caches its per-fragment visibility in csmAoVis and
+// returns the cache when it is >= 0. Pre-seeding it here, before the lighting
+// loop, is how a voxel face opts out: its AO is baked per vertex (voxel.js) and
+// the height-volume estimate only added streaks on flat faces (surface r4).
+if (uWorldAOKeep <= 0.0) csmAoVis = 1.0;
+else if (uWorldAOKeep < 1.0) csmAoVis = mix(1.0, csmWorldAO(normal), uWorldAOKeep);
+#endif
 `;
 
 // Replaces <aomap_fragment>: voxel AO from the attribute.
 const FRAG_AO = /* glsl */`
 {
-  float voxAO = vVoxAO;
+  // --- clean cast-shadow edges on voxel faces (see params.shadowCrisp) ------
+  // csmLastShadow is the (strength/fade-applied) sun visibility csmApply just
+  // multiplied into the key. Re-shape it: direct *= g(s) / s. g <= s * 1.25
+  // everywhere, and g(0) = 0, so the ratio is bounded and umbrae are untouched.
+  #if NUM_DIR_LIGHTS > 0
+  if (uShadowCrisp.x > 0.0 && csmLastShadow < 0.999) {
+    float s0 = csmLastShadow;
+    float g = smoothstep(uShadowCrisp.y, uShadowCrisp.z, s0);
+    float k = mix(1.0, g / max(s0, 1e-3), uShadowCrisp.x * (1.0 - uNight));
+    reflectedLight.directDiffuse  *= k;
+    reflectedLight.directSpecular *= k;
+    csmLastShadow = mix(s0, g, uShadowCrisp.x * (1.0 - uNight));
+  }
+  #endif
+  // r11 (critic r10: "the glass has highlight streaks but does not look
+  // glossy"): a pane is a mirror, and its reflection is not shadowed by the
+  // wall's baked AO the way a painted wall is. The frame head's AO band was
+  // greying the top third of every window into a matte blue. Glass keeps
+  // half of it, so the reveal still reads, and the reflection stays clear.
+  float voxAO = mix(voxAOv, 1.0, 0.5 * voxGlass);
   float aoIndirect = mix(1.0, voxAO, uAOStrength);
-  float aoDirect   = mix(1.0, voxAO, uAODirect);
+  // r12: aoDirect > 1 is an EXPONENT on sunlit faces (pow(ao, aoDirect)):
+  // a lit wall sits on the display shoulder (PBR Neutral + knee), where a
+  // linear 0.8 AO dip came out as a few percent on screen, so the corner and
+  // ledge gradients vanished on exactly the faces the critic looks at.
+  float aoDirect   = uAODirect > 1.0 ? pow(voxAO, uAODirect) : mix(1.0, voxAO, uAODirect);
   reflectedLight.indirectDiffuse  *= aoIndirect;
   reflectedLight.directDiffuse    *= aoDirect;
-  reflectedLight.directSpecular   *= mix(1.0, voxAO, uAODirect * 0.6);
+  reflectedLight.directSpecular   *= mix(1.0, voxAO, min(uAODirect, 1.0) * 0.6);
+  // --- AO COLOUR BLEED (params.aoHue, surface r12) ------------------------
+  // Critic r11: "ref04 puts a wide, smooth shadow gradient under every ledge
+  // ... and its darker right side is still a rich, warm orange. Ours needs
+  // ... more saturated, warmer colour and less grey." In a path-traced voxel
+  // render the light that does reach an inside corner has bounced off the
+  // same coloured wall a few times, so occluded pixels are not just darker,
+  // they are MORE saturated in the wall's own hue (ref04: the orange goes
+  // deeper and redder into every crease, never grey). Carry the albedo hue
+  // (albedo / luma: luma-neutral) in proportion to the AO darkening, and
+  // deepen it by y. Whites and greys have hue ~1, so they are untouched and
+  // stay clean. Glass keeps its own look. Off at night (lamp pools).
+  if (uAOHue.x > 0.0) {
+    float aoDk = (1.0 - voxAO) * (1.0 - voxGlass) * (1.0 - 0.6 * uNight);
+    // Hue normalised by its PEAK channel (<= 1 everywhere): the bleed only
+    // ever pulls the weaker channels down, never pushes the dominant one up.
+    // (A luma-normalised hue raised a lit pink's R past the display clip, so
+    // the AO turned into a hue shift with no darkening at all: r12-c.)
+    float pkH = max(max(diffuseColor.r, diffuseColor.g), max(diffuseColor.b, 0.02));
+    vec3 hueH = clamp(diffuseColor.rgb / pkH, vec3(0.0), vec3(1.0));
+    vec3 bleed = mix(vec3(1.0), hueH, clamp(uAOHue.x * aoDk, 0.0, 1.0)) * (1.0 - uAOHue.y * aoDk);
+    reflectedLight.indirectDiffuse *= bleed;
+    reflectedLight.directDiffuse   *= bleed;
+  }
   float dotNV = saturate(dot(geometryNormal, geometryViewDir));
   reflectedLight.indirectSpecular *= computeSpecularOcclusion(dotNV, aoIndirect, material.roughness);
 
@@ -759,6 +797,8 @@ const FRAG_AO = /* glsl */`
   // what makes a window read as a pane instead of pale paint. Keyed off the RAW
   // attribute class (voxGlass), since a remapped pane is metallic now.
   reflectedLight.indirectSpecular *= mix(1.0, uGlassEnv, voxGlass);
+  // Glass streak (see FRAG_COLOR): sky-coloured reflected light.
+  reflectedLight.indirectSpecular += uSkyFillColor * vec3(0.85, 0.95, 1.0) * (uGlassSheen * 1.1 * voxSheenV);
   reflectedLight.directSpecular   *= mix(1.0, 1.0 + uGlassSpec * 1.6, voxGlass);
 
   // --- ANALYTIC SKY/HORIZON/GROUND MIRROR on glass ------------------------
@@ -848,6 +888,9 @@ const FRAG_AO = /* glsl */`
     // Uses the PERTURBED normal, so the fresnel ramp also varies pane to pane
     // instead of being constant over a whole flat wall.
     float fr = mix(1.0, 0.08 + 0.92 * pow(1.0 - saturate(dot(Nw, Vw)), 4.0), uGlassFresnel);
+    // r7: the reflection clears toward the sill with the pane grade (the head
+    // sits in the reveal's shade and sees less sky); 0.5 = no pane data.
+    fr *= 1.25 - 0.5 * voxPaneUp;
     reflectedLight.indirectSpecular +=
       envC * mix(vec3(1.0), material.specularColor * 1.7, 0.65) *
       (uGlassSky * voxGlass * fr * aoIndirect);
@@ -879,15 +922,69 @@ const FRAG_AO = /* glsl */`
     vec3 tint = mix(vec3(1.0), material.specularColor, 0.6);
     reflectedLight.directSpecular +=
       directionalLights[0].color * tint *
-      (lobe * uGlint * mask * csmLastShadow * mix(1.0, voxAO, uAODirect * 0.6));
+      (lobe * uGlint * mask * csmLastShadow * mix(1.0, voxAO, min(uAODirect, 1.0) * 0.6));
   }
   #endif
 
+  // --- SHADE SIDE (params.shadeSide, surface r9) --------------------------
+  // Critic r8: "the left and right wall faces come out almost the same flat
+  // pink ... in ref04 the right face is clearly darker". The key already leaves
+  // the right wall (fill only), but the fill (hemi + sky IBL) is omnidirectional
+  // around the horizon, so a wall facing away from the sun got ~the same
+  // indirect light as the lit one and the pair measured luma 0.85 (ref04 0.73).
+  // Physically the half of the sky around the sun is the bright half; a face
+  // turned away sees the dim half. So: scale the indirect diffuse of faces
+  // turned AWAY from the key down by x, and carry the albedo's hue by y so the
+  // dark side gets deeper AND richer (ref04's shaded orange is more saturated
+  // than its lit one), never grey. Tops, lit walls and glass are untouched;
+  // off at night (the moon key is not the daylight sky).
+  #if NUM_DIR_LIGHTS > 0
+  if (uShadeSide.x > 0.0) {
+    float nlS = dot(geometryNormal, directionalLights[0].direction);
+    float awayS = smoothstep(0.0, uShadeSide.z, -nlS) * (1.0 - uNight) * (1.0 - voxGlass);
+    float lumS = max(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.02);
+    vec3 hueS = clamp(diffuseColor.rgb / lumS, vec3(0.45), vec3(2.2));
+    reflectedLight.indirectDiffuse *= (1.0 - uShadeSide.x * awayS) *
+                                      mix(vec3(1.0), hueS, uShadeSide.y * awayS);
+  }
+  #endif
+
+  // --- WALL KEY (params.wallKey, surface r10) -----------------------------
+  // Critic r9: "the left (pink) face is nearly as bright as the roof and
+  // cornice tops ... drop the left-face value about 10-15% so top, left and
+  // right read as three distinct tones". The engine keys walls at ~the same
+  // N.L as roofs (-75 az / 40 el: left wall 0.66, roof 0.64) for the shadow
+  // direction's sake, and the lit pink/cream sits on the tonemap shoulder, so
+  // top and lit wall came out 1 : 0.95 (ref04 1 : 0.89 : 0.63). Scaling the
+  // key's DIRECT diffuse on vertical faces keeps the shadow direction, the
+  // tops and the fill (hue) untouched and moves only the lit wall's value.
+  // Off at night (the moon key is already dim and flat).
+  reflectedLight.directDiffuse *= mix(1.0, uWallKey, (1.0 - abs(vVoxNormalW.y)) * (1.0 - uNight));
+
   // Sky fill: a tiny hemispheric bounce so the shadow side never goes flat
   // black and the silhouette keeps some colour. Occluded by voxel AO.
-  float up = vVoxNormalW.y * 0.5 + 0.5;
+  // uSkyFillDown keeps some of it on down-facing faces (awning / balcony
+  // undersides): bounce off the bright ground, so they stay coloured instead
+  // of dropping to near-black.
+  float up = mix(uSkyFillDown, 1.0, vVoxNormalW.y * 0.5 + 0.5);
   reflectedLight.indirectDiffuse +=
     diffuseColor.rgb * uSkyFillColor * (uSkyFill * up * aoIndirect * (1.0 - metalnessFactor));
+
+  // Sun bounce into the faces that turn away from the key (params.bounce).
+  // Hue carry: bounce that has hit the same wall colour a few times comes back
+  // more saturated, which is what keeps ref04's shaded side rich instead of
+  // grey. Glass keeps its own look (the mirror above), so it takes half.
+  #if NUM_DIR_LIGHTS > 0
+  if (uBounce.x > 0.0) {
+    float nl0 = dot(geometryNormal, directionalLights[0].direction);
+    float away = clamp(0.30 - nl0, 0.0, 1.0);
+    float lum = max(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.02);
+    vec3 hue = clamp(diffuseColor.rgb / lum, vec3(0.45), vec3(2.2));
+    vec3 tint = uBounceTint * mix(vec3(1.0), hue, uBounce.y);
+    reflectedLight.indirectDiffuse += diffuseColor.rgb * directionalLights[0].color * tint *
+      (uBounce.x * away * aoIndirect * (1.0 - metalnessFactor) * (1.0 - 0.5 * voxGlass));
+  }
+  #endif
 }
 `;
 
@@ -941,10 +1038,12 @@ const FRAG_OUT = /* glsl */`
     // The reveal and the sill are masonry: they stay dark even when the room
     // behind the glass is lit. That border is the only thing that keeps one
     // window from merging into the next once bloom gets hold of the frame.
-    float rev = mix(1.0, uWinReveal, voxFrame) * (1.0 - voxSill * 0.92);
-    vec3 winGlow = vVoxGlow * tint * inten * rev;
+    // The legacy frame/sill is painted trim: it never glows, it stays lit
+    // as an ordinary surface next to the bright pane.
+    float trim = max(voxFrame, voxSill);
+    vec3 winGlow = vVoxGlow * tint * inten;
     glow   = mix(glow, winGlow, voxWin);
-    emiAmt = mix(emiAmt, on * dusk, voxWin);
+    emiAmt = mix(emiAmt, on * dusk * (1.0 - trim), voxWin);
   }
 
   // --- Rim / silhouette separation ---------------------------------------
@@ -952,7 +1051,7 @@ const FRAG_OUT = /* glsl */`
   // 1px silhouette sliver, which does nothing for separation against the sky.
   float fres = pow(1.0 - saturate(dot(geometryNormal, geometryViewDir)), 2.2);
   float rimUp = 0.55 + 0.45 * clamp(vVoxNormalW.y * 0.5 + 0.5, 0.0, 1.0);
-  gl_FragColor.rgb += uRimColor * (fres * uRimStrength * rimUp * mix(1.0, vVoxAO, 0.6) * (1.0 - emiAmt));
+  gl_FragColor.rgb += uRimColor * (fres * uRimStrength * rimUp * mix(1.0, voxAOv, 0.6) * (1.0 - emiAmt));
 
   // --- Night glow: the legacy lerp, with the per-window glow substituted --
   gl_FragColor.rgb = mix(gl_FragColor.rgb, glow, emiAmt);
@@ -966,6 +1065,16 @@ const FRAG_OUT = /* glsl */`
   float dayNeon = vVoxEmi * neon * uNeonDay * (1.0 - uNight);
   float boost = emiAmt * mix(uWindowBoost, uNeonBoost, neon) + dayNeon * uNeonBoost;
   gl_FragColor.rgb += hdr * boost;
+
+  // --- SSAO hand-off (surface r2) ------------------------------------------
+  // Voxel geometry carries EXACT per-vertex AO (voxel.js), so post.js's
+  // depth-only SSAO is redundant on it — and at close zoom it was the source
+  // of the blotchy grey smudges on open faces and the halos along convex trim.
+  // The scene target's alpha is otherwise unused (every opaque pass writes
+  // 1.0); voxel pixels write uSsaoKeep there and post.js's lit pass scales its
+  // AO by it. Terrain, roads and props keep full SSAO for cross-mesh contact.
+  gl_FragColor.a = uSsaoKeep;
+  if (uDebugAO > 0.5) gl_FragColor = vec4(vec3(voxAOv * 0.6), uSsaoKeep);
 }
 `;
 
@@ -1135,7 +1244,11 @@ export function computeWindowGlows(objects, opts) {
 
     // Lattice offset: constant across the geometry, recovered exactly as the
     // vertex shader does.
-    const ox = _gridOffset(pos.getX(0)), oy = _gridOffset(pos.getY(0)), oz = _gridOffset(pos.getZ(0));
+    const lat = geo.attributes[ATTR.voxLat];
+    const fine = !!lat && lat.getX(0) > 1.5;     // res > 1: explicit lattice origin
+    const ox = fine ? lat.getY(0) : _gridOffset(pos.getX(0));
+    const oy = fine ? lat.getZ(0) : _gridOffset(pos.getY(0));
+    const oz = fine ? lat.getW(0) : _gridOffset(pos.getZ(0));
 
     // voxel.js emits 4 vertices per face (8 with bevel:true); walking whole
     // faces means one sample per pane instead of four.
@@ -1222,12 +1335,21 @@ export function computeWindowGlows(objects, opts) {
 // ===========================================================================
 
 const DEFAULT_PARAMS = {
-  ao: 0.95,            // indirect AO strength
-  aoDirect: 0.38,      // how much AO also bites direct light (voxels like it)
+  ao: 1.0,             // indirect AO strength
+  // r12: 1.0 -> 1.5. Values > 1 are an EXPONENT, pow(ao, aoDirect), on the
+  // key's direct light (see FRAG_AO): sunlit faces sit on the display
+  // shoulder and a linear AO dip barely showed there (critic r11: "almost no
+  // soft shading in the corners, under the window frames, sills, cornice").
+  aoDirect: 1.25,      // r13: 1.5 -> 1.25 (critic r12: shopfront AO near-black; the voxel AO itself is gentler and floored now).
+                       // how much AO also bites direct light (r8 0.8 -> 1.0: critic r7 'AO reads flat'). Raised from 0.38
+                       // in surface r2 when the voxel AO became the ONLY AO on
+                       // voxel pixels (ssaoKeep 0): ref04's soft corner bands
+                       // show on sunlit faces too.
   saturation: 1.16,    // palette saturation lift (fights PBR/IBL wash-out)
   rim: 0.16,           // rim/silhouette strength (day)
   rimNight: 0.26,      // rim strength at full night
-  skyFill: 0.16,       // hemispheric sky bounce into indirect diffuse
+  skyFill: 0.28,       // hemispheric sky bounce into indirect diffuse (0.16 before
+                       // surface r2: shaded faces went muddy/near-black)
   windowBoost: 0.60,   // extra HDR energy on lit windows.
                        // MEASURED: at 0.9 the night frame's HDR peak was 1.94
                        // and a typical pane sat at ~1.6 — deep on the ACES
@@ -1245,7 +1367,7 @@ const DEFAULT_PARAMS = {
                        // while leaving the bloom core enough headroom to keep
                        // its hue instead of clipping to flat white)
   neonDay: 0.0,        // daytime neon glow (0 preserves current day look)
-  grain: 1.4,          // procedural tooth (1 = the original amplitude)
+  grain: 0.0,          // RETIRED (surface r1): no procedural texture on voxel faces
   tilePeriod: [5.0, 3.6],
                        // decorrelation length of the per-voxel tonal jitter, in
                        // TILES (across, up). CPU mirror over a 96x96 tile patch,
@@ -1257,7 +1379,7 @@ const DEFAULT_PARAMS = {
                        // 7x5 measures even smoother (r1 0.923, r4 0.394) but on
                        // a 10-tile-wide tower that is nearly a per-BUILDING
                        // tint, which is what uInstVary is already for.
-  tooth: [4.20, 40.0, 110.0, 8.0],
+  tooth: [0.0, 40.0, 110.0, 8.0],   // RETIRED (surface r1) — amplitude 0
                        // sub-tile material tooth: (amplitude, screen px per
                        // tile where it starts, where it is full, target cell
                        // size in device px). Off below 40 px/tile, which is
@@ -1277,16 +1399,19 @@ const DEFAULT_PARAMS = {
                        // score the same, 22 loses 25%, 44 loses 50% — the street
                        // frame is behind the DOF near-blur (focus 22.5, wall at
                        // depth 1.5) which eats anything finer.
-  tooth2: [0.48, 0.20, 2.2],
+  tooth2: [0.0, 0.0, 2.2],          // RETIRED (surface r1)
                        // sub-tile joint grid: (joint depth, lip highlight above
                        // the horizontal joint, joint width in device px)
-  toothBump: 0.50,     // relief from the same height field (Mikkelsen bump)
+  toothBump: 0.0,      // RETIRED (surface r1)
   toothQ1: 0.55,       // its amplitude multiplier at quality 1 (0 at quality 0)
   glassSpec: 1.0,      // glass F0 lift on the dielectric remainder
-  glassDarken: 0.72,   // glass DIFFUSE multiplier (scaled by 1 - metalness)
-  glassEnv: 3.2,       // glass indirect-specular (sky reflection) multiplier
+  glassDarken: 1.0,    // (unused since surface r1 — glass takes uGlassTint)
+  glassEnv: 1.1,       // glass indirect-specular (sky reflection) multiplier.
+                       // 3.2 washed every pane to lavender; the reference's glass
+                       // is a clear saturated blue with a light streak (surface r1)
   glassFresnel: 0.85,  // how much of the analytic mirror is fresnel-weighted
-  glassSky: 2.70,      // strength of the analytic sky/horizon/ground mirror.
+  glassSky: 0.90,      // strength of the analytic sky/horizon/ground mirror
+                       // (2.70 before surface r1 — see glassEnv).
                        // Raised from 1.35 alongside glassCity below: the sky
                        // -visibility term takes brightness AWAY from the bottom
                        // of every glass facade, and the art direction is BRIGHT,
@@ -1307,7 +1432,8 @@ const DEFAULT_PARAMS = {
                        // are ~12 apart, so a roofline much above 20 puts the
                        // whole tower under the crossover and flattens it again.
   glassCityGain: 0.44, // how bright the reflected city/street is, against sky
-  glassTilt: 0.085,    // per-pane mirror-normal tilt (curtain wall is not flat)
+  glassTilt: 0.0,      // per-pane mirror-normal tilt. 0: the reference's glass is
+                       // uniform; per-pane scatter read as a chequer of hot panes
   glassBow: 0.055,     // pillow/bow of that normal across one pane
   sunHalo: 0.95,       // sun's halo inside that mirror
   sunHaloPower: 60,
@@ -1320,23 +1446,92 @@ const DEFAULT_PARAMS = {
                        // degrees off the half-vector (measured). Anything
                        // narrower than ~20 never fires on ANY surface.
   glassRough: 0.14,    // glass class roughness  (art direction: 0.10-0.20)
-  glassMetal: 0.80,    // glass class metalness  (art direction: 0.80-1.00)
+  glassMetal: 0.12,    // low (surface r1): the pane's clear BLUE is diffuse, the
+                       // mirror rides on top of it
   metalRough: 0.35,    // conductor roughness ceiling (metal roofs -> 0.35/1.0)
   spread: 1.22,        // dielectric roughness contrast about 0.5
-  grime: 0.26,         // contact darkening near the ground
-  panel: 0.42,         // per-voxel seam/panel line depth
-  panelH: 0.55,        // horizontal (floor) seams are deeper than vertical ones
-  ledge: 0.15,         // slab-lip highlight above each horizontal seam
-  instVary: 0.075,     // per-building albedo jitter (+/-)
-  floorVary: 0.045,    // per-floor albedo jitter (+/-)
-  weather: 0.30,       // vertical grime gradient up the facade
+  // RETIRED in surface r1 (texture the reference does not have; kept as keys
+  // so setParams callers do not break): grime, panel, panelH, ledge,
+  // floorVary, weather. Contact darkening is voxel.js ground AO now.
+  grime: 0.0,
+  panel: 0.0,
+  panelH: 0.0,
+  ledge: 0.0,
+  instVary: 0.03,      // per-building albedo tint (+/-): barely there, never a stain
+  floorVary: 0.0,
+  weather: 0.0,
   weatherFall: 0.085,  // 1/e height of that gradient, in voxels
-  winVary: 0.10,       // per-window albedo jitter (+/-)
-  winReveal: 0.42,     // albedo/glow multiplier inside the window reveal
-  winRevealW: 0.115,   // reveal border width as a fraction of the pane
-  winSizeVary: 0.55,   // per-window frame-width jitter -> visibly unequal panes
-  winSill: 1.00,       // sill/ledge brightness under every pane
-  winMullion: 0.55,    // centre mullion strength
+  winVary: 0.0,        // (unused since surface r1)
+  winReveal: 1.0,      // legacy res-1 window frame opacity (colour = winFrame)
+  winRevealW: 0.085,   // legacy frame width, fraction of the pane
+  winSizeVary: 0.0,    // (unused since surface r1: every pane the same size)
+  winSill: 1.00,
+  winMullion: 0.0,     // legacy centre mullion strength
+  winFrame: 0xf2efe6,  // legacy frame/sill colour (sRGB) — painted white trim
+  glassTint: 0x4f8fe0, // r8 0x3d74d0 -> lighter (panes measured navy 18,60,120). day glass albedo (sRGB): clear mid blue, ref04/ref05
+  glassTintAmt: 0.88,
+  glassSheen: 0.45,    // r13: 0.60 -> 0.45 (critic r12: "streaky diagonal white slashes ... ref04 uses flat, calm blue panes"). r8: 0.40 -> 0.60 with the PANE-LOCAL soft glint (critic r7: 'no reflection highlight'). diagonal reflection stripe on glass (mostly specular since r2; 0.40 -> 0.55 r3: critic "flat blue, little reflection"; 0.55 -> 0.40 r6: critic "white diagonal stripes read as a cartoon hack")
+  // r7: per-pane glass grade (head, sill, jamb) — needs voxel.js paneUV
+  // (res > 1 walls). Replaces the painted streaks as the "this is glass" cue.
+  paneGrade: [1.16, 0.86, 0.10],   // r10 (critic r9: 'one flat mid-blue, no sky gradient'): stronger head-light/sill-deep grade.   // r8: head a touch LIGHTER (sky) — the baked AO now shades the reveal head (r7 [0.74, 1.12, 0.14])
+  metalMax: 0.35,      // conductor metalness ceiling (toy metal keeps its grey)
+  ssaoKeep: 0.0,       // fraction of post.js SSAO voxel pixels keep (written to
+                       // scene alpha; see FRAG_OUT). 0: voxel AO is exact, SSAO
+                       // on voxel faces only added blotches + convex-edge halos.
+  debugAO: false,      // harness: render the voxel AO factor only
+  darkFloor: 0.03,     // linear albedo floor for near-black paint (0 = off):
+                       // #1c1e22 black trim read as a lump with no face tones
+  skyFillDown: 0.5,    // sky fill kept on down-facing faces (0 = pre-r2)
+  // --- surface r6: clean, confident face tones -----------------------------
+  // shadowCrisp: re-shape the cast-shadow term ON VOXEL FACES ONLY with a
+  // smoothstep(lo, hi). The critic's "blotchy grey smears / streaks" on white
+  // cornices, parapet caps and roof decks are the low-contrast tails of the
+  // PCSS filter (s ~ 0.6-0.95: shadow-map texel staircase blurred by the 0.3
+  // world-unit penumbra floor, plus filter leak around small rooftop props).
+  // A smoothstep keeps every real umbra and the shape of every shadow, but
+  // pushes those tails back to fully lit and turns the blur into a soft,
+  // clean edge, i.e. a blurred-then-thresholded contour, not a smear.
+  // [amount, lo, hi]. Off at night (lamp light is not the CSM key).
+  shadowCrisp: [1.0, 0.22, 0.80],
+  // bounce: sunlight bounced off the lit ground/city into faces that turn
+  // AWAY from the key, scaled by the key's own colour (so it fades at dusk and
+  // is ~0 under the moon). ref04/ref05: the dark side of a white wall is a
+  // light, clean grey (~0.8 of the lit face), the dark side of a coloured wall
+  // is a darker, MORE saturated version of it, never a muddy blue-grey.
+  // [strength, hue carry (0 = neutral, 1 = albedo hue squared)].
+  // r12 (critic r11: "the darker faces need more saturated, warmer colour and
+  // less grey"): hue carry 0.55 -> 0.85.
+  bounce: [0.22, 0.85],   // r8 0.30 -> 0.22: critic r7 'left/right faces too close in value' (right/left luma 0.79 -> ~0.77; ref04 0.76)
+  bounceTint: 0xfff1e0,  // warm-white: bounce off sunlit paving / grass / brick
+  // shadeSide (surface r9): faces turned away from the key take less of the
+  // (horizon-uniform) hemi + IBL fill, with the albedo hue carried so the dark
+  // side is a deeper, richer version of the lit colour. [depth, hue carry,
+  // -N.L at which it is fully on]. See the FRAG_AO note.
+  // r12: hue carry 0.30 -> 0.60 (same critic note; ref04's shaded orange is
+  // (165,90,46), deeper AND more saturated than its lit (200,125,69)).
+  shadeSide: [0.34, 0.60, 0.45],   // r13: depth 0.40 -> 0.34 (critic r12: 'lift the floor of the shadowed-face colour')
+                                   //   // r9 one-bakery pink right/left luma 0.85 -> ~0.73 (ref04 0.73)
+  // wallKey (surface r10): direct-diffuse scale on vertical faces by day, so a
+  // lit wall sits a clear step below the tops. See the FRAG_AO note.
+  // r10-f: 0.80 moved the lit pink only 3% (fill + tonemap shoulder); 0.70
+  // with the r10 AO puts the lit wall ~12-15% under r9 (ref04 lit/top 0.89).
+  // r12: 0.70 -> 0.60 (critic r11: walls "flat and a little washed out"; the
+  // lit pink sat at R 249, on the display clip, where no AO can read. ref04's
+  // lit wall peaks at R 200.)
+  wallKey: 0.60,
+  // aoHue (surface r12): colour bleed into the baked AO. [hue carry per unit
+  // of AO darkening (clamped to 1), extra neutral depth per unit of
+  // darkening]. A 0.6 crease on a pink wall goes a deeper, redder pink
+  // instead of a greyer one; whites and greys are untouched. See FRAG_AO.
+  aoHue: [0.6, 0.0],   // r13: 1.0 -> 0.6 (critic r12: 'muddy dark-red' creases)
+  worldAOKeep: 0.0,    // share of lighting.js's height-volume world AO voxel
+                       // faces keep (surface r4). Its 8-direction x 2-tap
+                       // kernel against a 2048^2 height map is not smooth on a
+                       // flat face: it painted the streaky grey smears the r3
+                       // critic saw on white cornices, parapet caps and lot
+                       // paving. Voxel faces carry their own ray-cast AO
+                       // (voxel.js), so 0 = they skip it (and its 16 taps).
+                       // Terrain/roads/water still take it at full strength.
   winOff: 0.34,        // fraction of windows unlit at night
   // Per-window night brightness: mix(lo, hi, pow(rand, gamma)). Skewed so most
   // rooms are dim and a few are bright, which is what an occupied tower looks
@@ -1436,6 +1631,23 @@ export class MaterialLib {
       uGlassCity: { value: new THREE.Vector3(p.glassCity[0], p.glassCity[1], p.glassCity[2]) },
       uGlassCityGain: { value: p.glassCityGain },
       uGhostPulse: { value: p.ghostPulse },
+      uGlassTint: { value: new THREE.Color().setHex(p.glassTint, THREE.SRGBColorSpace) },
+      uGlassTintAmt: { value: p.glassTintAmt },
+      uGlassSheen: { value: p.glassSheen },
+      uPaneGrade: { value: new THREE.Vector3(p.paneGrade[0], p.paneGrade[1], p.paneGrade[2]) },
+      uWinFrame: { value: new THREE.Color().setHex(p.winFrame, THREE.SRGBColorSpace) },
+      uMetalMax: { value: p.metalMax },
+      uSsaoKeep: { value: p.ssaoKeep },
+      uDebugAO: { value: 0 },
+      uDarkFloor: { value: p.darkFloor },
+      uSkyFillDown: { value: p.skyFillDown },
+      uWorldAOKeep: { value: p.worldAOKeep },
+      uShadowCrisp: { value: new THREE.Vector4(p.shadowCrisp[0], p.shadowCrisp[1], p.shadowCrisp[2], 0) },
+      uBounce: { value: new THREE.Vector4(p.bounce[0], p.bounce[1], 0, 0) },
+      uBounceTint: { value: new THREE.Color().setHex(p.bounceTint, THREE.SRGBColorSpace) },
+      uShadeSide: { value: new THREE.Vector4(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], 0) },
+      uWallKey: { value: p.wallKey },
+      uAOHue: { value: new THREE.Vector4(p.aoHue[0], p.aoHue[1], 0, 0) },
     };
 
     this.voxel = this._makeVoxelMaterial();
@@ -1457,7 +1669,12 @@ export class MaterialLib {
       roughness: 0.72,      // overridden per-vertex; kept sane as a fallback
       metalness: 0.0,
       envMapIntensity: this._params.envIntensity,
-      dithering: true,      // kills banding on the big flat wall gradients
+      // r11: OFF. The scene renders into a half-float target (post.js), so
+      // there is no 8-bit banding to hide here; three's +/-0.5/255 LINEAR
+      // dither was expanded by the sRGB curve and post's grade in dark
+      // tones into visible speckle on every shaded wall foot and plinth side
+      // (measured: r11-d nodither vs cur, one-bakery).
+      dithering: false,
     });
     mat.name = 'voxelPBR';
     mat.defaultAttributeValues = Object.assign({}, DEFAULT_ATTRIBUTE_VALUES);
@@ -1486,7 +1703,7 @@ export class MaterialLib {
               /\|csm/.test(mat.customProgramCacheKey());
       } catch (e) { csm = false; }
 
-      let f = (csm ? '' : 'float csmLastShadow = 1.0;\n') + FRAG_PARS + shader.fragmentShader;
+      let f = (csm ? '#define VOX_CSM\n' : 'float csmLastShadow = 1.0;\n') + FRAG_PARS + shader.fragmentShader;
       f = f.replace('#include <color_fragment>', '#include <color_fragment>\n' + FRAG_COLOR);
       f = f.replace('#include <roughnessmap_fragment>', FRAG_ROUGHNESS);
       f = f.replace('#include <metalnessmap_fragment>', FRAG_METALNESS);
@@ -1687,6 +1904,23 @@ export class MaterialLib {
     U.uGlassCityGain.value = p.glassCityGain;
     U.uSeasonStrength.value = p.seasonStrength;
     U.uGhostPulse.value = p.ghostPulse;
+    U.uGlassTint.value.setHex(p.glassTint, THREE.SRGBColorSpace);
+    U.uGlassTintAmt.value = p.glassTintAmt;
+    U.uGlassSheen.value = p.glassSheen;
+    U.uPaneGrade.value.set(p.paneGrade[0], p.paneGrade[1], p.paneGrade[2]);
+    U.uWinFrame.value.setHex(p.winFrame, THREE.SRGBColorSpace);
+    U.uMetalMax.value = p.metalMax;
+    U.uSsaoKeep.value = p.ssaoKeep;
+    U.uDebugAO.value = p.debugAO ? 1 : 0;
+    U.uDarkFloor.value = p.darkFloor;
+    U.uSkyFillDown.value = p.skyFillDown;
+    U.uWorldAOKeep.value = p.worldAOKeep;
+    U.uShadowCrisp.value.set(p.shadowCrisp[0], p.shadowCrisp[1], p.shadowCrisp[2], 0);
+    U.uBounce.value.set(p.bounce[0], p.bounce[1], 0, 0);
+    U.uBounceTint.value.setHex(p.bounceTint, THREE.SRGBColorSpace);
+    U.uShadeSide.value.set(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], 0);
+    U.uWallKey.value = p.wallKey;
+    U.uAOHue.value.set(p.aoHue[0], p.aoHue[1], 0, 0);
     this._applyEnvIntensity();
     this.setQuality(this._quality);   // re-derive the quality-gated values
   }

@@ -870,6 +870,9 @@ function update(dt) {
     handleEvents(sim.tick(simDt));
     life.update(simDt, sim.state, sim.roadGraph());
     for (const sp of spinners.values()) { sp.angle += sp.speed * simDt; sp.handle.setSpin(sp.ax, sp.ay, sp.az, sp.angle); }
+  } else {
+    // paused: nothing moves, but life still fills whatever the camera pans to
+    life.update(0, sim.state, sim.roadGraph());
   }
   updateWeather(dt);
 

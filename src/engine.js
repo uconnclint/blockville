@@ -5,14 +5,15 @@
 
 import * as THREE from '../vendor/three.module.js';
 import { TILE, N, CHUNK } from './constants.js';
-import { buildVoxelGeometry } from './render/voxel.js';
+import { buildVoxelGeometry, modelRes, materialFor } from './render/voxel.js';
 import { MaterialLib } from './render/materials.js';
 import { PostFX } from './render/post.js';
 import { Sky } from './render/sky.js';
-import { Terrain } from './render/terrain.js';
+import { Terrain, LOT_Y } from './render/terrain.js';
 import { Roads } from './render/roads.js';
 import { WaterFX } from './render/water.js';
 import { LightingRig } from './render/lighting.js';
+import * as LightingNS from './render/lighting.js';   // CSM GLSL for water.js
 import { Props } from './render/props.js';
 
 const MAP_W = N * TILE;               // world width of the map (640 at N=80)
@@ -50,7 +51,105 @@ const MTN_SNOW = 0xf4f8ff;    // top ~2 voxels on tall peaks
 const SUN_GAIN = 1.85;
 const FILL_GAIN = 0.70;
 
+// ---- Daytime key placement (art direction: "Isometric City Voxel") --------
+// The reference keys every block from the UPPER LEFT of the iso view, so each
+// one reads as three separated tones: top brightest, left wall mid, right wall
+// darkest-but-colourful, with soft shadows falling back/right. That is a
+// relation to the VIEW, so the key is placed relative to the camera's
+// (smoothed) azimuth rather than fixed in the world: rotating the camera keeps
+// the same read instead of turning every lit wall to the back.
+//   camera horizontal dir = (sin az, cos az); the LEFT visible wall faces
+//   az - 45deg, the right one az + 45deg. Key az = az - 35deg puts the key 10deg
+//   off the left-wall normal: the left wall takes ~all of the horizontal key,
+//   the right wall only a grazing sliver, shadows fall back-right.
+// Measured on probe cubes (sRGB luma top/left/right after post), offset sweep:
+//   -19deg  blue 112/86/74  orange 158/131/117   (right wall too close to left)
+//   -35deg  blue 112/88/66  orange 158/134/106   <- ~1 : 0.80 : 0.63
+//   -50deg  blue 112/89/61  orange 158/135/97    (right wall starts to go flat)
+// Round 2 (critic: "cast shadows onto lots and roads too faint and too small
+// to read in iso-mid"): at -35deg the shadows ran along the iso axis straight
+// BEHIND each building — a tower's shadow tip landed inside its own right
+// wall's silhouette, so it was hidden by construction. -60deg swings them to
+// fall back and to the RIGHT onto open ground, as in the reference; the right
+// wall then takes no key at all (fill only — kept colourful by the fill
+// saturation in lighting.js). 50deg elevation keeps the top brightest.
+// Round 3 (critic: "buildings cast almost no visible shadow onto the road, the
+// lots or the blocks next to them"): at -60 the shadow still ran up-right at
+// ~18 deg on screen, i.e. almost ALONG the right wall's own silhouette edge
+// (30 deg), so each building hid most of its own shadow. -95 puts the key
+// just behind screen-left: shadows fall straight to the right on screen, a
+// clear wedge in front of every right wall (the lot / road the critic looked
+// at), and the left wall still takes cos(50) of the horizontal key. 42 deg
+// lengthens them (1.1 x height instead of 0.84) without the left wall
+// overtaking the top — the fill is top-heavy (sky.js), so tops stay brightest.
+// Probe cubes (sRGB luma top/left/right, after post), with sky.js's r3 fill:
+//   cream 225/189/130 (1 : .84 : .58)  brick 103/86/53 (1 : .83 : .51)
+//   open-grass cast shadow / lit grass 0.53-0.55 (was 0.60 and barely read).
+// Round 6 (critic r5: "the left and right walls of the grey helipad tower are
+// nearly the same light grey ... the reference always has mid-tone left faces
+// and a clearly darker right face"). At -95 the key sat 50 deg past the left-
+// wall normal, so the left wall took only cos(42)cos(50) = 0.48 of the key —
+// less than a roof (0.67) — and the fill did most of the work on both walls.
+// -75 / 40 puts it 30 deg off the left-wall normal: left wall 0.66 of the key
+// (+38%), roofs 0.64, right wall still none. Shadows fall right and ~9 deg up
+// on screen, still clear of the right wall's own silhouette (30 deg).
+// Measured iso-mid, SKY tower, sRGB luma lit/away (after post, 2x):
+//   -95/42 216/140 (0.65)   -75/40 + r6 fill (sky.js) 231/135 (0.58),
+//   away wall (126,136,149): darker AND a touch cool, like ref05's bank.
+// Coordinator 21:05 set -100 / 58 from a white-probe sweep (1 : 0.87 : 0.70).
+// Round 8 (critic r7: "left and right walls sit at almost the same mid value
+// ... towers cast almost no visible soft shadow"): measured with the faces
+// masked by a normal render (scratchpad lt8/an.py), -100/58 left walls took
+// almost no key — key-only render, neutral walls: left 47 vs top 191 sRGB — so
+// BOTH walls were fill-lit and converged; the white probe hid it because its
+// top clips. -85 / 50 gives the left wall a real key (cos50 cos40 = 0.49 of
+// it) while tops stay brightest (0.77), and throws 0.84 x height shadows to
+// the right on screen. The right wall's darkness now comes from the
+// directional wall fill (lighting.js csmWallFill), not from starving the left.
+// iso-mid white prop T/L/R 249 / 227 / 159 (1 : 0.91 : 0.64; ref04 0.89/0.63).
+const KEY_AZ_OFFSET = -100 * Math.PI / 180;   // coordinator: faceprobe-measured (pieces/light.md 21:05, 22:45). Change ONLY with faceprobe numbers.
+const KEY_ELEVATION = 58 * Math.PI / 180;
+// The voxel material's own "sky fill" (materials.js skyFill, a flat bounce
+// that is not scaled by any light) was ~20% of a wall's light and alone kept
+// every far wall at ~0.65 of its top. By day it is scaled down with the rest of
+// the authored fill (see _applySkyLighting); dusk/night keep materials' value.
+const DAY_SKYFILL_SCALE = 0.36;
+const FILL_SCALE = 0.8;   // global daytime fill multiplier (see _fillScale)
+// Same treatment for materials.js's "sun bounce" (params.bounce, 0.30): it adds
+// key light to faces turned AWAY from the key, and it is added AFTER the BRDF
+// (no 1/PI), so at 0.30 it was ~1.7x the key's own direct light on the lit
+// wall. Measured r5, iso-mid, pale-blue tower sRGB luma left/right: 211/211
+// with it, 211/148 without — it was the whole reason pale buildings showed no
+// dark side (critic r4: "left and right walls differ only slightly"). By day
+// keep a trace for hue carry; dusk/night keep materials' value.
+const DAY_BOUNCE_SCALE = 0.1;
+// Share of lighting.js's contact AO that voxel faces keep (materials.js
+// params.worldAOKeep defaults to 0 because the OLD sparse kernel streaked
+// flat faces; the r7 map-space version is smooth). See _applySkyLighting.
+const VOXEL_WORLD_AO_KEEP = 1.0;
+
 const clamp = THREE.MathUtils.clamp;
+
+// ---- True-isometric orthographic camera -----------------------------------
+// Elevation atan(1/sqrt2) = 35.264 deg (polar from +Y = acos(1/sqrt3)), azimuth
+// on the 45-degree diagonals, snapped in 90-degree steps. "Zoom" is still kept
+// as a camDist-EQUIVALENT: the orbit distance at which the old 40-degree
+// perspective camera showed the same view height. The ortho view half-height is
+// camDist * ISO_TAN_HALF, and the ortho camera itself sits camDist away from the
+// target along the view axis, so everything that reads ctx.camDist or measures
+// distance from camera.position (post DOF focus, fog, LOD, props culling) keeps
+// its old meaning at the matching apparent zoom.
+const ISO_POLAR = Math.acos(1 / Math.sqrt(3));    // 0.9553 rad = 54.736 deg
+const ISO_AZ0 = Math.PI * 0.25;                   // first 45-degree diagonal
+const ISO_STEP = Math.PI * 0.5;                   // rotation snap
+const ISO_TAN_HALF = Math.tan(20 * Math.PI / 180); // old fov/2 -> camDist mapping
+// Closest zoom: one 2x2 lot (16 world units + its building) fills the screen.
+const ISO_ZOOM_MIN = 36;
+// Ortho near is NEGATIVE: the camera sits only camDist from the target, and at
+// close zoom a tall tower near the bottom of the frame extends behind the
+// camera plane. A generous back margin keeps it from ever clipping.
+const ISO_NEAR = -700;
+const ISO_FAR = 3200;
 
 export class Engine {
   constructor(canvas) {
@@ -112,11 +211,15 @@ export class Engine {
     this.sun.target = this._sunTarget;
 
     // ---- Camera ------------------------------------------------------------
-    this.camera = new THREE.PerspectiveCamera(40, 1, 1, 2000);
+    // True-isometric orthographic camera (see ISO_* above). Frustum extents are
+    // set every frame in _applyCamera() from the smoothed zoom.
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, ISO_NEAR, ISO_FAR);
+    this._aspect = 1;
     this._camTarget = new THREE.Vector3(CENTER, 0, CENTER);
-    this._camDist = 205;
-    this._camAz = Math.PI * 0.25;
-    this._camPolar = 0.9;
+    this._camDist = 205;          // zoom, as a perspective-equivalent orbit distance
+    this._camAz = ISO_AZ0;        // always ISO_AZ0 + k * ISO_STEP (input snaps)
+    this._camPolar = ISO_POLAR;
+    this._rotAccum = 0;           // px of right-drag / rad of twist toward a snap
     // Smoothed (damped) copies actually used to place the camera.
     this._sTarget = this._camTarget.clone();
     this._sDist = this._camDist;
@@ -168,6 +271,16 @@ export class Engine {
       quality: this._quality,
       envIntensity: 0.40,
       aniso: this.renderer.capabilities.getMaxAnisotropy(),
+      // water.js recesses every lake/sea into a hard-edged voxel basin (sand
+      // deck + walls on the tile grid, ref05's hotel pool), so the ground must
+      // meet it ON the grid: no warped bank, no swash ramp, no noise beach.
+      shoreWarp: 0,
+      swash: 0,
+      beachNoise: false,
+      // The water surface is opaque and sits ~2.6 below the ground (a deep
+      // basin with tall pool walls, water.js), so terrain's seabed (-1.15 at
+      // the shore) would poke through it — and would never be seen anyway.
+      seabed: false,
     });
     if (this._terrain.uniforms && this._terrain.uniforms.uHorizonLift) {
       // terrain's lift existed only to compensate for sky.js converging just
@@ -178,10 +291,15 @@ export class Engine {
       // buildings/props/water, which fog to 1.0x via three's stock chunk.
       this._terrain.uniforms.uHorizonLift.value = 1.0;
     }
-    this._roads = new Roads(this.scene, { quality: this._quality });
-    // seabed:false — terrain.js already draws an opaque sculpted seabed
-    // (-1.15 at shore to -2.30 offshore). Two seabeds would z-fight.
+    // groundTop: raised terrain lots count as lots for the sidewalk width (roads r10)
+    this._roads = new Roads(this.scene, { quality: this._quality,
+      groundTop: (x, z) => (this._terrain && this._terrain.cellTopY ? this._terrain.cellTopY(x, z) : 0) });
+    // seabed:false — the surface is opaque; nothing below it is ever seen.
     this._water = new WaterFX(this.scene, { seabed: false, quality: this._quality });
+    // The foam line follows terrain.js's warped (off-grid) bank, not the tiles.
+    if (this._water.setLandWarp && this._terrain && typeof this._terrain._warp === 'function') {
+      this._water.setLandWarp((x, z, o) => this._terrain._warp(x, z, o), TILE / (this._terrain.sub || 2));
+    }
     this._roadAnchors = [];
     this._lampsDirty = false;
     this._glowsDirty = false;
@@ -205,6 +323,61 @@ export class Engine {
       // cap clipped the top ~30% of every skyscraper out of the shadow map and
       // downtown rendered shadowless. Keep headroom over stadium + mountains.
       maxCasterHeight: 80,
+      // Art direction: light, soft shadows with CONTACT darkening only where
+      // things actually meet (ref04). The default 10-unit contact distance
+      // treated everything within a whole building-width of a wall as
+      // "enclosed", so open ground in a cast shadow lost most of its sky fill
+      // and read 0.45-0.54 of lit grass (sRGB luma) against ref04's 0.58-0.69.
+      // 4.5 / 0.15 keeps the dark tuck at the foot of every wall and lifts
+      // the open shadow to ~0.66.
+      skyContactWorld: 4.5,
+      // r5: 0.15 -> 0.8. Critic r4: "cast shadows are nearly invisible ... the
+      // city reads as one wall of lit facades with little depth". Open ground
+      // in a tower's shadow kept ~93% of its fill, so a shadow only removed
+      // the key: lit/shadow sRGB luma 0.76 on light paving, 0.65 on asphalt.
+      // Now an open shadow also loses a real share of sky (the tower that
+      // blocks the sun does fill part of the dome): 0.59 / 0.41 — ref04's
+      // Blender shadows sit at 0.58-0.69. Faces turned away from the key are
+      // never "sun-blocked" (lighting.js terminator fade), so this deepens
+      // cast shadows WITHOUT darkening the far walls.
+      // r8: 0.8 -> 1.0 (with shadowAmbient 0.8 / shadowIbl 0.92 below). Critic
+      // r7: "the tall towers cast almost no visible soft shadow onto the lots,
+      // roads or neighbouring roofs". Post's shaded-face floor (r10) lifts the
+      // darker half of the frame, so cast shadow / lit on tops had crept back
+      // to 0.73-0.75 (iso-mid, same frame with shadowStrength 0). Now 0.57-0.61
+      // (ref04 0.58-0.69); asphalt 0.61.
+      skyOpenFloor: 1.0,
+      // Penumbra (r4). The iso layout (lighting.js QUALITY isoTile/isoGrid)
+      // fits a 2048 map to the screen (0.045-0.08 world units per texel at
+      // iso-close / iso-mid, was 0.064-0.134 on a 1024 depth-split cascade)
+      // and filters with an exact tent capped at 3 texels, so the penumbra
+      // no longer has to hide a staircase: contact-hardening from ~1 texel
+      // at a wall foot to ~3 texels for a long tower shadow. The old 0.30-unit
+      // floor made a 0.75-unit AC unit's shadow almost all penumbra — the r3
+      // critic's "smeared grey blotches".
+      minPenumbra: 0.03,
+      // surface r8 (critic r7: "ragged, blotchy shadow boundaries, looks like
+      // an oil-paint/denoise filter" on the bakery). A/B on one-bakery: the
+      // ragged edges are the shadow-map texel staircase + tap noise at the
+      // 4-device-px default floor (they survive every post pass off and
+      // vanish with shadows off). A 10 px floor turns them into a clean soft
+      // edge; taps stay capped at CSM_MAX_TAPS. LIGHT: tune freely, but keep
+      // shadow edges on voxel walls free of the sawtooth.
+      penumbraFloorPixels: 10,
+      softness: 0.025,
+      maxPenumbra: 0.5,
+      blockerSearchWorld: 2.2,
+      // Sky occlusion near casters (canyons, wall feet). r3 critic: the gaps
+      // between towers went "navy and near-black" — 0.64 / 0.88 on top of
+      // SSAO + voxel AO compounded; ref05's shaded streets stay light and airy.
+      // r5: 0.45/0.60 -> 0.6/0.75 with the higher open floor above.
+      // r6: 0.6/0.75 -> 0.7/0.85 (critic r5: "cast shadows are very faint at
+      // the mid zoom"). Only horizontal receivers take this now (lighting.js
+      // csmLastUpW), so it deepens shadows on lots/roofs/streets without
+      // pushing a shadowed building's key-side wall below its far wall.
+      // Open-top shadow / lit at iso-mid: 0.63 -> 0.59 (ref04 0.58-0.69).
+      shadowAmbient: 0.8,   // r8: 0.7 -> 0.8 (see skyOpenFloor)
+      shadowIbl: 0.92,      // r8: 0.85 -> 0.92
     });
     // The rig brings its own sun/hemi/ambient and needs its sun to be
     // directional light index 0 — retire the engine's originals and adopt the
@@ -222,6 +395,17 @@ export class Engine {
     // CHAINS onBeforeCompile, so each module's own shader injection survives.
     this._lighting.patchMaterial(this._matLib.voxel);
     this._lighting.patchMaterial(this._terrain.material);
+    // water.js is a raw ShaderMaterial, so it takes the CSM GLSL explicitly.
+    if (this._water.setShadowSource) {
+      this._water.setShadowSource({
+        uniforms: this._lighting.getShaderUniforms(),
+        fragPars: LightingNS.CSM_FRAGMENT_PARS,
+        vertPars: LightingNS.CSM_VERTEX_PARS,
+        vertMain: LightingNS.CSM_VERTEX_MAIN,
+      });
+    }
+    // The voxel basin (sand deck, pool walls, floats) is a lit standard material.
+    if (this._water.bankMaterial) this._lighting.patchMaterial(this._water.bankMaterial);
     // Street furniture + natural scatter. roads.js has been emitting ~306
     // anchors (lamp/trafficlight/sign/hydrant/bin/bench) since it shipped and
     // nothing consumed them — every critic named the bare sidewalks as the
@@ -243,28 +427,16 @@ export class Engine {
     // renderer.render(). Sized by resize() at the end of the constructor.
     this._post = new PostFX(this.renderer, this.scene, this.camera, {
       quality: this._quality,
-      // Art direction lives here, at the integration point — post.js ships
-      // neutral defaults. Cities:Skylines' tilt-shift is a *hint* of miniature,
-      // not a macro lens: keep a wide in-focus band and blur only the far
-      // periphery, or the city reads as an out-of-focus photograph.
+      // Art direction (iso reference, ART-DIRECTION.md): pin-sharp and evenly
+      // lit edge to edge — no tilt-shift/DOF, no vignette, no distance
+      // desaturation; bloom only at night; a neutral (identity-below-0.76)
+      // tonemap so the authored palette lands as authored; soft ref04-style
+      // AO; supersampled AA at quality 2. Those are post.js's own defaults
+      // now — only integration-specific overrides belong here.
       params: {
-        // Measured Laplacian energy showed the DISTANT half of the frame was
-        // marginally sharper than the near half — the tilt ramp started too
-        // high and the peak CoC was too small to survive the half-res DoF
-        // buffer, so the miniature read was absent entirely.
-        dof: { maxBlur: 0.40, rangeScale: 1.6, tilt: 0.22, tiltStart: 0.55, tiltEnd: 0.94 },
-        // Bright saturated voxel colours cross a 0.85 threshold constantly,
-        // which made rooftops and white props blow out into halos.
-        bloom: { threshold: 0.58, strength: 0.30, radius: 0.85 },
-        // saturation 1.3 + punch 0.5 pushed already-strong palette greens to
-        // 0.88 saturation with no filmic shoulder — grass read as astroturf.
-        grade: { exposure: 1.12, saturation: 1.24, contrast: 1.05, vignette: 0.16, punch: 0.50 },
-        // bias 0.13 rejected exactly the near-range samples that produce
-        // contact occlusion: measured only a ~9% luma dip over 5px at building
-        // bases, where Cities:Skylines puts 35-55% into the first metre.
-        ssao: { bias: 0.025, radius: 4.5, contactIntensity: 2.8, contactRadius: 0.7 },
-        atmo: { strength: 0.18 },
-        // CAS ran after FXAA and re-hardened the edges FXAA had just resolved.
+        dof: { enabled: false },
+        atmo: { strength: 0 },
+        grade: { vignette: 0 },
         sharpen: { amount: 0.12, beforeAA: true },
       },
     });
@@ -323,6 +495,14 @@ export class Engine {
   }
 
   _applyCamera() {
+    // Ortho frustum from the smoothed zoom (camDist-equivalent).
+    const cam = this.camera;
+    const hh = this._sDist * ISO_TAN_HALF;
+    const hw = hh * this._aspect;
+    if (cam.top !== hh || cam.right !== hw) {
+      cam.left = -hw; cam.right = hw; cam.top = hh; cam.bottom = -hh;
+      cam.updateProjectionMatrix();
+    }
     const sp = Math.sin(this._sPolar), cp = Math.cos(this._sPolar);
     this.camera.position.set(
       this._sTarget.x + this._sDist * sp * Math.sin(this._sAz),
@@ -397,17 +577,58 @@ export class Engine {
   // ---------------------------------------------------------------------------
 
   _getGeometry(model) {
+    if (model && model.surf) return this._getSurfGeometry(model);
     if (!model || !Array.isArray(model.blocks)) return this._emptyGeometry();
     let geo = this._geoCache.get(model);
     if (geo) return geo;
     // Upgraded mesher: adds per-vertex voxel AO (`aoT`) and per-palette
     // roughness/metalness (`matParams`), which MaterialLib's shader reads.
-    geo = buildVoxelGeometry(model, {
+    // Models may declare `res` (voxels per world unit); the mesher emits WORLD
+    // units either way, so addBuilding/addProp/setGhost/makeDynamic place any
+    // res identically (only makeSpinner's pivot reads model.sy — see there).
+    // life r14: a model may carry `voxOpts` (mesher AO overrides). Small
+    // movers (vehicles, people) pass a prop-scale AO (aoDist < 1): the
+    // building-scale ground / broad / sky terms reach 2-3.5 units, so on a
+    // 0.5-unit car every flank sat at AO 0.24-0.43 and its shade side went
+    // black against the asphalt.
+    geo = buildVoxelGeometry(model, Object.assign({
       ao: true,
       bevel: this._bevel,
       palette: this._palLin,
       glowPalette: this._glowLin,
-    });
+    }, model.voxOpts || null));
+    this._geoCache.set(model, geo);
+    return geo;
+  }
+
+  // SMOOTH SURFACE part (model.surf, CONTRACTS.md): a pre-tessellated mesh in
+  // world units, model-local like voxel.js output (x/z centred, y up from 0),
+  // e.g. a lathed cooling tower. { pos, nrm: Float32Array(3n), ci: palette
+  // index per vertex, ao?: Float32Array(n), idx: Uint32Array }. Given the
+  // voxel material's attribute set so it lights, shadows and glows like the
+  // rest of the building.
+  _getSurfGeometry(model) {
+    let geo = this._geoCache.get(model);
+    if (geo) return geo;
+    const s = model.surf, n = s.pos.length / 3;
+    const color = new Float32Array(n * 3), matParams = new Float32Array(n * 2), aoT = new Float32Array(n);
+    for (let v = 0; v < n; v++) {
+      const ci = s.ci[v], c = this._palLin[ci] || [0.6, 0.6, 0.62], m = materialFor(ci);
+      color[v * 3] = c[0]; color[v * 3 + 1] = c[1]; color[v * 3 + 2] = c[2];
+      matParams[v * 2] = m.roughness; matParams[v * 2 + 1] = m.metalness;
+      aoT[v] = s.ao ? s.ao[v] : 1;
+    }
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(s.pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(s.nrm, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(color, 3));
+    geo.setAttribute('glowColor', new THREE.BufferAttribute(color.slice(), 3));
+    geo.setAttribute('emissiveT', new THREE.BufferAttribute(new Float32Array(n), 1));
+    geo.setAttribute('aoT', new THREE.BufferAttribute(aoT, 1));
+    geo.setAttribute('matParams', new THREE.BufferAttribute(matParams, 2));
+    geo.setIndex(new THREE.BufferAttribute(s.idx, 1));
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
     this._geoCache.set(model, geo);
     return geo;
   }
@@ -507,11 +728,25 @@ export class Engine {
     // the model's tw×td when odd. rot 0 fronts +Z(S), 1 +X(E), 2 −Z(N), 3 −X(W).
     const tw = model.tw || 1, td = model.td || 1;
     const etw = (rot % 2) ? td : tw, etd = (rot % 2) ? tw : td;
-    mesh.position.set((x + etw / 2) * TILE, 0, (z + etd / 2) * TILE);
+    // Buildings stand on their lot plinth (terrain.js draws it; LOT_Y high).
+    // ground r10: a 1x1 deco item on a raised lawn plinth stands on its top
+    // (lawnLift is 0 everywhere else, and under any real building's footing).
+    mesh.position.set((x + etw / 2) * TILE, LOT_Y + (etw * etd === 1 ? this._lawnLift(x, z) : 0), (z + etd / 2) * TILE);
     mesh.rotation.y = (rot || 0) * Math.PI / 2;
     mesh.scale.y = Math.max(0.001, yScale);
+    // model.parts (optional): extra voxel models on the same footprint and
+    // anchor (same sx/res, sz/res), e.g. a res-8 cooling tower on a res-4
+    // power plant. Children follow the building's rot, grow-in scale and removal.
+    if (Array.isArray(model.parts)) for (const p of model.parts) {
+      const child = new THREE.Mesh(this._getGeometry(p), this._voxMat);
+      child.castShadow = true;
+      child.receiveShadow = true;
+      mesh.add(child);
+    }
     this.scene.add(mesh);
     this._buildings.set(id, mesh);
+    // main.js does not refreshTile() on 'placed'; let terrain raise the pad.
+    if (this._terrain && this._terrain.noteTiles) this._terrain.noteTiles(x, z, etw, etd);
   }
 
   updateBuildingScale(id, yScale) {
@@ -534,9 +769,26 @@ export class Engine {
     const mesh = new THREE.Mesh(geo, this._voxMat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    mesh.position.set((x + 0.5) * TILE, 0, (z + 0.5) * TILE);
+    // ground r10: a tree on a raised lawn plinth stands on its top.
+    mesh.position.set((x + 0.5) * TILE, this._lawnLift(x, z), (z + 0.5) * TILE);
     this.scene.add(mesh);
     this._props.set(key, mesh);
+  }
+
+  // ground r10: terrain.js raises open lawn the town closes in on to lot height.
+  _lawnLift(x, z) {
+    const t = this._terrain;
+    return t && t.lawnLift ? t.lawnLift(x, z) : 0;
+  }
+
+  // Re-seat the 1x1 props (sim trees) after a terrain refresh: a road can
+  // close (or open) a lawn region anywhere, which raises (or lowers) its tiles.
+  _reseatProps() {
+    for (const [key, mesh] of this._props) {
+      const p = key.split(':');
+      const y = this._lawnLift(+p[1], +p[2]);
+      if (mesh.position.y !== y) { mesh.position.y = y; mesh.updateMatrixWorld && mesh.updateMatrixWorld(); }
+    }
   }
 
   removeProp(kind, x, z) {
@@ -554,14 +806,112 @@ export class Engine {
     mesh.castShadow = false;   // keep the shadow pass cheap (many dynamics)
     mesh.receiveShadow = false;
     mesh.frustumCulled = true;
+    // life r12: model.blobs (optional) = soft dark CONTACT SHADOWS under the
+    // vehicles / people (dynamics cast no sun shadow and get no AO, so a car
+    // floated on the asphalt). Every blob is one instance of a shared
+    // InstancedMesh (hundreds of agents = one draw call). See _blobAlloc.
+    const bl = model && Array.isArray(model.blobs) ? model.blobs : null;
+    const blobs = [];
+    if (bl) for (const b of bl) { const h = this._blobAlloc(b); if (h) blobs.push(h); }
     this.scene.add(mesh);
     const scene = this.scene;
     return {
-      setPos(x, y, z) { mesh.position.set(x, y, z); },
-      setRot(yRad) { mesh.rotation.y = yRad; },
-      setVisible(b) { mesh.visible = !!b; },
-      dispose() { scene.remove(mesh); },
+      setPos(x, y, z) { mesh.position.set(x, y, z); for (const b of blobs) b.pos(x, y, z); },
+      setRot(yRad) { mesh.rotation.y = yRad; for (const b of blobs) b.rot(yRad); },
+      setVisible(v) { mesh.visible = !!v; for (const b of blobs) b.show(!!v); },
+      dispose() { scene.remove(mesh); for (const b of blobs) b.free(); blobs.length = 0; },
     };
+  }
+
+  // life r12: contact-shadow blobs. model.blobs = [[x, z, w, l, y, a], ...] in
+  // model-local WORLD units (x/z centre, w along X, l along Z, y above the
+  // model base, a = core opacity 0..1, default 0.6). Each is a 9-slice quad:
+  // the footprint at full opacity fading to 0 over 0.2 units outside it
+  // (vertex alpha, no texture). Transparent + no depth write, so the AO and
+  // shadow passes skip it (lighting.js hides such overlays).
+  // One instanced contact-shadow blob (see makeDynamic). Pools are keyed by
+  // core opacity; each instance carries its footprint size (aBlob) and a
+  // world transform (position + yaw). Hidden / freed slots get size 0.
+  _blobAlloc(b) {
+    const a = b[5] == null ? 0.6 : +b[5];
+    const pools = this._blobPools || (this._blobPools = new Map());
+    let P = pools.get(a);
+    if (!P) {
+      const CAP = 4096, F = 0.2;
+      const pos = [], fade = [], col = [], index = [];
+      const cs = [-0.5, -0.475, 0.475, 0.5], fs = [-F, 0, 0, F];
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        pos.push(cs[i], 0, cs[j]); fade.push(fs[i], fs[j]);
+        col.push(1, 1, 1, i > 0 && i < 3 && j > 0 && j < 3 ? a : 0);
+      }
+      for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) {
+        const q = j * 4 + i;
+        index.push(q, q + 4, q + 1, q + 1, q + 4, q + 5);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('aFade', new THREE.Float32BufferAttribute(fade, 2));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 4));
+      geo.setIndex(index);
+      const size = new THREE.InstancedBufferAttribute(new Float32Array(CAP * 2), 2);
+      size.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('aBlob', size);
+      const im = new THREE.InstancedMesh(geo, this._getBlobInstMaterial(), CAP);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.count = 0; im.frustumCulled = false; im.renderOrder = 2;
+      im.castShadow = false; im.receiveShadow = false;
+      this.scene.add(im);
+      P = { im, size, free: [], next: 0, CAP };
+      pools.set(a, P);
+    }
+    const slot = P.free.length ? P.free.pop() : (P.next < P.CAP ? P.next++ : -1);
+    if (slot < 0) return null;
+    if (slot + 1 > P.im.count) P.im.count = slot + 1;
+    const bx = +b[0] || 0, bz = +b[1] || 0;
+    const w = Math.max(0.02, +b[2] || 0), l = Math.max(0.02, +b[3] || 0), dy = (b[4] == null ? 0 : +b[4]) + 0.012;
+    const M = P.im.instanceMatrix, E = M.array, o = slot * 16, S = P.size.array;
+    let x = 0, y = 0, z = 0, yaw = 0, vis = false, live = true;
+    const write = () => {
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      E[o] = c; E[o + 1] = 0; E[o + 2] = -s; E[o + 3] = 0;
+      E[o + 4] = 0; E[o + 5] = 1; E[o + 6] = 0; E[o + 7] = 0;
+      E[o + 8] = s; E[o + 9] = 0; E[o + 10] = c; E[o + 11] = 0;
+      E[o + 12] = x + c * bx + s * bz; E[o + 13] = y + dy; E[o + 14] = z - s * bx + c * bz; E[o + 15] = 1;
+      mark(M, 16);
+    };
+    // upload only the used slots (one range, grown in place until uploaded)
+    const mark = (attr, k) => {
+      const n = P.next * k, r = attr.updateRanges;
+      if (!r.length) attr.addUpdateRange(0, n); else if (r[0].count < n) r[0].count = n;
+      attr.needsUpdate = true;
+    };
+    const sz = () => { const on = vis && live; S[slot * 2] = on ? w : 0; S[slot * 2 + 1] = on ? l : 0; mark(P.size, 2); };
+    write(); sz();
+    return {
+      pos(nx, ny, nz) { x = nx; y = ny; z = nz; write(); },
+      rot(r) { yaw = r; write(); },
+      show(v) { if (v !== vis) { vis = v; sz(); } },
+      free() { if (!live) return; live = false; sz(); P.free.push(slot); },
+    };
+  }
+
+  _getBlobInstMaterial() {
+    if (!this._blobInstMat) {
+      const m = new THREE.MeshBasicMaterial({
+        color: 0x000000, vertexColors: true, transparent: true, depthWrite: false,
+        fog: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      });
+      // footprint-sized 9-slice: the core scales with the instance's aBlob
+      // (w, l); the fade ring (aFade) stays BLOB_FADE wide whatever the size
+      m.onBeforeCompile = (sh) => {
+        sh.vertexShader = 'attribute vec2 aBlob;\nattribute vec2 aFade;\n' + sh.vertexShader.replace(
+          '#include <begin_vertex>',
+          'vec3 transformed = vec3( position.x * aBlob.x + aFade.x * step( 0.001, aBlob.x ), position.y, position.z * aBlob.y + aFade.y * step( 0.001, aBlob.y ) );');
+      };
+      m.customProgramCacheKey = () => 'bv-blob-inst';
+      this._blobInstMat = m;
+    }
+    return this._blobInstMat;
   }
 
   // Spinner: an animated part whose orientation is
@@ -578,10 +928,16 @@ export class Engine {
     // its TRUE center (a wheel spins on its hub). Parent the mesh in a group,
     // shifted down half its height, and rotate the group.
     const pivot = new THREE.Group();
-    mesh.position.y = -((model && model.sy) || 1) / 2;
+    // Geometry is in WORLD units (voxel.js divides by model.res), so the
+    // half-height is sy / res.
+    mesh.position.y = -((model && model.sy) || 1) / (2 * modelRes(model));
     pivot.add(mesh);
     this.scene.add(pivot);
     const scene = this.scene;
+    // Tracked so clearWorld() also drops spinners (a reseed without a full
+    // visuals rebuild left ferris wheels / carousels floating in the new world).
+    const pivots = this._spinPivots || (this._spinPivots = new Set());
+    pivots.add(pivot);
 
     // Per-handle scratch — reused every frame, no allocation in setters.
     const qBase = new THREE.Quaternion();
@@ -600,11 +956,12 @@ export class Engine {
     apply();
 
     return {
-      setPos(x, y, z) { pivot.position.set(x, y, z); },
+      // Spinners belong to buildings, which stand on the lot plinth.
+      setPos(x, y, z) { pivot.position.set(x, y + LOT_Y, z); },
       setBaseYaw(rad) { baseYaw = rad; apply(); },
       setSpin(nax, nay, naz, rad) { ax = nax; ay = nay; az = naz; ang = rad; apply(); },
       setVisible(b) { pivot.visible = !!b; },
-      dispose() { scene.remove(pivot); },
+      dispose() { scene.remove(pivot); pivots.delete(pivot); },
     };
   }
 
@@ -617,6 +974,7 @@ export class Engine {
     this._buildings.clear();
     for (const mesh of this._props.values()) this.scene.remove(mesh);
     this._props.clear();
+    if (this._spinPivots) { for (const p of this._spinPivots) this.scene.remove(p); this._spinPivots.clear(); }
     if (this._ghostMesh) this._ghostMesh.visible = false;
   }
 
@@ -638,10 +996,19 @@ export class Engine {
     } else {
       this._ghostMesh.geometry = geo;
     }
+    // model.parts (see addBuilding): ghost them too, reusing child meshes
+    const parts = Array.isArray(model.parts) ? model.parts : [];
+    const kids = this._ghostMesh.children;
+    while (kids.length > parts.length) this._ghostMesh.remove(kids[kids.length - 1]);
+    parts.forEach((p, i) => {
+      const pg = this._getGeometry(p);
+      if (kids[i]) kids[i].geometry = pg;
+      else { const c = new THREE.Mesh(pg, this._ghostMat); c.castShadow = false; c.receiveShadow = false; this._ghostMesh.add(c); }
+    });
     this._ghostMat.color.setHex(ok ? 0x66ff88 : 0xff6b6b);
     const tw = model.tw || 1, td = model.td || 1;
     const etw = (rot % 2) ? td : tw, etd = (rot % 2) ? tw : td;
-    this._ghostMesh.position.set((x + etw / 2) * TILE, 0.02, (z + etd / 2) * TILE);
+    this._ghostMesh.position.set((x + etw / 2) * TILE, LOT_Y + 0.02, (z + etd / 2) * TILE);
     this._ghostMesh.rotation.y = (rot || 0) * Math.PI / 2;
     this._ghostMesh.visible = true;
   }
@@ -703,7 +1070,7 @@ export class Engine {
       q.life = dur;
       q.ms = dur;
       q.active = true;
-      q.mesh.position.set((cell.x + 0.5) * TILE, 0.05, (cell.z + 0.5) * TILE);
+      q.mesh.position.set((cell.x + 0.5) * TILE, this._cellY(cell.x, cell.z), (cell.z + 0.5) * TILE);
       q.mesh.visible = true;
     }
   }
@@ -747,7 +1114,7 @@ export class Engine {
       }
       mesh.material.color.setHex(hex);
       mesh.material.opacity = 0.4;
-      mesh.position.set((cell.x + 0.5) * TILE, 0.05, (cell.z + 0.5) * TILE);
+      mesh.position.set((cell.x + 0.5) * TILE, this._cellY(cell.x, cell.z), (cell.z + 0.5) * TILE);
       mesh.visible = true;
       n++;
     }
@@ -761,7 +1128,7 @@ export class Engine {
   // Ground is now three cooperating modules (see CONTRACTS-RENDER.md):
   //   terrain -> grass/sand/rock/banks + the opaque seabed under water
   //   roads   -> asphalt, markings, sidewalks, curbs (covers ROAD tiles at y>=0.02)
-  //   water   -> the translucent surface at y=-0.35 over WATER/bridge tiles
+  //   water   -> the opaque surface at y=-1.85 over WATER/bridge tiles
   buildGround(state) {
     this._terrain.build(state);
     this._roadAnchors = this._roads.build(state);
@@ -773,8 +1140,15 @@ export class Engine {
     }
   }
 
+  // Overlay height for a tile: just above whatever lot top terrain drew there.
+  _cellY(x, z) {
+    const t = this._terrain;
+    return (t && t.cellTopY ? Math.max(LOT_Y, t.cellTopY(x, z)) : LOT_Y) + 0.1;
+  }
+
   refreshTile(state, x, z) {
     this._terrain.refreshTile(state, x, z);
+    this._reseatProps();
     this._roadAnchors = this._roads.refreshTile(state, x, z) || this._roadAnchors;
     this._water.refreshTiles(state, x, z);
     // Roads are almost always painted tile-by-tile through here, not through
@@ -842,7 +1216,17 @@ export class Engine {
     if (!rect.width || !rect.height) return false;
     this._ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this._ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-    this._ray.setFromCamera(this._ndc, this.camera);
+    const cam = this.camera;
+    if (cam.isOrthographicCamera) {
+      // Parallel ray from the NEAR plane (not the camera plane, which is what
+      // Raycaster.setFromCamera uses — with a negative near that can start
+      // below the ground and miss it).
+      const r = this._ray.ray;
+      r.origin.set(this._ndc.x, this._ndc.y, -1).unproject(cam);
+      r.direction.set(0, 0, -1).transformDirection(cam.matrixWorld);
+    } else {
+      this._ray.setFromCamera(this._ndc, cam);
+    }
     return !!this._ray.ray.intersectPlane(this._groundPlane, out);
   }
 
@@ -879,8 +1263,13 @@ export class Engine {
       if (this._pointers.size === 1) {
         const rotate = (p.button === 2) || e.ctrlKey;
         if (rotate) {
-          this._camAz -= (e.clientX - px) * 0.006;
-          this._camPolar = clamp(this._camPolar - (e.clientY - py) * 0.006, 0.35, 1.35);
+          // Right-drag / ctrl-drag: horizontal travel accumulates toward a
+          // 90-degree snap (one step per ~90 px). Elevation is fixed (true iso).
+          this._rotAccum += (e.clientX - px);
+          if (Math.abs(this._rotAccum) >= 90) {
+            this.rotateStep(this._rotAccum > 0 ? -1 : 1);
+            this._rotAccum = 0;
+          }
         } else {
           this._panBy(px, py, e.clientX, e.clientY);
         }
@@ -894,12 +1283,24 @@ export class Engine {
       el.releasePointerCapture && el.releasePointerCapture(e.pointerId);
       this._pointers.delete(e.pointerId);
       if (this._pointers.size < 2) { this._pinchDist = null; this._pinchAng = null; }
+      if (this._pointers.size === 0) this._rotAccum = 0;
       e.preventDefault();
     };
 
     const wheel = (e) => {
-      this._camDist = clamp(this._camDist * Math.pow(1.0015, e.deltaY), 30, 380);
+      this.zoomBy(Math.pow(1.0015, e.deltaY));
       e.preventDefault();
+    };
+
+    // Keyboard camera: Q / E rotate 90 degrees, + / - zoom. (Arrow keys are
+    // main.js's tile cursor and are left alone.)
+    const key = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const k = e.key;
+      if (k === 'q' || k === 'Q') { this.rotateStep(-1); e.preventDefault(); }
+      else if (k === 'e' || k === 'E') { this.rotateStep(1); e.preventDefault(); }
+      else if (k === '+' || k === '=') { this.zoomBy(1 / 1.25); e.preventDefault(); }
+      else if (k === '-' || k === '_') { this.zoomBy(1.25); e.preventDefault(); }
     };
 
     el.addEventListener('pointerdown', down);
@@ -908,6 +1309,7 @@ export class Engine {
     el.addEventListener('pointercancel', up);
     el.addEventListener('pointerleave', up);
     el.addEventListener('wheel', wheel, { passive: false });
+    el.addEventListener('keydown', key);
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -927,13 +1329,48 @@ export class Engine {
     this._panBy(prevX, prevY, curX, curY);
   }
 
+  // ---- iso camera controls -------------------------------------------------
+  // Largest useful zoom-out: the whole 80x80 map (its diagonal runs across the
+  // screen in iso) fits with a small margin, at the current aspect.
+  _zoomMax() {
+    const diag = MAP_W * Math.SQRT2 * 1.06;
+    const hFit = (diag * 0.5) / Math.max(0.2, this._aspect);          // width-limited
+    const vFit = (diag * Math.sin(Math.PI / 2 - ISO_POLAR) * 0.5 + 40) * 1.06; // height-limited
+    return Math.max(380, Math.max(hFit, vFit) / ISO_TAN_HALF);
+  }
+
+  _clampZoom(d) { return clamp(d, ISO_ZOOM_MIN, this._zoomMax()); }
+
+  // Multiply the zoom (camDist-equivalent) by `f` (>1 zooms out).
+  zoomBy(f) {
+    if (!(f > 0)) return;
+    this._camDist = this._clampZoom(this._camDist * f);
+  }
+
+  // Rotate the view one 90-degree step (dir = +1 / -1). The damped camera in
+  // render() eases the smoothed azimuth to the new snap over ~0.3 s.
+  rotateStep(dir) {
+    const k = Math.round((this._camAz - ISO_AZ0) / ISO_STEP) + (dir < 0 ? -1 : 1);
+    this._camAz = ISO_AZ0 + k * ISO_STEP;
+  }
+
+  // Current view: target tile-space centre, zoom and 0..3 rotation index.
+  getView() {
+    const k = Math.round((this._camAz - ISO_AZ0) / ISO_STEP);
+    return {
+      x: this._camTarget.x / TILE - 0.5, z: this._camTarget.z / TILE - 0.5,
+      zoom: this._camDist, rot: ((k % 4) + 4) % 4,
+      zoomMin: ISO_ZOOM_MIN, zoomMax: this._zoomMax(),
+    };
+  }
+
   // Gently frame a tile or neighborhood. Main uses this for "find my city"
   // and for missions whose target (such as the river) may begin off-screen.
   focusAt(x, z, distance) {
     const tx = clamp((Number(x) + 0.5) * TILE, 0, MAP_W);
     const tz = clamp((Number(z) + 0.5) * TILE, 0, MAP_W);
     this._camTarget.set(tx, 0, tz);
-    if (Number.isFinite(distance)) this._camDist = clamp(distance, 45, 300);
+    if (Number.isFinite(distance)) this._camDist = this._clampZoom(clamp(distance, 45, 300));
   }
 
   _twoPointer() {
@@ -944,8 +1381,15 @@ export class Engine {
     const dist = Math.hypot(dx, dy);
     const ang = Math.atan2(dy, dx);
     if (this._pinchDist == null) { this._pinchDist = dist; this._pinchAng = ang; return; }
-    if (dist > 0) this._camDist = clamp(this._camDist * (this._pinchDist / dist), 30, 380);
-    this._camAz += ang - this._pinchAng;
+    if (dist > 0) this.zoomBy(this._pinchDist / dist);
+    // Two-finger twist accumulates toward a 90-degree snap (~26 degrees).
+    let da = ang - this._pinchAng;
+    if (da > Math.PI) da -= Math.PI * 2; else if (da < -Math.PI) da += Math.PI * 2;
+    this._rotAccum += da;
+    if (Math.abs(this._rotAccum) >= 0.45) {
+      this.rotateStep(this._rotAccum > 0 ? 1 : -1);
+      this._rotAccum = 0;
+    }
     this._pinchDist = dist;
     this._pinchAng = ang;
   }
@@ -991,27 +1435,82 @@ export class Engine {
     // correct placement — it has to be right here.
     const k = s.keyDir || s.sunDir;
     this.sun.position.set(fx + k.x * 500, k.y * 500, fz + k.z * 500);
-    this.sun.color.copy(s.sunColor);
-    this.hemi.color.copy(s.skyColor);
-    this.hemi.groundColor.copy(s.groundColor);
-    this.ambient.color.copy(s.ambientColor);
-    // sky.js's own mix is fill-dominant, which flattens cast shadows into a
-    // faint tint: measured light budget at noon was sun ~10%, hemi+ambient
+    // Physical solution (dusk / night / weather) blended onto sky.js's
+    // AUTHORED daytime key + fill by `artAmount` (see sky.js "DAYTIME ART
+    // DIRECTION"). The physical noon was an orange key (1.00,0.75,0.40) over a
+    // saturated Rayleigh-blue fill — the blue-grey murk. The authored values
+    // are already in final units; only the physical side takes the gains.
+    // Assign through .r/.g/.b: hemi/ambient colours are accessors owned by
+    // lighting.js's skylight grade, which must see plain writes.
+    const a = s.artAmount || 0;
+    const lerpC = (dst, A, B) => {
+      dst.r = A.r + (B.r - A.r) * a; dst.g = A.g + (B.g - A.g) * a; dst.b = A.b + (B.b - A.b) * a;
+    };
+    if (a > 0 && s.keyColor) {
+      lerpC(this.sun.color, s.sunColor, s.keyColor);
+      lerpC(this.hemi.color, s.skyColor, s.fillSky);
+      lerpC(this.hemi.groundColor, s.groundColor, s.fillGround);
+      lerpC(this.ambient.color, s.ambientColor, s.fillAmbient);
+    } else {
+      this.sun.color.copy(s.sunColor);
+      this.hemi.color.copy(s.skyColor);
+      this.hemi.groundColor.copy(s.groundColor);
+      this.ambient.color.copy(s.ambientColor);
+    }
+    // sky.js's physical mix is fill-dominant, which flattens cast shadows into
+    // a faint tint: measured light budget at noon was sun ~10%, hemi+ambient
     // ~13%, sky env ~44%. Rebalance toward the key light so shadows read as
-    // shapes. Mean frame luminance barely moves (90.7 -> 84.9), so the city
-    // stays as bright — the shadows just get their form back.
-    this.sun.intensity = s.intensity * SUN_GAIN;
-    this.hemi.intensity = s.hemiIntensity * FILL_GAIN;
-    this.ambient.intensity = s.ambientIntensity * FILL_GAIN;
+    // shapes.
+    const pSun = s.intensity * SUN_GAIN;
+    const pHemi = s.hemiIntensity * FILL_GAIN;
+    const pAmb = s.ambientIntensity * FILL_GAIN;
+    this.sun.intensity = pSun + ((s.keyIntensity != null ? s.keyIntensity : pSun) - pSun) * a;
+    // _fillScale: one global multiplier on all daytime fill (hemi, ambient,
+    // material sky fill) for face-separation tuning (coordinator, faceprobe.js).
+    const fs = this._fillScale != null ? this._fillScale : FILL_SCALE;
+    this.hemi.intensity = (pHemi + ((s.fillHemiIntensity != null ? s.fillHemiIntensity : pHemi) - pHemi) * a) * fs;
+    this.ambient.intensity = (pAmb + ((s.fillAmbientIntensity != null ? s.fillAmbientIntensity : pAmb) - pAmb) * a) * fs;
+    // Light r8: directional wall fill (lighting.js csmWallFill) rides the same
+    // daytime art blend — the far wall gets the dim half of the sky by day,
+    // dusk/night/overcast keep the symmetric physical fill.
+    if (this._lighting.setWallFillAmount) this._lighting.setWallFillAmount(a);
+    // materials.js's flat sky fill rides the same daytime art blend (see
+    // DAY_SKYFILL_SCALE). Scaled from ITS configured value so its owner's
+    // tuning still applies; guarded so a material library without it is fine.
+    const ml = this._matLib;
+    if (ml && ml.uniforms && ml.uniforms.uSkyFill && ml._params && ml._params.skyFill != null) {
+      ml.uniforms.uSkyFill.value = ml._params.skyFill * (1 + (DAY_SKYFILL_SCALE - 1) * a) * fs;
+    }
+    if (ml && ml.uniforms && ml.uniforms.uBounce && ml._params && Array.isArray(ml._params.bounce)) {
+      ml.uniforms.uBounce.value.x = ml._params.bounce[0] * (1 + (DAY_BOUNCE_SCALE - 1) * a);
+    }
+    // Light r7: voxel faces take lighting.js's (rewritten, map-space) contact
+    // AO too — the wall-to-plinth / prop-to-paving line crosses two meshes'
+    // worth of geometry the baked per-model voxel AO cannot see. Floor at
+    // materials' own value so its owner can still raise it.
+    if (ml && ml.uniforms && ml.uniforms.uWorldAOKeep && ml._params) {
+      ml.uniforms.uWorldAOKeep.value = Math.max(ml._params.worldAOKeep || 0, VOXEL_WORLD_AO_KEEP);
+    }
     // Horizon sample, so terrain never fades to a colour the sky isn't.
     this.fog.color.copy(s.fogColor);
     // Fog was fixed at near=352/far=1184 while the hero camera sits at 150 —
     // nothing in frame was ever beyond `near`, so aerial perspective was
     // mathematically inactive at every shot distance. Scale it to the orbit so
     // distance always reads as distance.
+    // Ortho iso camera: zoom can now exceed the old 380 orbit cap (whole-map
+    // view), and the camera sits exactly `d` from the target along the view
+    // axis, so keep the fog profile RELATIVE TO THE TARGET: identical to the
+    // old formula up to d = 380, then shifted back with the target beyond it.
+    //
+    // Art direction: NO aerial haze at gameplay zooms — the reference is a
+    // flat orthographic diorama where nothing recedes. With the ortho iso
+    // camera, everything in frame sits within ~one view-height of the target
+    // depth `d`, so the fog now starts well BEHIND anything visible and only
+    // ever reaches the far terrain skirt past the map edge (which still wants
+    // to dissolve into the dome rather than end on a hard line).
     const d = this._sDist;
-    this.fog.near = d * 0.55;
-    this.fog.far = clamp(d * 2.6 + MAP_W * 0.45, MAP_W * 1.05, MAP_W * 1.7);
+    this.fog.near = d + MAP_W * 0.55;
+    this.fog.far = this.fog.near + MAP_W * 1.2;
     // Water reflects the sky it actually sits under.
     this._water.setSky({
       skyTop: s.skyColor, skyHorizon: s.fogColor, sunColor: s.sunColor,
@@ -1189,6 +1688,11 @@ export class Engine {
 
     // Sky first — it owns the sun, so everything downstream reads a settled
     // sunDir. Then push its solution onto the lights/fog/water.
+    if (this._sky.setSunFrame) {
+      const ko = this._keyAzOffset != null ? this._keyAzOffset : KEY_AZ_OFFSET;
+      const ke = this._keyElevation != null ? this._keyElevation : KEY_ELEVATION;
+      this._sky.setSunFrame(this._sAz + ko, ke);
+    }
     const skyOut = this._sky.update(d, ctx);
     if (skyOut) ctx.sunDir.copy(skyOut.sunDir);
     else ctx.sunDir.copy(this.sun.position).sub(this._sunTarget.position).normalize();
@@ -1250,8 +1754,11 @@ export class Engine {
     const w = el.clientWidth || el.width || 800;
     const h = el.clientHeight || el.height || 600;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this._aspect = w / h;
+    this._camDist = this._clampZoom(this._camDist);
+    // Force the ortho frustum to re-derive for the new aspect.
+    this.camera.right = NaN;
+    if (this._sTarget) this._applyCamera();
     if (this._post) this._post.setSize(w, h, this.renderer.getPixelRatio());
   }
 }

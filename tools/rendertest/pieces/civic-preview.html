@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>civic model preview</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#9fcb45}</style>
+<script type="module">
+// Fast model-only preview for the civic builder (no game boot, no demo city).
+// ?items=id:variant:rot,...&cols=3&gap=1&az=0..3&zoom=1
+import * as THREE from '../../../vendor/three.module.js';
+import { buildVoxelGeometry, VOXEL_DEFAULTS } from '../../../src/render/voxel.js';
+import { catalogModel as _cm, catalogAnim } from '../../../src/models.js';
+import { grid, C, flipZ } from '../../../src/models/core.js';
+function catalogModel(id, v) {
+  if (id !== 'dbg') return _cm(id, v);
+  const g = grid(31, 20, 31, 4);
+  g.box(0, 0, 0, 30, 19, 30, C.signWhite);
+  g.box(0, 0, 0, 30, 19, 0, C.red); g.box(0, 0, 30, 30, 19, 30, C.blue); g.box(0, 0, 0, 0, 19, 30, C.roofGreen); g.box(30, 0, 0, 30, 19, 30, C.yellow);
+  const m = flipZ(g.done()); m.tw = 1; m.td = 1; return m;
+}
+const q = new URLSearchParams(location.search);
+const items = (q.get('items') || 'school:0:0').split(',').map((s) => { const [id, v, r] = s.split(':'); return { id, v: +v || 0, rot: +r || 0 }; });
+const cols = +(q.get('cols') || 3), gap = +(q.get('gap') || 1), zoom = +(q.get('zoom') || 1), azk = +(q.get('az') || 0);
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x9fcb45);
+scene.add(new THREE.HemisphereLight(0xdff0ff, 0x8a9a70, 1.5));
+const sun = new THREE.DirectionalLight(0xfff4e2, 2.3); sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096); const S = 120; Object.assign(sun.shadow.camera, { left: -S, right: S, top: S, bottom: -S, near: 1, far: 600 });
+sun.shadow.bias = -0.0005; scene.add(sun); scene.add(sun.target);
+const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0 });
+mat.onBeforeCompile = (sh) => {
+  sh.vertexShader = 'attribute float aoT;\nvarying float vAoT;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vAoT = aoT;');
+  sh.fragmentShader = 'varying float vAoT;\n' + sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb *= vAoT;');
+};
+const T = 8; let maxW = 0, maxD = 0; const ents = [];
+for (const it of items) { const m = catalogModel(it.id, it.v); ents.push({ ...it, m }); maxW = Math.max(maxW, m.tw || 1); maxD = Math.max(maxD, m.td || 1); }
+const cw = (maxW + gap) * T, cd = (maxD + gap) * T; const rows = Math.ceil(ents.length / cols);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: 0x9fcb45, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const roadMat = new THREE.MeshStandardMaterial({ color: 0x1c1d20, roughness: 0.9 });
+let tris = 0;
+ents.forEach((e, i) => {
+  const c = i % cols, r = (i / cols) | 0;
+  const cx = (c - (cols - 1) / 2) * cw, cz = (r - (rows - 1) / 2) * cd;
+  const geo = buildVoxelGeometry(e.m, {}); tris += (geo.index ? geo.index.count : geo.attributes.position.count) / 3;
+  const mesh = new THREE.Mesh(geo, mat); mesh.castShadow = mesh.receiveShadow = true;
+  mesh.rotation.y = e.rot * Math.PI / 2; mesh.position.set(cx, 0.02, cz); scene.add(mesh);
+  // (r7) model.parts (res-8 lettering, res-12 lot cars/people) as children, like engine.addBuilding
+  if (Array.isArray(e.m.parts)) for (const p of e.m.parts) { const pgeo = buildVoxelGeometry(p, {}); tris += (pgeo.index ? pgeo.index.count : pgeo.attributes.position.count) / 3; const ch = new THREE.Mesh(pgeo, mat); ch.castShadow = ch.receiveShadow = true; mesh.add(ch); }
+  // a road strip in front (the side the rot faces)
+  const tw = e.m.tw || 1, td = e.m.td || 1, etw = e.rot % 2 ? td : tw, etd = e.rot % 2 ? tw : td;
+  const road = new THREE.Mesh(new THREE.BoxGeometry(e.rot % 2 ? T * 0.8 : etw * T + 2, 0.05, e.rot % 2 ? etd * T + 2 : T * 0.8), roadMat);
+  const dir = [[0, 1], [1, 0], [0, -1], [-1, 0]][e.rot];
+  road.position.set(cx + dir[0] * (etw * T / 2 + T * 0.45), 0.02, cz + dir[1] * (etd * T / 2 + T * 0.45)); road.receiveShadow = true; scene.add(road);
+  const a = catalogAnim(e.id);
+  if (a) {
+    const pg = buildVoxelGeometry(a.part, {}); tris += (pg.index ? pg.index.count : pg.attributes.position.count) / 3;
+    const pm = new THREE.Mesh(pg, mat); pm.castShadow = true;
+    const piv = new THREE.Group(); pm.position.y = -a.part.sy / (2 * (a.part.res || 1)); piv.add(pm);
+    const off = new THREE.Vector3(a.ox, a.oy, a.oz).applyAxisAngle(new THREE.Vector3(0, 1, 0), mesh.rotation.y);
+    piv.position.set(cx + off.x, off.y, cz + off.z); piv.rotation.y = mesh.rotation.y;
+    piv.rotateOnAxis(new THREE.Vector3(a.ax, a.ay, a.az).normalize(), 0.3);
+    scene.add(piv);
+  }
+});
+const spanW = cols * cw, spanD = rows * cd;
+const ext = Math.max(spanW, spanD) * 0.62 / zoom;
+const cam = new THREE.OrthographicCamera(-ext * innerWidth / innerHeight, ext * innerWidth / innerHeight, ext, -ext, 1, 3000);
+const az = Math.PI / 4 + azk * Math.PI / 2, pol = Math.atan(1 / Math.SQRT2);
+cam.position.set(Math.sin(az) * Math.cos(pol) * 600, Math.sin(pol) * 600 + 6, Math.cos(az) * Math.cos(pol) * 600);
+const ty = +(q.get('ty') || 6); cam.position.y += ty - 6; cam.lookAt(0, ty, 0);
+sun.position.set(Math.sin(az + 0.8) * 200, 260, Math.cos(az + 0.8) * 200);
+renderer.render(scene, cam);
+window.__done = { tris };
+</script>

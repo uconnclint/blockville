@@ -937,21 +937,27 @@ export class Sim {
         if (!rec || typeof rec.t !== 'string') continue;
         const info = this._byId.get(rec.t);
         if (!info) continue; // unknown type without catalog — skip safely
-        const x = rec.x | 0, z = rec.z | 0;
+        let x = rec.x | 0, z = rec.z | 0;
         const { cap, cat } = info;
         // Effective dims: catalog dims, swapped when rot is odd. Missing r → 0.
         const rot = (rec.r | 0) & 3;
         const etw = (rot & 1) ? info.td : info.tw;
         const etd = (rot & 1) ? info.tw : info.td;
         // Skip if effective footprint doesn't fit on clear grass.
-        let fits = true;
-        for (let dz = 0; dz < etd && fits; dz++) {
-          for (let dx = 0; dx < etw; dx++) {
-            const tx = x + dx, tz = z + dz;
-            if (!inBounds(tx, tz) || st.map[idx(tx, tz)] !== T.GRASS || st.occ[idx(tx, tz)] !== 0) {
-              fits = false; break;
-            }
+        const fitsAt = (ax, az) => {
+          for (let dz = 0; dz < etd; dz++) for (let dx = 0; dx < etw; dx++) {
+            const tx = ax + dx, tz = az + dz;
+            if (!inBounds(tx, tz) || st.map[idx(tx, tz)] !== T.GRASS || st.occ[idx(tx, tz)] !== 0) return false;
           }
+          return true;
+        };
+        // (civic r8) A catalog footprint can grow between versions (school,
+        // fire station, fountain and pool went 1×1 → 2×2). Keep an old save's
+        // building by trying the other anchors whose footprint still covers
+        // the saved tile before giving up on it.
+        let fits = fitsAt(x, z);
+        for (let oz = 0; oz < etd && !fits; oz++) for (let ox = 0; ox < etw && !fits; ox++) {
+          if ((ox || oz) && fitsAt(x - ox, z - oz)) { x -= ox; z -= oz; fits = true; }
         }
         if (!fits) continue;
         const bid = st.nextBid++;

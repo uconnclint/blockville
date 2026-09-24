@@ -14,7 +14,7 @@ Plain ES modules, NO build step, NO TypeScript, NO external deps except `./vendo
 ## Coordinate system
 - Map: `N = 48` tiles per side. Tile (x,z), 0..47. One tile = one building cell.
 - World: 1 tile = `TILE = 8` world units. Tile (x,z) spans world X:[x*8,(x+1)*8], Z:[z*8,(z+1)*8]. Ground top at y=0. Voxels are 1×1×1 world units.
-- Voxel models: `{sx, sy, sz, blocks: [[vx,vy,vz,colorIndex], ...]}` — vx∈[0,sx), vy∈[0,sy) up, vz∈[0,sz). colorIndex into `PALETTE` from models.js. Models are placed centered on their tile(s), sitting on y=0.
+- Voxel models: `{sx, sy, sz, blocks: [[vx,vy,vz,colorIndex], ...]}` — vx∈[0,sx), vy∈[0,sy) up, vz∈[0,sz). colorIndex into `PALETTE` from models.js. Models are placed centered on their tile(s), sitting on y=0. Optional `res` (voxels per world unit, default 1; 2 → 16 voxels per tile, 4 → 32): coords/sizes are then fine voxels, world size = voxels / res (see the authoring guide in src/models/core.js). models.js is the public entry; the art lives in src/models/*.js by category. Optional `parts: [model, …]` (catalog buildings): extra voxel models on the SAME footprint/anchor (same sx/res, sz/res), already in the base's final orientation — e.g. a res-8 cooling tower riding on a res-4 power plant; `addBuilding` and the ghost add them as child meshes (they follow rot, grow-in scale and removal). A part may instead be a SMOOTH SURFACE `{surf: {pos, nrm (Float32Array, world units, model-local like the voxel mesher: x/z centred, y up), ci (palette index per vertex), ao? (per vertex), idx (Uint32Array)}}` — e.g. a lathed cooling tower — which the engine gives the voxel material's attribute set.
 
 ## constants.js (provided, import from './constants.js')
 See file — TILE, N, tile type enums T = {GRASS,WATER,SAND,ROAD,ZONE_R,ZONE_C,ZONE_I,BLDG,TREE,PARK,SCHOOL,FIRE,FOUNTAIN,STADIUM,POWER}, TOOLS, COSTS, SPEEDS, EVENTS names.
@@ -48,6 +48,8 @@ removeBuilding(id)
 addProp(kind, model, x, z)             // like addBuilding but keyed (kind,x,z) — for trees etc. removeProp(kind,x,z)
 removeProp(kind, x, z)
 makeDynamic(model) -> handle           // small movable object (car/person/bird/cloud). handle = {setPos(x,y,z), setRot(yRad), setVisible(b), dispose()}. Use per-model-shared geometry + one Mesh each (few hundred total OK), or InstancedMesh pools.
+                                       // optional model.blobs = [[x, z, w, l, y, opacity], ...] (model-local world units): soft dark contact-shadow footprints drawn under the dynamic from instanced pools (life r12)
+                                       // optional model.voxOpts = {...}: voxel.js mesher overrides merged into the engine's options for that model (any placement path); small movers pass prop-scale AO, e.g. { aoDist: 0.25, aoSpread: 0 } (life r14)
 screenToTile(clientX, clientY) -> {x,z}|null
 setGhost(model|null, x, z, ok)         // translucent preview at tile, green tint if ok else red
 setNight(t)                            // t 0..1 (0 day, 1 night): sky color, sun/ambient dim, fog color. Also expose scene, and window lights handled via emissive palette trick: models use colorIndex >= 200 as "window" colors — engine renders those as emissive at night.
@@ -65,6 +67,7 @@ export function roadModel(mask)                     // mask bit 1=N,2=E,4=S,8=W 
 export function carModel(variant)                   // ≥6 cute cars/bus/taxi/icecream truck, ≤6×4×3, facing +X? NO: facing -Z (forward = -Z)
 export function personModel(variant)                // ≥8 tiny people 2×4×1ish, varied shirt/hair/skin tones
 export function birdModel(), cloudModel(variant), smokePuffModel()
+export function catalogVents(id, variant)          // chimney mouths [[ox,oy,oz],…] in world units from the footprint centre at ground, model-local (turn by the building's rot like catalogAnim offsets); [] = smoke-free, null = no data (life.js falls back to per-tile smoke)
 export function constructionModel()                 // crane/scaffold shown while progress < 1
 ```
 
