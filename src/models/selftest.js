@@ -137,7 +137,7 @@ export function _selfTest() {
   for (let mask = 0; mask <= 15; mask++) {
     wrap('bridge(' + mask + ')', () => {
       const m = bridgeModel(mask);
-      if (m.sx !== 8 || m.sz !== 8) throw 'bridge not 8x?x8 (' + m.sx + 'x' + m.sz + ')';
+      const r = m.res || 1; if (m.sx / r !== 8 || m.sz / r !== 8) throw 'bridge not one tile (' + m.sx + 'x' + m.sz + ' @res ' + r + ')';
       return m;
     });
   }

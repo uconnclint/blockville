@@ -682,7 +682,11 @@ void main() {
   vec3 sunHue = uSunColor / max(max(uSunColor.r, uSunColor.g), max(uSunColor.b, 1e-4));
   col *= mix(vec3(1.0), 0.62 + 0.40 * sunHue, lowSun * 0.55 * (1.0 - uNight));
   // Night: fold down onto a deep, still clearly BLUE tone.
-  col = mix(col, col * uNightTint, uNight * (1.0 - uNightFloor));
+  // coherence 09-25: the body is authored HDR-bright for the day grade, so a
+  // linear fold left the lake glowing pool-blue while the lit-down city around
+  // it had gone dark (at nightT 0.6 the land is night, the water still day).
+  // Ramp the fold in with the land's darkening and fold deeper (tint below).
+  col = mix(col, col * uNightTint, smoothstep(0.0, 0.7, uNight) * (1.0 - uNightFloor));
 
   // ---- night: the lit city streaks across the water ------------------------
   if (uEmitStrength > 0.002) {
@@ -974,7 +978,7 @@ export class WaterFX {
       uSeaColor: { value: srgb(0x0394d8) },
       uWallLine: { value: srgb(0x0877c2) },
       uFoamColor: { value: srgb(0xeafcff) },
-      uNightTint: { value: new THREE.Color(0.10, 0.17, 0.34) },
+      uNightTint: { value: new THREE.Color(0.035, 0.06, 0.12) },   // coherence 09-25: was 0.10/0.17/0.34 (lake stayed day-bright at night)
       // Shadowed water stays clearly blue (ref04/05 shadows are light and
       // colourful, never grey).
       uShadowTint: { value: new THREE.Color(0.62, 0.74, 0.90) },

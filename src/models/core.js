@@ -118,7 +118,7 @@ const _colors = {
   sand: 0xe6d3a3, sandDark: 0xcbb57e, signWhite: 0xfbfbf6,
   // lot plinths (see lotPlinth) — Isometric City Voxel look
   lotRim: 0xdcd8cc, lotSide: 0xa9a59a, lotPave: 0xc9c6bc, lotPaveDark: 0xb3b0a6,
-  lotAsphalt: 0x2a2c30, lotLine: 0xf4f4ee, lotGrass: 0x9fcb45,
+  lotAsphalt: 0x2a2c30, lotLine: 0xf4f4ee, lotGrass: 0x96b03d,   // coherence 09-25: 0x9fcb45 rendered neon #b6f972 next to the #b0d26a field
   // ---- ARTIST ADDITIONS: append new colours ONLY inside your own block, keys
   // prefixed with your category (e.g. resTerracotta). Indices must stay < 200.
   // [residential]  ref04 / ref05 houses (palette is shared + capped at 200: reuse first)
@@ -127,7 +127,7 @@ const _colors = {
   resTerracotta: 0xcf9e80, resTerraTrim: 0xb47755, resTileOrangeDk: 0xbb5f2b,
   resSlate: 0x9aa3ad, resSlateDk: 0x78808e, resTileGreenDk: 0x4d7a5e,
   resTile: 0xbf8062, resTileDk: 0x8a5646, resQuoin: 0xeedfc4, resButter: 0xeedaa8, resSage: 0xb5c6a4,
-  resRoofRed: 0xa0605a, resLawn: 0x9cc77e,
+  resRoofRed: 0xa0605a, resLawn: 0x95b368,   // coherence 09-25: was 0x9cc77e (rendered mint #b6f888 once the field went back to lime)
   // [commercial]  shops & food (ref05 diner / supermarket, ref02 shop)
   comRoof: 0xb7bcc2, comFrame: 0x3b4047, comDough: 0xe2a458, comIcing: 0xff8cc6,
   comChoco: 0x6e3b22, comCone: 0xebb86a, comConeDk: 0xc48845, comPatty: 0x5c3420,
@@ -207,6 +207,9 @@ const _colors = {
   // ref05's cabs are dark BLUE glass; 0x1b3050 already graded to lavender)
   vehGlass: 0x17233c, vehCharcoal: 0x3b3f46, vehPearl: 0xb3b8bf,
   vehRed: 0xd83a31, vehBlue: 0x4f9ff0, vehGreen: 0x3a7a4a, vehSilver: 0xc6cbd2,   // vehBlue stays (residential props use it); car blue = C.blue
+  // [infra] coherence 09-25: bridge deck asphalt — the darkest neutral, so the
+  // voxel deck (lifted by materials' dark floor + sky fill) lands near roads.js.
+  infraDeck: 0x121316,
 };
 
 export const PALETTE = [];

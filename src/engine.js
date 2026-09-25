@@ -770,7 +770,10 @@ export class Engine {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     // ground r10: a tree on a raised lawn plinth stands on its top.
-    mesh.position.set((x + 0.5) * TILE, this._lawnLift(x, z), (z + 0.5) * TILE);
+    // coherence 09-25: model.yOffset lowers a prop authored from below ground
+    // (the bridge deck's piers stand in the recessed water basin).
+    mesh.userData.yOff = (model && Number.isFinite(model.yOffset)) ? model.yOffset : 0;
+    mesh.position.set((x + 0.5) * TILE, this._lawnLift(x, z) + mesh.userData.yOff, (z + 0.5) * TILE);
     this.scene.add(mesh);
     this._props.set(key, mesh);
   }
@@ -786,7 +789,7 @@ export class Engine {
   _reseatProps() {
     for (const [key, mesh] of this._props) {
       const p = key.split(':');
-      const y = this._lawnLift(+p[1], +p[2]);
+      const y = this._lawnLift(+p[1], +p[2]) + (mesh.userData.yOff || 0);
       if (mesh.position.y !== y) { mesh.position.y = y; mesh.updateMatrixWorld && mesh.updateMatrixWorld(); }
     }
   }
@@ -1544,6 +1547,10 @@ export class Engine {
     this._sky.setWeather({ rain, snow });
     this._terrain.setWeather({ tint, rain, snow });
     this._roads.setWeather({ tint, rain, snow });
+    // coherence 09-25: buildings, lots and props take the snow too (they were
+    // the only pieces that stayed summer-green on a white ground).
+    if (this._matLib && this._matLib.setSnow) this._matLib.setSnow(snow);
+    if (this._propFX && this._propFX.setSnow) this._propFX.setSnow(snow);
 
     // Only one precipitation mode active at a time.
     let mode = null, intensity = 0;

@@ -232,8 +232,12 @@ const PAL = {
   // r12 (critic r11: "slightly more saturated and bluer-green than the
   // reference's paler yellow-lime, about #a8c86a"): screen was #acd06c,
   // ref05's field modal is #a4bc70 — green pulled down ~6%, a touch warmer.
-  grassMid:  0x7e8a5c,
-  grassLit:  0x818c5d,   // the lawn's warm end of the (very slow) tonal drift
+  // coherence (09-25): the light/post retunes after r12 had drifted this albedo
+  // to a washed #c4dc8b on screen — paler than every lot lawn, hedge and tree
+  // canopy around it (two-greens clash). Re-solved so the field lands back on
+  // ~#b0d26a, the same family as models' C.lotGrass (re-solved together).
+  grassMid:  0x718445,
+  grassLit:  0x758546,   // the lawn's warm end of the (very slow) tonal drift
   grassRich: 0x7db83c,   // (legacy)
   grassDry:  0xa8c450,   // (legacy)
   worn:      0x9b8566,   // (legacy)
@@ -1293,11 +1297,14 @@ export class Terrain {
       // to a measured literal 0 and saturation to 1.0 — a pure blue silhouette,
       // not a moonlit field. These only need to nudge.
       uNightTint: { value: new THREE.Vector3(0.96, 0.88, 1.04) },
-      uNightChroma: { value: 0.16 },
+      // coherence 09-25: 0.16 -> 0.6. Building lots, props and trees keep their
+      // hue at night (materials.js / props.js); at 0.16 every terrain lot, hedge,
+      // pitch and pool went grey-lavender next to them. 0.6 keeps the family.
+      uNightChroma: { value: 0.6 },
       // Moon/sky indirect floor so night ground is blue-grey, not literally 0.
       // Measured night meadow: (0, 2.2, 17) sat 1.00 -> (26, 31, 42) sat 0.38
       // hue 223, i.e. a readable moonlit surface at ~30% of the day luminance.
-      uNightSky: { value: new THREE.Vector3(0.190, 0.195, 0.225) },
+      uNightSky: { value: new THREE.Vector3(0.162, 0.166, 0.191) },   // coherence 09-25: x0.85 (terrain lots read brighter than building lots at night)
       uGrassDeep: { value: lin(PAL.grassDeep) },
       uGrassMid: { value: lin(PAL.grassMid) },
       uGrassLit: { value: lin(PAL.grassLit) },

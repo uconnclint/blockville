@@ -59,7 +59,7 @@ const PED_LANE_BRIDGE = 2.9; // inside the bridge railings
 const BOAT_LANE = 1.0;  // boats keep right too (gives U-turns a radius)
 const ROAD_Y = 0.02;    // asphalt top (roads.js yOffset)
 const WALK_Y = 0.32;    // sidewalk top (yOffset + CURB_H = 0.02 + 0.30, roads r13)
-const BRIDGE_Y = 1.0;   // bridge deck top (infra.js bridgeModel)
+const BRIDGE_Y = 0.02;  // bridge deck top (infra.js bridgeModel; coherence 09-25: the res-4 deck is flush with the road, was 1.0)
 const PARK_BASE = 0.42; // LOT_Y (render/terrain.js): where lot models stand
 const WATER_Y = -2.6;   // water plane (render/water.js WATER_Y: recessed basin)
 // boat models: row 0 = draft, row 1 (waterline + foam) tops out 0.1 above the

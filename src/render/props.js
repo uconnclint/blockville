@@ -693,6 +693,7 @@ vPropEmi  = emissiveT;
 
 const FRAG_PARS = /* glsl */`
 uniform float uPropNight;
+uniform float uPropSnow;
 uniform float uPropGlowGain;
 uniform float uPropVegSsao;
 uniform float uPropRockSsao;
@@ -701,6 +702,13 @@ ${PARS_COMMON}
 
 const FRAG_COLOR = /* glsl */`
 diffuseColor.rgb *= vPropAO * vPropTone;
+// coherence 09-25: snow caps on canopy / rock / prop tops, same albedo and
+// up-facing test as materials.js and terrain.js (see setSnow).
+if (uPropSnow > 0.001) {
+  vec3 bvUpV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+  float bvTop = smoothstep(0.55, 0.85, dot(normalize(vNormal), bvUpV));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.855, 0.90, 0.94), uPropSnow * bvTop);
+}
 `;
 
 // roughnessmap_fragment / metalnessmap_fragment declare the factor; we override
@@ -777,6 +785,7 @@ export class Props {
       uPropCam: { value: new THREE.Vector3() },
       uPropNight: (opts.uniforms && opts.uniforms.uNight) || { value: 0 },
       uPropGlowGain: { value: 2.6 },
+      uPropSnow: { value: 0 },   // coherence 09-25: setSnow()
       uPropToneSide: { value: 1 },
       // r10: how much of post.js's screen-space AO vegetation keeps (scene
       // alpha, the same gate voxel buildings use via materials.ssaoKeep).
@@ -999,6 +1008,9 @@ export class Props {
    * lamp | trafficlight | sign_stop | hydrant | bin | bench.
    * Cheap to call repeatedly — the actual bake is coalesced into update().
    */
+  /** Weather snow cover 0..1 on up-facing prop faces (engine.setWeather). */
+  setSnow(v) { this.uniforms.uPropSnow.value = Math.max(0, Math.min(1, +v || 0)); }
+
   setAnchors(anchors) {
     for (let t = 0; t < NT; t++) if (TYPES[t].group === 'furn') { this._raw[t].length = 0; this._dirty[t] = 1; }
     const list = Array.isArray(anchors) ? anchors : [];

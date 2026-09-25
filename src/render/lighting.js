@@ -1783,8 +1783,13 @@ export class LightingRig {
       // null disables the floor entirely.
       moonKeyElevation: 30,      // degrees
       lampColor: 0xffcf8a,
-      lampRadius: 9.5,
-      lampIntensity: 1.0,
+      // coherence 09-25: 9.5 / 1.0 were tuned for the old perspective camera
+      // and sparse lamps. With the iso camera and ~1 lamp per road tile the
+      // additive pools overlapped into solid orange roads (markings, zebras
+      // and asphalt all gone) — measured the whole night street grid as sand.
+      // Small, dim pools keep the warm puddles and leave the roads readable.
+      lampRadius: 5.0,
+      lampIntensity: 0.10,
       // Casters render their BACK faces. Blockville's casters are closed voxel
       // shells, so the stored depth is a whole object-thickness behind the lit
       // surface and self-shadow acne simply cannot occur — which is what lets

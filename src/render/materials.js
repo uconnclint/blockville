@@ -296,6 +296,7 @@ const FRAG_PARS = /* glsl */`
 uniform float uNight;
 uniform vec3  uSeason;
 uniform float uSeasonStrength;
+uniform float uSnowCover;
 uniform float uTime;
 uniform vec3  uRimColor;
 uniform float uRimStrength;
@@ -658,6 +659,16 @@ const FRAG_COLOR = /* glsl */`
 
   // Weather tint (engine-owned uSeason). Off by default: strength 0.
   diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uSeason, uSeasonStrength);
+
+  // coherence 09-25: snow settles on up-facing faces (roofs, lot paving,
+  // lawns), matching terrain.js / roads.js, which were the only pieces that
+  // whitened — a white ground under summer-green roofs and lots read as two
+  // different games. Albedo ~= terrain PAL.snow (0xeef3f8) in linear.
+  if (uSnowCover > 0.001) {
+    vec3 bvUpV = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+    float bvTop = smoothstep(0.55, 0.85, dot(normalize(vNormal), bvUpV));
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.855, 0.90, 0.94), uSnowCover * bvTop);
+  }
 
   // Keep the palette bright + saturated through the PBR + ACES pipeline.
   diffuseColor.rgb = voxSaturate(diffuseColor.rgb, uSat);
@@ -1191,11 +1202,14 @@ const GLOW_DEFAULTS = {
   // tower light its own facade (that read is worth keeping), so the spill is
   // tightened rather than removed: about half the energy over about two thirds
   // of the footprint.
-  intensity: 0.030,   // emitted intensity per lit pane in a band
+  // coherence 09-25: 0.030 / maxRadius 18 drew each tower band as an up-to-
+  // 18-unit camera-facing disc; under the iso camera those read as pale blue
+  // "mist" sheets hanging over whole blocks at night. Kept as a faint spill.
+  intensity: 0.006,   // emitted intensity per lit pane in a band
   maxIntensity: 1.05,
   radiusScale: 1.05,  // radius = band extent * this, so spill reaches the street
   minRadius: 4,
-  maxRadius: 18,
+  maxRadius: 6,
   max: 512,           // hard cap on returned glows (the rig batches, but still)
 };
 
@@ -1575,6 +1589,7 @@ export class MaterialLib {
       // Owned by this module.
       uTime: { value: 0 },
       uSeasonStrength: { value: p.seasonStrength },
+      uSnowCover: { value: 0 },   // coherence 09-25: setSnow()
       uRimColor: { value: new THREE.Color(0.72, 0.85, 1.0) },
       uRimStrength: { value: p.rim },
       uSkyFillColor: { value: new THREE.Color(0.55, 0.72, 1.0) },
@@ -1804,6 +1819,9 @@ export class MaterialLib {
       winTemp: p.winTemp,
     }, opts || {}));
   }
+
+  /** Weather snow cover 0..1 on up-facing faces (engine.setWeather). */
+  setSnow(v) { this.uniforms.uSnowCover.value = Math.max(0, Math.min(1, +v || 0)); }
 
   /** Roughness/metalness for a palette index, using this lib's palette. */
   materialFor(colorIndex) {
