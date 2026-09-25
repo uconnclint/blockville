@@ -327,6 +327,11 @@
   // (0 = sun directly behind the lens = flat frontal light). Deterministic:
   // shots pin the clock first, so sunDir is fixed.
   function isoSnapForSun(pref) {
+    // The key light is now locked relative to the CAMERA (engine KEY_AZ_OFFSET),
+    // so every snap gets identical relative lighting; deriving the snap from the
+    // live sun made shots depend on the previous camera state (coherence r1
+    // issue 12). Always use snap 0 for reproducible framing.
+    if (!window.BVDEMO_SUNSNAP) return isoAz(0);
     const sd = BV.engine._ctx.sunDir;
     const sunAz = Math.atan2(sd.x, sd.z);
     let best = 0, bd = Infinity;
@@ -602,7 +607,7 @@
     // The gallery snap follows the sun, which follows the current camera, so
     // the lens side is already known here: camera = target + (sin az, cos az).
     const sdL = BV.engine._ctx.sunDir;
-    const snapL = Math.PI / 4 + Math.round((Math.atan2(sdL.x, sdL.z) + 0.8 - Math.PI / 4) / (Math.PI / 2)) * (Math.PI / 2);
+    const snapL = isoSnapForSun(0.8);
     const lensX = Math.sin(snapL);
     rows.forEach((row0, r) => {
       const mixed = row0.some((e) => e.tw * e.td !== row0[0].tw * row0[0].td);
@@ -641,7 +646,7 @@
     const sd = BV.engine._ctx.sunDir;
     // Iso snap that puts the sun ~0.8 rad round from the lens, like the iso shots.
     const want = Math.atan2(sd.x, sd.z) + 0.8;
-    const snap = Math.PI / 4 + Math.round((want - Math.PI / 4) / (Math.PI / 2)) * (Math.PI / 2);
+    const snap = isoSnapForSun(0.8); void want;
     let cx = (x0 + (block ? 1 : 0) + W / 2) * 8, cz = (z0 + D / 2) * 8;
     if (one) { cx = (x0 + 1 + entries[0].tw / 2) * 8; cz = (z0 + 1 + entries[0].td / 2) * 8; }
     const tall = Math.max(...entries.map((e) => (e.cap || 6))) ;
