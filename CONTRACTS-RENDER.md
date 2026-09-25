@@ -296,6 +296,17 @@ res 1, so every res-1 model is byte-identical to the legacy path.
 `setVoxelDefaults(patch)` patches module defaults (e.g. `{greedy:true}` for
 measurement); `modelRes(model)` returns the effective res.
 
+**Perf additions (2026-09-25, tools/rendertest/pieces/perf.md).** Slice-mesher
+geometry carries `userData.viewIndex` (same vertices/quad order, minus -Y faces
+and faces into sealed interiors — nothing the iso camera can see); meshes drawn
+with it name the full geometry in `userData.casterGeometry`, which lighting.js
+renders in its depth / world-AO passes. `opts.aoAtlas: true` merges faces by
+colour only and emits `aoAtlas` UVs + `userData.aoRegions` (R8 AO lattice
+regions) instead of `aoQuad`/`aoUV`; materials.js `AoAtlas.place(geo)` packs
+them into one shared texture (the voxel material reads it when `aoAtlas.x > 0`).
+`lodModel(model, res)` resamples a model to a coarser integer res for distance
+LOD (engine.js `_updateLod`, quality-tiered).
+
 ### 3.7 `src/render/materials.js` → `export class MaterialLib`
 
 ```js
@@ -348,6 +359,12 @@ fail. Specifically they will look for:
 (SSAO half-res, DOF, SMAA), `2` high (everything full res). Engine picks the
 level from a frame-time probe. Your module must switch levels **without**
 reallocating the world, and must never stutter on a switch.
+
+Engine (2026-09-25): the starting level comes from the device (`_deviceQuality`:
+Chromebooks / Intel / Mali / phones / iPads 0–1, Apple-silicon Macs and discrete
+GPUs 2), then a governor steps down a ladder (2+SSAA → 2 → 1 → 0) on sustained
+< 50 fps and probes back up once after 30 s. `engine.setAutoQuality(false)`
+pins the level (the render-test bootstrap does, at 2).
 
 ---
 

@@ -5,7 +5,7 @@
 
 import * as THREE from '../vendor/three.module.js';
 import { TILE, N, CHUNK } from './constants.js';
-import { buildVoxelGeometry, modelRes, materialFor } from './render/voxel.js';
+import { buildVoxelGeometry, modelRes, materialFor, lodModel } from './render/voxel.js';
 import { MaterialLib } from './render/materials.js';
 import { PostFX } from './render/post.js';
 import { Sky } from './render/sky.js';
@@ -234,7 +234,13 @@ export class Engine {
     // ---- Materials ---------------------------------------------------------
     // Render quality: 0 low, 1 medium, 2 high. Drives PostFX, shadow cascades
     // and voxel bevelling. See CONTRACTS-RENDER.md §6.
-    this._quality = 2;
+    // PERF: start at the level this device can carry (see _deviceQuality);
+    // the frame-time governor in render() steps down from there if needed.
+    this._quality = this._deviceQuality();
+    this._qualityCap = this._quality;
+    this._autoQ = true;
+    this._gov = { t: 0, acc: 0, n: 0, slow: 0, slowWins: 0, rung: this._quality === 2 ? 0 : this._quality === 1 ? 2 : 3,
+      cap: this._quality === 2 ? 0 : this._quality === 1 ? 2 : 3, lastChange: 0, failed: new Set(), probeAt: -1 };
     // Micro-bevelling costs a measured 5.00x triangles (1.12M -> 5.60M for a
     // 500-building city, before shadow passes re-submit it). Off by default;
     // the per-vertex AO term carries block separation on its own.
@@ -576,7 +582,7 @@ export class Engine {
   // Voxel meshing (cached by model reference)
   // ---------------------------------------------------------------------------
 
-  _getGeometry(model) {
+  _getGeometry(model, noAtlas) {
     if (model && model.surf) return this._getSurfGeometry(model);
     if (!model || !Array.isArray(model.blocks)) return this._emptyGeometry();
     let geo = this._geoCache.get(model);
@@ -591,12 +597,21 @@ export class Engine {
     // building-scale ground / broad / sky terms reach 2-3.5 units, so on a
     // 0.5-unit car every flank sat at AO 0.24-0.43 and its shade side went
     // black against the asphalt.
-    geo = buildVoxelGeometry(model, Object.assign({
+    // PERF: AO atlas (materials.js AoAtlas) — faces merge by colour alone and
+    // read their AO from one shared texture (~2x fewer triangles). Falls back
+    // to per-vertex AO if the atlas is unavailable or full.
+    const atlas = !noAtlas && this._aoAtlasOn !== false && this._matLib && this._matLib.aoAtlas;
+    const vopts = Object.assign({
       ao: true,
       bevel: this._bevel,
       palette: this._palLin,
       glowPalette: this._glowLin,
-    }, model.voxOpts || null));
+      aoAtlas: !!(atlas && atlas.ok),
+    }, model.voxOpts || null);
+    geo = buildVoxelGeometry(model, vopts);
+    if (geo.userData && geo.userData.aoRegions && !atlas.place(geo)) {
+      geo = buildVoxelGeometry(model, Object.assign(vopts, { aoAtlas: false }));
+    }
     this._geoCache.set(model, geo);
     return geo;
   }
@@ -632,6 +647,167 @@ export class Engine {
     this._geoCache.set(model, geo);
     return geo;
   }
+
+  // PERF: the SCENE-PASS geometry of a model — the cached voxel geometry's
+  // attributes with voxel.js's `viewIndex` (no -Y faces, no faces into a
+  // sealed interior: nothing the iso camera can ever see). Same vertices and
+  // quad order, so every visible pixel is unchanged. Meshes that use it carry
+  // the full geometry in `userData.casterGeometry`, which lighting.js renders
+  // in its shadow and world-AO passes (back faces / undersides matter there).
+  _getViewGeometry(model, noAtlas) {
+    const full = this._getGeometry(model, noAtlas);
+    const vi = full.userData && full.userData.viewIndex;
+    if (!vi) return full;
+    const vc = this._viewGeoCache || (this._viewGeoCache = new WeakMap());
+    let geo = vc.get(full);
+    if (geo) return geo;
+    geo = new THREE.BufferGeometry();
+    for (const k in full.attributes) geo.setAttribute(k, full.attributes[k]);
+    geo.setIndex(new THREE.BufferAttribute(vi, 1));
+    geo.boundingSphere = full.boundingSphere;
+    geo.boundingBox = full.boundingBox;
+    geo.userData = full.userData;
+    vc.set(full, geo);
+    return geo;
+  }
+
+  // A static mesh drawn with the view geometry, casting with the full one.
+  _viewMesh(model) {
+    const mesh = new THREE.Mesh(this._getViewGeometry(model), this._voxMat);
+    const full = this._getGeometry(model);
+    if (mesh.geometry !== full) mesh.userData.casterGeometry = full;
+    mesh.userData.voxModel = model;
+    this._lodAssign(mesh);
+    return mesh;
+  }
+
+  // ---------------------------------------------------------------------------
+  // PERF: distance LOD (see voxel.js lodModel)
+  // ---------------------------------------------------------------------------
+  // A catalog building is ~10k triangles of res-4/8 detail; zoomed out past
+  // the default view a fine voxel is well under a device pixel and those
+  // triangles cost vertex work plus 2x2-quad fragment work for nothing. Each
+  // voxel mesh (building, part, prop, mover) shows the coarsest resampled copy
+  // of its model whose voxels are still at most `_lodPx` device pixels
+  // (quality-tiered, see _lodPxFor), built lazily a few per frame. The ghost,
+  // spinners and the window-glow light positions always use the full model.
+  // Max coarse-voxel size in DEVICE px. Measured (perf.md): at 0.6 px a 2:1
+  // resample of a res-4 facade still shifted tone (frames / panes / AO blend
+  // differently), so quality 2 only resamples once a coarse voxel is <= 0.5
+  // px — in practice res >= 8 models and movers when zoomed right out.
+  // Movers (tiny, always in motion) and the lower quality levels go further.
+  _lodPxFor(q, dyn) {
+    // Movers: off at quality 2 (life.js makes many one-off composite models —
+    // parked rows, lot fills — and resampling each cost more CPU than the
+    // few triangles saved); on at 1 / 0.
+    if (dyn) return q >= 2 ? 0 : q === 1 ? 1.5 : 2.0;
+    return q >= 2 ? 0.5 : q === 1 ? 1.0 : 1.6;
+  }
+
+  // Device pixels per world unit at the current zoom (ortho: constant).
+  _unitPx() {
+    const cam = this.camera;
+    const hh = (cam.top - cam.bottom) / (cam.zoom || 1);
+    const bufH = this._post && this._post._h ? this._post._h : (this._canvas.height || 720);
+    return bufH / Math.max(1e-6, hh);
+  }
+
+  // Target res for a model of res r: the coarsest of r/2, r/4, r/8 (integers)
+  // whose voxels stay <= lodPx device px; r itself when none qualifies.
+  _lodRes(r, unitPx, lodPx) {
+    if (!(unitPx > 0) || !(lodPx > 0) || r <= 1) return r;
+    const need = unitPx / lodPx;          // minimum res that keeps voxels <= lodPx
+    let best = r;
+    for (let d = 2; d <= 8; d *= 2) {
+      const r2 = Math.floor(r / d);
+      if (r2 < 1 || r2 < need) break;
+      best = r2;
+    }
+    return best;
+  }
+
+  // Geometry pair for (model, res): { view, full } or null (not built / none).
+  _lodEntry(model, r2) {
+    const c = this._lodCache || (this._lodCache = new WeakMap());
+    let m = c.get(model);
+    if (!m) { m = new Map(); c.set(model, m); }
+    if (m.has(r2)) return m.get(r2);
+    return undefined;
+  }
+
+  _lodBuild(model, r2, dyn) {
+    const lm = lodModel(model, r2);
+    let entry = null;
+    if (lm) {
+      const full = this._getGeometry(lm, dyn);
+      entry = { full, view: this._getViewGeometry(lm, dyn) };
+    }
+    this._lodCache.get(model).set(r2, entry);
+    return entry;
+  }
+
+  // Point one mesh at the geometry for the current LOD (or queue the build).
+  _lodAssign(mesh) {
+    const model = mesh.userData.voxModel;
+    if (!model || !model.blocks) return;
+    const r = modelRes(model);
+    const r2 = this._lodRes(r, this._lodUnitPx || 0, mesh.userData.lodDyn ? this._lodPxDyn || 0 : this._lodPx || 1);
+    let view, full;
+    if (r2 < r) {
+      const e = this._lodEntry(model, r2);
+      if (e === undefined) { (this._lodQueue || (this._lodQueue = new Set())).add(mesh); return; }
+      if (e) { view = e.view; full = e.full; }
+    }
+    if (!view) { const na = !!mesh.userData.lodDyn; view = this._getViewGeometry(model, na); full = this._getGeometry(model, na); }
+    if (mesh.geometry === view) return;
+    mesh.geometry = view;
+    mesh.userData.casterGeometry = full !== view ? full : undefined;
+    // window-glow light positions always come from the full-detail model
+    mesh.userData.glowGeometry = this._getGeometry(model, !!mesh.userData.lodDyn);
+  }
+
+  _lodForEach(fn) {
+    for (const m of this._buildings.values()) {
+      fn(m);
+      const k = m.children;
+      for (let i = 0; i < k.length; i++) if (k[i].userData.voxModel) fn(k[i]);
+    }
+    for (const m of this._props.values()) fn(m);
+    if (this._dynMeshes) for (const m of this._dynMeshes) fn(m);
+  }
+
+  // Per frame: re-evaluate when the zoom moved > 8% (hysteresis), then spend
+  // a small budget building queued LOD geometry.
+  _updateLod() {
+    if (this._lodEnabled === false) {
+      if (this._lodUnitPx) { this._lodUnitPx = 0; this._lodForEach((m) => this._lodAssign(m)); }
+      return;
+    }
+    const u = this._unitPx();
+    const lp = this._lodPxFor(this._quality, false);
+    const cur = this._lodUnitPx || 0;
+    if (lp !== this._lodPx || !cur || Math.abs(u - cur) > 0.08 * cur) {
+      this._lodPx = lp;
+      this._lodPxDyn = this._lodPxFor(this._quality, true);
+      this._lodUnitPx = u;
+      if (this._lodQueue) this._lodQueue.clear();
+      this._lodForEach((m) => this._lodAssign(m));
+    }
+    const q = this._lodQueue;
+    if (!q || !q.size) return;
+    const t0 = performance.now();
+    for (const mesh of q) {
+      q.delete(mesh);
+      if (!mesh.parent) continue;            // removed / disposed meanwhile
+      const model = mesh.userData.voxModel;
+      const r2 = this._lodRes(modelRes(model), this._lodUnitPx, mesh.userData.lodDyn ? this._lodPxDyn : this._lodPx);
+      if (this._lodEntry(model, r2) === undefined) this._lodBuild(model, r2, !!mesh.userData.lodDyn);
+      this._lodAssign(mesh);
+      if (performance.now() - t0 > 4) break;
+    }
+  }
+
+  setLod(on) { this._lodEnabled = on !== false; }
 
   _emptyGeometry() {
     if (!this._empty) {
@@ -720,8 +896,7 @@ export class Engine {
 
   addBuilding(id, model, x, z, yScale = 1, rot = 0) {
     if (this._buildings.has(id)) this.removeBuilding(id);
-    const geo = this._getGeometry(model);
-    const mesh = new THREE.Mesh(geo, this._voxMat);
+    const mesh = this._viewMesh(model);
     mesh.castShadow = true;
     mesh.receiveShadow = true;   // self-shadowing + tower-onto-tower
     // (x,z) is the NW anchor tile of the EFFECTIVE footprint; rot k swaps
@@ -738,7 +913,7 @@ export class Engine {
     // anchor (same sx/res, sz/res), e.g. a res-8 cooling tower on a res-4
     // power plant. Children follow the building's rot, grow-in scale and removal.
     if (Array.isArray(model.parts)) for (const p of model.parts) {
-      const child = new THREE.Mesh(this._getGeometry(p), this._voxMat);
+      const child = this._viewMesh(p);
       child.castShadow = true;
       child.receiveShadow = true;
       mesh.add(child);
@@ -765,8 +940,7 @@ export class Engine {
     const key = kind + ':' + x + ':' + z;
     const existing = this._props.get(key);
     if (existing) this.scene.remove(existing);
-    const geo = this._getGeometry(model);
-    const mesh = new THREE.Mesh(geo, this._voxMat);
+    const mesh = this._viewMesh(model);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     // ground r10: a tree on a raised lawn plinth stands on its top.
@@ -804,11 +978,19 @@ export class Engine {
 
   // Small movable object (car/person/bird/cloud). Shares cached geometry.
   makeDynamic(model) {
-    const geo = this._getGeometry(model);
+    // Dynamics only yaw about +Y and cast nothing: the view geometry is exact.
+    // They stay on per-vertex AO: tiny meshes, and the atlas is kept for the
+    // static city (it is where the triangles are).
+    const geo = this._getViewGeometry(model, true);
     const mesh = new THREE.Mesh(geo, this._voxMat);
     mesh.castShadow = false;   // keep the shadow pass cheap (many dynamics)
     mesh.receiveShadow = false;
     mesh.frustumCulled = true;
+    mesh.userData.voxModel = model;
+    mesh.userData.lodDyn = true;
+    const dyn = this._dynMeshes || (this._dynMeshes = new Set());
+    dyn.add(mesh);
+    this._lodAssign(mesh);
     // life r12: model.blobs (optional) = soft dark CONTACT SHADOWS under the
     // vehicles / people (dynamics cast no sun shadow and get no AO, so a car
     // floated on the asphalt). Every blob is one instance of a shared
@@ -822,7 +1004,7 @@ export class Engine {
       setPos(x, y, z) { mesh.position.set(x, y, z); for (const b of blobs) b.pos(x, y, z); },
       setRot(yRad) { mesh.rotation.y = yRad; for (const b of blobs) b.rot(yRad); },
       setVisible(v) { mesh.visible = !!v; for (const b of blobs) b.show(!!v); },
-      dispose() { scene.remove(mesh); for (const b of blobs) b.free(); blobs.length = 0; },
+      dispose() { scene.remove(mesh); dyn.delete(mesh); for (const b of blobs) b.free(); blobs.length = 0; },
     };
   }
 
@@ -1663,6 +1845,7 @@ export class Engine {
   // ---------------------------------------------------------------------------
 
   render(dt) {
+    this._governor(dt);
     const d = clamp(dt || 0, 0, 0.1);
     const k = Math.min(1, d * 10);
 
@@ -1673,6 +1856,7 @@ export class Engine {
     this._sPolar += (this._camPolar - this._sPolar) * k;
 
     this._applyCamera();
+    this._updateLod();
 
     // Water animation.
     this._waterUniform.value += d;
@@ -1739,6 +1923,77 @@ export class Engine {
     // and composites to the canvas, so we must NOT call renderer.render() here.
     this._post.render(d, ctx);
   }
+
+  // ---------------------------------------------------------------------------
+  // PERF: quality auto-selection (CONTRACTS-RENDER.md §6: "Engine picks the
+  // level from a frame-time probe")
+  // ---------------------------------------------------------------------------
+  // Starting level from what the device is (classroom Chromebooks and iPads
+  // must not boot into the full-fat level and stutter until the governor
+  // notices). GPU string where the browser exposes it, else the UA.
+  _deviceQuality() {
+    try {
+      const gl = this.renderer.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      const gpu = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+      const nav = typeof navigator !== 'undefined' ? navigator : {};
+      const ua = String(nav.userAgent || '');
+      const mem = nav.deviceMemory || 8, cores = nav.hardwareConcurrency || 4;
+      const touch = (nav.maxTouchPoints || 0) > 1;
+      if (!this.renderer.capabilities.isWebGL2) return 0;
+      if (/SwiftShader|llvmpipe|Software|Basic Render/i.test(gpu)) return 0;
+      if (/CrOS/.test(ua)) return (mem > 4 && /Iris|Arc|Radeon|GeForce/i.test(gpu)) ? 1 : 0;
+      // iPadOS Safari reports a Mac UA with touch; phones/tablets generally.
+      if (/Android|iPhone|iPad|Mobile/i.test(ua) || (touch && /Macintosh/.test(ua))) return (mem <= 4 || cores <= 4) ? 0 : 1;
+      if (/Intel|Mali|Adreno|PowerVR|Vivante|Mesa/i.test(gpu)) return (/Iris|Arc/i.test(gpu) && mem >= 8) ? 1 : 0;
+      return 2;   // Apple-silicon Macs, discrete NVIDIA / AMD
+    } catch (e) { return 1; }
+  }
+
+  // Governor rungs, best first: quality 2 (+ supersampling where post.js
+  // would use it), quality 2 without supersampling, quality 1, quality 0.
+  _applyRung(r) {
+    const q = r <= 1 ? 2 : r === 2 ? 1 : 0;
+    if (this._post && this._post.setParams) this._post.setParams({ aa: { ssaa: r === 0 ? 1.75 : 1 } });
+    this.setQuality(q);
+    this._gov.rung = r;
+    this._gov.lastChange = this._elapsed;
+  }
+
+  // Called every frame with the real frame delta. Every 2 s: two slow windows
+  // in a row (avg < 50 fps, most frames slow) step one rung down; after 30 s
+  // at a lower rung it probes one rung up once, and a probe that is slow again
+  // within 10 s bans that rung. vsync hides headroom, hence probe-and-ban.
+  _governor(dt) {
+    const g = this._gov;
+    // Ignore the first seconds (shader compiles, city meshing).
+    if (!this._autoQ || !(dt > 0) || dt > 0.25 || this._elapsed < 6) return;
+    g.t += dt; g.acc += dt; g.n++;
+    if (dt > 1 / 50) g.slow++;
+    if (g.t < 2) return;
+    const avg = g.acc / g.n, slowFrac = g.slow / g.n;
+    g.t = 0; g.acc = 0; g.n = 0; g.slow = 0;
+    const since = this._elapsed - g.lastChange;
+    if (avg > 1 / 50 && slowFrac > 0.5) {
+      g.slowWins++;
+      if (g.slowWins >= 2 && g.rung < 3 && since > 3) {
+        if (g.probeAt >= 0 && this._elapsed - g.probeAt < 12) g.failed.add(g.rung);
+        g.probeAt = -1;
+        g.slowWins = 0;
+        this._applyRung(g.rung + 1);
+      }
+      return;
+    }
+    g.slowWins = 0;
+    if (g.rung > g.cap && since > 30 && avg < 1 / 55 && !g.failed.has(g.rung - 1)) {
+      g.probeAt = this._elapsed;
+      this._applyRung(g.rung - 1);
+    }
+  }
+
+  /** Auto quality on/off (on by default). Off keeps whatever level is set. */
+  setAutoQuality(on) { this._autoQ = !!on; }
+  getQuality() { return this._quality; }
 
   // Render quality 0 (low) / 1 (medium) / 2 (high). See CONTRACTS-RENDER.md §6.
   setQuality(level) {

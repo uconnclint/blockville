@@ -42,6 +42,8 @@ export const ATTR = {
   aoUV: 'aoUV',               // vec2  — OPTIONAL: this vertex's corner (0/1, 0/1) in the quad
   paneUV: 'paneUV',           // vec2  — OPTIONAL (unorm8, 1+254*t; 0 = none): position inside the
                               //         whole glass pane, (across, up) — surface r7
+  aoAtlas: 'aoAtlas',         // vec2  — OPTIONAL (perf): UV into the shared AO atlas (AoAtlas);
+                              //         0 = none. Replaces aoQuad/aoUV on atlas geometry.
 };
 
 /** GLSL decoders. One-line changes if the conventions flip. */
@@ -64,6 +66,7 @@ const DEFAULT_ATTRIBUTE_VALUES = {
   aoQuad: [0.0, 0.0, 0.0, 0.0],  // all-zero = "no quad data": shader falls back to aoT
   aoUV: [0.0, 0.0],
   paneUV: [0.0, 0.0],         // no pane data
+  aoAtlas: [0.0, 0.0],        // no atlas AO
 };
 
 // ===========================================================================
@@ -227,6 +230,7 @@ varying float vVoxRes;       // voxels per world unit (1 = legacy res-1 model)
 varying vec4  vVoxAOQ;      // the quad's four corner AO factors (constant over the quad)
 varying vec4  vVoxAOUV;     // xy: position inside the quad, 0..1 (bilinear weights)
                             // zw: paneUV (raw unorm; 0 = none) — packed into one row
+varying vec2  vVoxAtlas;    // AO atlas UV (0 = none; see AoAtlas)
 `;
 
 // Per-instance seed. Hashing modelMatrix's translation directly would STROBE on
@@ -253,6 +257,7 @@ attribute vec4  ${ATTR.voxLat};
 attribute vec4  ${ATTR.aoQuad};
 attribute vec2  ${ATTR.aoUV};
 attribute vec2  ${ATTR.paneUV};
+attribute vec2  ${ATTR.aoAtlas};
 ${COMMON_PARS}
 ${GLSL_DECODE}
 ${GLSL_INST_SEED}
@@ -262,6 +267,7 @@ const VERT_BODY = /* glsl */`
 vVoxAO      = voxDecodeAO(${ATTR.aoT});
 vVoxAOQ     = ${ATTR.aoQuad};
 vVoxAOUV    = vec4(${ATTR.aoUV}, ${ATTR.paneUV});
+vVoxAtlas   = ${ATTR.aoAtlas};
 vVoxMat     = voxDecodeMatParams(${ATTR.matParams});
 vVoxGlow    = ${ATTR.glowColor};
 vVoxEmi     = ${ATTR.emissiveT};
@@ -293,6 +299,7 @@ vVoxEmi     = ${ATTR.emissiveT};
 `;
 
 const FRAG_PARS = /* glsl */`
+uniform sampler2D uAoAtlas;   // shared R8 voxel-AO atlas (AoAtlas)
 uniform float uNight;
 uniform vec3  uSeason;
 uniform float uSeasonStrength;
@@ -543,6 +550,11 @@ const FRAG_COLOR = /* glsl */`
     vec2 w = clamp(vVoxAOUV.xy, 0.0, 1.0);
     float bl = mix(mix(vVoxAOQ.x, vVoxAOQ.w, w.x), mix(vVoxAOQ.y, vVoxAOQ.z, w.x), w.y);
     voxAOv = qs > 0.004 ? bl : vVoxAO;
+    // PERF (AO atlas): the same bilinear corner blend, read from the shared
+    // atlas with hardware filtering — lets voxel.js merge faces by colour
+    // alone. Fetched outside any branch.
+    float atl = texture2D(uAoAtlas, vVoxAtlas).r;
+    if (vVoxAtlas.x > 0.0) voxAOv = atl;
   }
   voxMatR = voxRemapMat(vVoxMat);
   // Glass class comes from the RAW attribute (see voxRemapMat).
@@ -824,7 +836,12 @@ const FRAG_AO = /* glsl */`
   // a warm horizon band, ground below, plus the sun's halo — all driven by the
   // WORLD reflection vector, so it swings as the camera orbits and the pane
   // reads as a mirror from any angle, at any hour.
-  {
+  // PERF: everything in this block is scaled by voxGlass (the mirror term) or
+  // only read through mix(..., voxGlass) (voxGlassN, in the glint below), so
+  // non-glass fragments skip it with bit-identical output. No derivatives
+  // inside. (Was ~30% of the whole frame at iso-mid: two fbm3 + two cell
+  // hashes per fragment on every wall in the city.)
+  if (voxGlass > 0.0) {
     vec3 Vw = normalize(cameraPosition - vVoxWorld);
 
     // --- PER-PANE GLASS NORMAL --------------------------------------------
@@ -917,7 +934,9 @@ const FRAG_AO = /* glsl */`
   // highlight in the shot the game is actually framed for. It is occluded by
   // the cascaded shadow (csmLastShadow) so a facade in shade stays in shade.
   #if NUM_DIR_LIGHTS > 0
-  {
+  // PERF: the lobe is multiplied by 'mask', so a fragment that is neither
+  // glass nor a conductor adds exactly 0 — skip it.
+  if (max(voxGlass, smoothstep(0.55, 0.92, metalnessFactor)) > 0.0) {
     vec3 sunL = directionalLights[0].direction;
     vec3 sunH = normalize(sunL + geometryViewDir);
     // Glass uses the per-pane perturbed normal (brought back to view space), so
@@ -1014,7 +1033,9 @@ const FRAG_OUT = /* glsl */`
   // colour, and let the per-pane frame width decide how big the lit rectangle
   // is. All four are wide enough to see; the previous amplitudes were real but
   // sat inside the tonemap shoulder and measured 1.3-2.3% on screen.
-  {
+  // PERF: every result below enters through mix(..., voxWin), so non-window
+  // fragments (voxWin == 0) skip the four cell hashes with identical output.
+  if (voxWin > 0.0) {
     float onR = voxCellRand(voxCell, vVoxSeed.y, 1.73);
     // Hard step, exactly like the CPU mirror in computeWindowGlows(): a half-lit
     // window is not a thing, and the soft version disagreed with the lights.
@@ -1243,7 +1264,8 @@ export function computeWindowGlows(objects, opts) {
   const v = new THREE.Vector3();
   for (let mi = 0; mi < list.length; mi++) {
     const mesh = list[mi];
-    const geo = mesh.geometry;
+    // engine.js LOD: light positions always come from the full-detail model.
+    const geo = (mesh.userData && mesh.userData.glowGeometry) || mesh.geometry;
     if (!geo || !geo.attributes) continue;
     const pos = geo.attributes.position;
     const emi = geo.attributes[ATTR.emissiveT];
@@ -1560,6 +1582,173 @@ const DEFAULT_PARAMS = {
   ghostPulse: 1.0,
 };
 
+// ===========================================================================
+// PERF: shared voxel-AO atlas
+// ===========================================================================
+// voxel.js (opts.aoAtlas) emits each quad's AO as a small R8 REGION of lattice
+// texels (2x2 when the AO over the quad is a plain bilinear blend) plus
+// region-local UVs. place(geo) shelf-packs a geometry's regions into one
+// square power-of-two BLOCK, takes that block from a buddy allocator over a
+// single size x size R8 texture (texStorage2D once, texSubImage2D per block —
+// nothing is ever re-uploaded), rewrites the UVs in place, and returns the
+// block when the geometry is garbage collected. One texture for every mesh =
+// no per-object uniform, so the voxel material stays a single program.
+// place() returns false (the caller falls back to per-vertex AO) on WebGL1 or
+// when the atlas has no room.
+export class AoAtlas {
+  constructor(renderer, opts = {}) {
+    this.renderer = renderer;
+    const gl = renderer && renderer.getContext ? renderer.getContext() : null;
+    this._gl = gl;
+    const maxT = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 0;
+    let size = 1;
+    while (size * 2 <= Math.min(opts.size || 4096, maxT || 0)) size *= 2;
+    this.size = size;
+    this.used = 0;                    // texels handed out
+    this.ok = !!(gl && renderer.capabilities && renderer.capabilities.isWebGL2 && size >= 1024);
+    this.texture = new THREE.Texture();
+    this.texture.name = 'voxAoAtlas';
+    if (!this.ok) return;
+    // k-d buddy allocator: level l blocks are (size >> (l >> 1)) wide and
+    // (size >> ((l + 1) >> 1)) tall — squares and 2:1 rectangles, so a
+    // block wastes at most half its area (a square-only buddy wasted up to 3/4
+    // and filled the atlas at ~120 of the demo city's ~270 building meshes).
+    this._levels = 0;
+    while ((size >> ((this._levels + 1) >> 1)) > 16) this._levels++;
+    this._free = [];
+    for (let l = 0; l <= this._levels; l++) this._free.push(new Set());
+    this._free[0].add('0,0');
+    const tex = gl.createTexture();
+    renderer.state.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R8, size, size);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this._tex = tex;
+    // three binds a version-0 texture's __webglTexture as is (setTexture2D).
+    const tp = renderer.properties.get(this.texture);
+    tp.__webglTexture = tex;
+    tp.__webglInit = true;
+    this._reg = typeof FinalizationRegistry === 'function'
+      ? new FinalizationRegistry((blocks) => { for (const b of blocks) this._release(b[0], b[1], b[2]); }) : null;
+  }
+
+  _dims(l) { return [this.size >> (l >> 1), this.size >> ((l + 1) >> 1)]; }
+
+  _alloc(l) {
+    const set = this._free[l];
+    for (const k of set) { set.delete(k); const i = k.indexOf(','); return [+k.slice(0, i), +k.slice(i + 1)]; }
+    if (l === 0) return null;
+    const p = this._alloc(l - 1);
+    if (!p) return null;
+    const [w, h] = this._dims(l);
+    // the parent at l-1 splits across its long side: square -> two (w, h)
+    // stacked in y; 2:1 -> two squares side by side in x
+    if ((l - 1) % 2 === 0) set.add(p[0] + ',' + (p[1] + h)); else set.add((p[0] + w) + ',' + p[1]);
+    return p;
+  }
+
+  _release(x, y, l) {
+    const [bw, bh] = this._dims(l);
+    this.used -= bw * bh;
+    while (l > 0) {
+      const [w, h] = this._dims(l);
+      const [pw, ph] = this._dims(l - 1);
+      const px = x - (x % pw), py = y - (y % ph);
+      const sx = (l - 1) % 2 === 0 ? px : (x === px ? px + w : px);
+      const sy = (l - 1) % 2 === 0 ? (y === py ? py + h : py) : py;
+      const key = sx + ',' + sy;
+      if (!this._free[l].has(key)) break;
+      this._free[l].delete(key);
+      x = px; y = py; l--;
+    }
+    this._free[l].add(x + ',' + y);
+  }
+
+  place(geo) {
+    const R = geo && geo.userData && geo.userData.aoRegions;
+    if (!R) return true;
+    if (!this.ok) return false;
+    const n = R.size.length / 2;
+    const order = [];
+    for (let i = 0; i < n; i++) order.push(i);
+    order.sort((a, b) => (R.size[b * 2 + 1] - R.size[a * 2 + 1]) || (R.size[b * 2] - R.size[a * 2]));
+    // Regions go into one or more blocks: each block is the biggest level that
+    // the remaining area (x1.15) still fills, shelf-packed greedily, so a
+    // model wastes ~10% instead of up to half a power-of-two block.
+    const px = new Int32Array(n), py = new Int32Array(n);
+    const blocks = [];
+    let rest = order;
+    const fail = () => { for (const b of blocks) this._release(b[0], b[1], b[2]); return false; };
+    while (rest.length) {
+      let area = 0, mw = 1, mh = 1;
+      for (const r of rest) {
+        area += R.size[r * 2] * R.size[r * 2 + 1];
+        if (R.size[r * 2] > mw) mw = R.size[r * 2];
+        if (R.size[r * 2 + 1] > mh) mh = R.size[r * 2 + 1];
+      }
+      let lvl = -1;
+      for (let l = this._levels; l >= 0; l--) {
+        const [w, h] = this._dims(l);
+        if (w < mw || h < mh) continue;
+        lvl = l;
+        if (w * h >= area * 1.15 || l === 0) break;
+        const [pw, ph] = this._dims(l - 1);
+        if (pw * ph > area * 1.15) break;     // the next size up would be mostly empty
+      }
+      if (lvl < 0) return fail();
+      const [W, H] = this._dims(lvl);
+      const at = this._alloc(lvl);
+      if (!at) return fail();
+      blocks.push([at[0], at[1], lvl]);
+      this.used += W * H;
+      const buf = new Uint8Array(W * H);
+      const left = [];
+      let x = 0, y = 0, sh = 0, full = false;
+      for (const r of rest) {
+        const rw = R.size[r * 2], rh = R.size[r * 2 + 1];
+        if (full) { left.push(r); continue; }
+        if (x + rw > W) { y += sh; x = 0; sh = 0; }
+        if (y + rh > H) { full = true; left.push(r); continue; }
+        px[r] = at[0] + x; py[r] = at[1] + y;
+        const d = R.data[r];
+        for (let j = 0; j < rh; j++) buf.set(d.subarray(j * rw, (j + 1) * rw), (y + j) * W + x);
+        x += rw; if (rh > sh) sh = rh;
+      }
+      const gl = this._gl;
+      this.renderer.state.bindTexture(gl.TEXTURE_2D, this._tex);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, at[0], at[1], W, H, gl.RED, gl.UNSIGNED_BYTE, buf);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      rest = left;
+    }
+    // region-local texel centres -> atlas UV
+    const S = this.size, a = geo.attributes[ATTR.aoAtlas], uv = a.array, q2r = R.quad;
+    for (let q = 0; q < q2r.length; q++) {
+      const r = q2r[q];
+      for (let k = 0; k < 4; k++) {
+        const v = (q * 4 + k) * 2;
+        uv[v] = (px[r] + uv[v]) / S;
+        uv[v + 1] = (py[r] + uv[v + 1]) / S;
+      }
+    }
+    a.needsUpdate = true;
+    geo.userData.aoRegions = null;
+    geo.userData.aoTexels = blocks.reduce((t, b) => { const d = this._dims(b[2]); return t + d[0] * d[1]; }, 0);
+    if (this._reg) this._reg.register(geo, blocks);
+    return true;
+  }
+
+  dispose() {
+    if (this._tex && this._gl) this._gl.deleteTexture(this._tex);
+    this._tex = null;
+    this.ok = false;
+  }
+}
+
 export class MaterialLib {
   /**
    * @param {THREE.WebGLRenderer} renderer
@@ -1582,7 +1771,10 @@ export class MaterialLib {
 
     // ---- Shared uniform objects (engine-owned when supplied) -------------
     const u = opts.uniforms || {};
+    // PERF: shared voxel-AO atlas (see AoAtlas); engine places geometry.
+    this.aoAtlas = renderer ? new AoAtlas(renderer) : null;
     this.uniforms = {
+      uAoAtlas: { value: this.aoAtlas ? this.aoAtlas.texture : null },
       // SHARED — identity preserved, never cloned.
       uNight: u.uNight || { value: 0 },
       uSeason: u.uSeason || { value: new THREE.Vector3(1, 1, 1) },
@@ -2011,6 +2203,7 @@ export class MaterialLib {
     // The shared engine-owned uniform objects are intentionally NOT touched.
     this._env = null;
     this._mats.length = 0;
+    if (this.aoAtlas) { this.aoAtlas.dispose(); this.aoAtlas = null; }
   }
 }
 

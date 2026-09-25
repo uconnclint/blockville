@@ -405,6 +405,35 @@ float csmGridFilter( const in int ci, const in vec2 uv, const in float recvZ0, c
 	if ( hits > cnt - 0.5 ) return 0.0;
 	float pen = clamp( gap * uCsmSoft.z, uCsmSoft.x, uCsmSoft.w );
 	float r = clamp( pen / texelWorld, 1.0, float( K ) );
+#if __VERSION__ >= 300
+	// PERF: visit only the taps whose tent weight can be non-zero
+	// (|o - f| < r, bounds widened by a texel and re-tested), instead of an
+	// 8x8 grid of mostly-skipped iterations. Same taps, same weights, same
+	// summation order as the fixed-bound loops below (the skipped terms were
+	// exact zeros), so the result is bit-identical; it matters because every
+	// SIMD group that holds one penumbra fragment ran all 64 iterations.
+	int i0 = max( 0, int( floor( float( K ) + f.x - r ) ) ), i1 = min( N - 1, int( ceil( float( K ) + f.x + r ) ) );
+	int j0 = max( 0, int( floor( float( K ) + f.y - r ) ) ), j1 = min( N - 1, int( ceil( float( K ) + f.y + r ) ) );
+	float sx = 0.0;
+	float sy = 0.0;
+	for ( int i = i0; i <= i1; i ++ ) sx += max( 0.0, 1.0 - abs( float( i - K ) - f.x ) / r );
+	for ( int j = j0; j <= j1; j ++ ) sy += max( 0.0, 1.0 - abs( float( j - K ) - f.y ) / r );
+	float lit = 0.0;
+	for ( int j = j0; j <= j1; j ++ ) {
+		float wyj = max( 0.0, 1.0 - abs( float( j - K ) - f.y ) / r );
+		if ( wyj <= 0.0 ) continue;
+		float row = 0.0;
+		for ( int i = i0; i <= i1; i ++ ) {
+			float wxi = max( 0.0, 1.0 - abs( float( i - K ) - f.x ) / r );
+			if ( wxi <= 0.0 ) continue;
+			vec2 o = vec2( float( i - K ), float( j - K ) );
+			float d = csmUnpackDepth( texture2D( uCsmAtlas, clamp( ( base + o + 0.5 ) * tx, uvMin, uvMax ) ) );
+			row += ( d < recvZ + dot( dzT, o - f ) ) ? 0.0 : wxi;
+		}
+		lit += row * wyj;
+	}
+	return lit / max( sx * sy, 1e-5 );
+#else
 	float wx[ 8 ];
 	float wy[ 8 ];
 	float sx = 0.0;
@@ -432,6 +461,7 @@ float csmGridFilter( const in int ci, const in vec2 uv, const in float recvZ0, c
 		lit += row * wy[ j ];
 	}
 	return lit / max( sx * sy, 1e-5 );
+#endif
 }
 
 float csmSampleCascade( const in int ci, const in vec3 wpos, const in vec3 wnrm, const in float ndl, const in float phi, const in float pixWorld ) {
@@ -469,7 +499,8 @@ float csmSampleCascade( const in int ci, const in vec3 wpos, const in vec3 wnrm,
 	vec2 uvMax = rect.xy + rect.zw - uCsmAtlasTexel * 1.5;
 	csmDbgUV = uv;
 	csmDbgRecv = recvZ;
-	csmDbgAtlas = csmUnpackDepth( texture2D( uCsmAtlas, uv ) );
+	// PERF: this fetch only feeds the debug views (uniform branch).
+	if ( uCsmMisc.y > 0.5 ) csmDbgAtlas = csmUnpackDepth( texture2D( uCsmAtlas, uv ) );
 	if ( uCsmTune.z > 0.5 ) return csmGridFilter( ci, uv, recvZ, uvMin, uvMax, texelWorld, depthRange );
 
 	// ---- resolution-aware filter floor ------------------------------------
@@ -1812,6 +1843,9 @@ export class LightingRig {
       casterSide: THREE.DoubleSide,
       rotateBlock: null,         // null => follow quality (see QUALITY[].rotate)
       farCascadeInterval: 2,     // far cascades re-render every N frames if stable
+      cacheStatic: true,         // PERF: skip cascade redraws while nothing changed (see _casterSig)
+      staticRefresh: 120,        // ...but redraw at least every N frames anyway
+      lowRateRefresh: 4,         // ...or every N frames while an animated caster (userData.shadowLowRate) is visible
       // ---- iso layout (orthographic camera; see QUALITY) ----------------------
       isoLayout: true,
       isoTile: null,             // null => QUALITY[].isoTile
@@ -1943,6 +1977,7 @@ export class LightingRig {
         radius: 1, texelWorld: 1, depthRange: 1,
         centre: new THREE.Vector3(),
         lastCentre: new THREE.Vector3(9e9, 9e9, 9e9),
+        lastDir: new THREE.Vector3(),
         lastFrame: -999,
         matrix: new THREE.Matrix4(),
       });
@@ -2312,6 +2347,9 @@ export class LightingRig {
 
   _applyQuality() {
     const q = QUALITY[this._quality];
+    // A quality switch changes the world-AO map resolution: re-render it (its
+    // own dirty test only watches the view footprint and the scene).
+    if (this._aoState) this._aoState.S = -1;
     const count = clamp((this.opts.cascades || q.cascades), 1, CSM_MAX_CASCADES);
     const tile = this.opts.shadowTile || q.tile;
     this._count = count;
@@ -2955,6 +2993,13 @@ export class LightingRig {
     this._originMat.makeTranslation(org.x, org.y, org.z);
 
     const anyDirty = [];
+    const cacheOn = this.opts.cacheStatic !== false;
+    let casterDirty = false;
+    if (cacheOn) {
+      const sig = this._casterSig(this.scene);
+      casterDirty = sig !== this._lastCasterSig;
+      this._lastCasterSig = sig;
+    }
     // Iso layout: cascade 0 = tight rect over the screen, cascade 1 = the
     // whole view (fallback for receivers above the fit height). See QUALITY.
     const isoFit = !!(this._iso && ortho);
@@ -3079,12 +3124,24 @@ export class LightingRig {
       // Re-render this cascade if it moved or resized, or on its stagger interval.
       const moved = this._center.distanceToSquared(c.lastCentre) > (texel * texel * 0.25)
         || c.lastKey !== fitKey;
-      const interval = (i === 0) ? 1 : this.opts.farCascadeInterval;
-      const due = (this._frame - c.lastFrame) >= interval;
+      let due;
+      if (cacheOn) {
+        // PERF (static cache): the fit is texel-snapped and the matrix is a
+        // pure function of (centre, extents, light direction), so an unmoved
+        // cascade over unchanged casters would redraw the same depth texels.
+        // Redraw only on a move, a light turn, markDirty(), or a caster change
+        // (_casterSig), plus a slow safety refresh.
+        due = casterDirty || c.lastFrame < -900 || !c.lastDir.equals(L)
+          || (this._frame - c.lastFrame) >= (this._casterLowRate ? this.opts.lowRateRefresh : this.opts.staticRefresh);
+      } else {
+        const interval = (i === 0) ? 1 : this.opts.farCascadeInterval;
+        due = (this._frame - c.lastFrame) >= interval;
+      }
       if (moved || due) {
         c.lastCentre.copy(this._center);
         c.lastKey = fitKey;
         c.lastFrame = this._frame;
+        c.lastDir.copy(L);
         anyDirty.push(i);
       }
     }
@@ -3113,7 +3170,16 @@ export class LightingRig {
     if (isoFit) { this.uniforms.uCsmMisc.value.z = 1e6; this.uniforms.uCsmMisc.value.w = 1e6 + 1; }
     this.uniforms.uCsmCount.value = effCount;
 
-    if (anyDirty.length === 0) return;
+    if (anyDirty.length === 0) {
+      // A depth pass READS the fill lights (three's setupLights), and those
+      // reads are what resolve the lazy skylight grade / key floor
+      // (_installSkylightGrade) between this update and engine.js writing the
+      // sky's colours back. A skipped pass must make the same reads, or the
+      // fill colours alternate frame to frame (measured: the static cache
+      // flipped hemi/ambient every frame until this was added).
+      this._touchLightState();
+      return;
+    }
 
     // ---- render the depth passes -------------------------------------------
     const scene = this.scene;
@@ -3319,12 +3385,15 @@ export class LightingRig {
     // (light pools, glows, precipitation) must not become "solid".
     const hidden = this._aoHidden;
     hidden.length = 0;
+    const swapped = this._aoSwapped || (this._aoSwapped = []);
+    swapped.length = 0;
     scene.traverse((o) => {
       if (!o.visible) return;
       if (o.isMesh || o.isLine || o.isPoints || o.isSprite) {
         const m = o.material;
         const transp = m && !Array.isArray(m) && m.transparent && !m.depthWrite;
         if (!o.isMesh || !(o.castShadow || o.receiveShadow) || transp) { o.visible = false; hidden.push(o); }
+        else if (o.userData.casterGeometry) this._swapCaster(o, swapped);
       }
     });
     try {
@@ -3353,6 +3422,7 @@ export class LightingRig {
       flm.uniforms.tSrc.value = null;
       for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
       hidden.length = 0;
+      this._unswapCasters(swapped);
       scene.overrideMaterial = prevOverride;
       // Flood "exposed" in from open air (see AO_FLOOD_FRAG): init + N steps.
       const fm = this._aoFloodMat;
@@ -3393,6 +3463,7 @@ export class LightingRig {
     } finally {
       for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
       hidden.length = 0;
+      this._unswapCasters(swapped);
       scene.overrideMaterial = prevOverride;
       scene.background = prevBackground;
       renderer.setClearColor(prevClear, prevAlpha);
@@ -3402,21 +3473,86 @@ export class LightingRig {
     }
   }
 
+  _touchLightState() {
+    let t = 0;
+    t += this.hemi.color.r + this.hemi.color.g + this.hemi.color.b + this.hemi.intensity;
+    t += this.hemi.groundColor.r + this.hemi.groundColor.g + this.hemi.groundColor.b;
+    t += this.ambient.color.r + this.ambient.color.g + this.ambient.color.b + this.ambient.intensity;
+    t += this.sun.position.x + this.sun.position.y + this.sun.position.z;
+    t += this.sun.color.r + this.sun.color.g + this.sun.color.b + this.sun.intensity;
+    return t;
+  }
+
+  // PERF: signature of everything the depth pass would draw — visible caster
+  // meshes, their (caster) geometry and its attribute versions, local
+  // transforms, instance counts / matrix versions. Any change re-renders the
+  // cascades (see cacheStatic). Local transforms suffice: nested casters
+  // (building parts) move with a parent whose own transform is hashed.
+  _casterSig(scene) {
+    let h = 0, lowRate = false;
+    const mix = (v) => { h = (h * 31 + (v * 1000 | 0)) | 0; };
+    const walk = (o) => {
+      if (!o.visible) return;
+      if (o.isMesh && o.castShadow === true) {
+        const g = o.userData.casterGeometry || o.geometry;
+        mix(o.id); mix(g ? g.id : 0);
+        if (g) {
+          const pa = g.attributes.position;
+          if (pa) mix(pa.version);
+          if (g.index) mix(g.index.version);
+          mix(g.drawRange.start); mix(g.drawRange.count === Infinity ? -1 : g.drawRange.count);
+        }
+        const p = o.position, sc = o.scale, q = o.quaternion;
+        mix(p.x); mix(p.y); mix(p.z); mix(sc.x); mix(sc.y); mix(sc.z); mix(q.x); mix(q.y); mix(q.z); mix(q.w);
+        if (o.isInstancedMesh) { mix(o.count); if (!o.userData.shadowLowRate) mix(o.instanceMatrix.version); }
+        if (o.userData.shadowLowRate) lowRate = true;
+      } else if (!o.isMesh && !o.isLine && !o.isPoints && !o.isSprite) {
+        const p = o.position;   // containers (groups) only: movers never cast
+        mix(p.x); mix(p.y); mix(p.z);
+      }
+      const k = o.children;
+      for (let i = 0; i < k.length; i++) walk(k[i]);
+    };
+    walk(scene);
+    this._casterLowRate = lowRate;
+    return h;
+  }
+
   _hideNonCasters(scene) {
     const hidden = this._hidden;
     hidden.length = 0;
+    const sw = this._swapped || (this._swapped = []);
+    sw.length = 0;
     scene.traverse((o) => {
       if (!o.visible) return;
       if (o.isMesh || o.isLine || o.isPoints || o.isSprite) {
         if (o.castShadow !== true) { o.visible = false; hidden.push(o); }
+        else if (o.userData.casterGeometry) this._swapCaster(o, sw);
       }
     });
+  }
+
+  // PERF: a mesh drawn with a reduced scene-pass geometry (engine.js
+  // _getViewGeometry: no -Y / sealed-interior faces) names its full geometry
+  // in userData.casterGeometry. The depth and world-AO passes need those faces
+  // (back-face casting, undersides), so they render the full one.
+  _swapCaster(o, list) {
+    const g = o.userData.casterGeometry;
+    if (!g || g === o.geometry) return;
+    list.push(o, o.geometry);
+    o.geometry = g;
+  }
+
+  _unswapCasters(list) {
+    for (let i = 0; i < list.length; i += 2) list[i].geometry = list[i + 1];
+    list.length = 0;
   }
 
   _restoreNonCasters() {
     const hidden = this._hidden;
     for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
     hidden.length = 0;
+    if (this._swapped) this._unswapCasters(this._swapped);
   }
 
   // -------------------------------------------------------------------------

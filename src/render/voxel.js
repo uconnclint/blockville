@@ -684,6 +684,106 @@ export function modelRes(model) {
   return (typeof r === 'number' && r > 1) ? Math.min(20, Math.round(r)) : 1;
 }
 
+// Glass class exactly as the material decides it (materials.js voxGlass on the
+// raw attribute: rough <= ~0.14, metal < 0.4) — windows and panes.
+function _isGlassIdx(ci) {
+  const m = MAT_BY_INDEX[ci | 0] || DEFAULT_MAT;
+  return m[0] < 0.14 && m[1] < 0.4;
+}
+
+// ---------------------------------------------------------------------------
+// PERF: distance LOD — the same model resampled to a coarser integer res.
+// ---------------------------------------------------------------------------
+// lodModel(model, targetRes) -> a new model at `targetRes` voxels per world
+// unit (< the model's own res), or null when there is nothing to gain. Each
+// coarse cell takes the fine voxels whose CENTRES fall inside it: solid when
+// they fill at least half its volume (so a 1-voxel shell wall, a slab or a
+// pane survives at 2:1, a lone 1x1 pole does not), coloured by the majority of
+// them (an emissive window colour wins ties, so night windows keep their
+// lattice). The coarse grid is centred on the fine one in X/Z and bottom-
+// anchored in Y, so the world footprint and placement are unchanged to within
+// half a fine voxel. Only ever shown when a coarse voxel is about a device
+// pixel (engine.js _updateLod), where the difference is below one pixel.
+export function lodModel(model, targetRes, opts) {
+  if (!model || !Array.isArray(model.blocks) || !model.blocks.length) return null;
+  const res = modelRes(model);
+  const r2 = Math.max(1, Math.round(targetRes));
+  if (r2 >= res) return null;
+  const k = res / r2;
+  const sx = Math.max(1, model.sx | 0), sy = Math.max(1, model.sy | 0), sz = Math.max(1, model.sz | 0);
+  const cx = Math.max(1, Math.round(sx / k)), cy = Math.max(1, Math.ceil(sy / k)), cz = Math.max(1, Math.round(sz / k));
+  const ox = (sx - cx * k) / 2, oz = (sz - cz * k) / 2;
+  const nCell = cx * cy * cz;
+  const count = new Uint16Array(nCell);
+  // Up to 4 distinct colours per cell (more is rare and falls back to the
+  // running leader), counts packed alongside.
+  const cols = new Int16Array(nCell * 4).fill(-1);
+  const ccnt = new Uint32Array(nCell * 4);
+  const clampI = (v, n) => (v < 0 ? 0 : v >= n ? n - 1 : v);
+  // Blocks may repeat a coordinate — later writes win, as in the mesher's
+  // occupancy grid — so resolve the fine grid first.
+  const fine = new Uint16Array(sx * sy * sz);
+  for (let i = 0; i < model.blocks.length; i++) {
+    const b = model.blocks[i];
+    if (!b) continue;
+    const x = b[0] | 0, y = b[1] | 0, z = b[2] | 0;
+    if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) continue;
+    let ci = b[3] | 0;
+    if (ci < 0 || ci > 255) ci = 0;
+    fine[x + sx * (z + sz * y)] = ci + 1;
+  }
+  // Colour votes: a SURFACE voxel (any empty 6-neighbour) outvotes any
+  // number of buried ones, so a 1-voxel roof skin over a solid wall-coloured
+  // mass keeps its roof colour.
+  const SY = sx * sz;
+  const exposed = (x, y, z, fi) =>
+    x === 0 || !fine[fi - 1] || x === sx - 1 || !fine[fi + 1] ||
+    z === 0 || !fine[fi - sx] || z === sz - 1 || !fine[fi + sx] ||
+    y === 0 || !fine[fi - SY] || y === sy - 1 || !fine[fi + SY];
+  for (let fi = 0; fi < fine.length; fi++) {
+    if (!fine[fi]) continue;
+    const ci = fine[fi] - 1;
+    const x = fi % sx, r = (fi - x) / sx, z = r % sz, y = (r - z) / sz;
+    const X = clampI(Math.floor((x + 0.5 - ox) / k), cx);
+    const Y = clampI(Math.floor((y + 0.5) / k), cy);
+    const Z = clampI(Math.floor((z + 0.5 - oz) / k), cz);
+    const c = X + cx * (Z + cz * Y);
+    count[c]++;
+    const w = exposed(x, y, z, fi) ? 1024 : 1;
+    const o = c * 4;
+    let j = 0;
+    for (; j < 4; j++) { if (cols[o + j] === ci || cols[o + j] < 0) break; }
+    if (j < 4) { cols[o + j] = ci; ccnt[o + j] += w; }
+  }
+  const need = 0.5 * k * k * k - 1e-6;
+  const blocks = [];
+  // Colour: surface-weighted majority, with GLASS-class votes (panes, lit
+  // windows) scaled by glassWeight. A res-4 facade's panes are 2-3 voxels
+  // wide between 1-voxel frames, so at 2:1 many coarse cells are a glass /
+  // frame tie; plain majority turned whole curtain walls into flat wall
+  // paint (the glass shader's sky reflection is what makes them read blue).
+  // The weight is calibrated so the glass share of the facade area survives
+  // (tools/rendertest/pieces/perf.md). An emissive colour wins exact ties.
+  const gw = opts && opts.glassWeight > 0 ? opts.glassWeight : 1.6;
+  for (let Y = 0; Y < cy; Y++) for (let Z = 0; Z < cz; Z++) for (let X = 0; X < cx; X++) {
+    const c = X + cx * (Z + cz * Y);
+    if (count[c] < need) continue;
+    const o = c * 4;
+    let best = -1, bn = -1;
+    for (let j = 0; j < 4 && cols[o + j] >= 0; j++) {
+      const ci = cols[o + j];
+      const n = ccnt[o + j] * (_isGlassIdx(ci) ? gw : 1);
+      if (n > bn || (n === bn && ci >= 200 && best < 200)) { bn = n; best = ci; }
+    }
+    if (best >= 0) blocks.push([X, Y, Z, best]);
+  }
+  if (!blocks.length) return null;
+  const out = { sx: cx, sy: cy, sz: cz, blocks };
+  if (r2 > 1) out.res = r2;
+  for (const key of ['tw', 'td', 'voxOpts', 'yOffset', 'blobs']) if (model[key] !== undefined) out[key] = model[key];
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Slice mesher: finer resolution (model.res), greedy merging, wide-reach AO.
 // ---------------------------------------------------------------------------
@@ -745,6 +845,36 @@ const AO_LEVELS_SOLID = 6;
 // same aoStrength/aoCurve LUT as the other modes. Cost: vertices near
 // geometry only (an open vertex is skipped via the solid-kernel box test).
 
+// Exterior air of a padded occupancy grid: 1 for every empty cell connected
+// (6-neighbour) to the grid boundary, 0 for solid cells and sealed interiors.
+// Scanline-free BFS over a typed queue; O(cells).
+function _exteriorAir(occ, PW, PH, PD, STR) {
+  const n = occ.length;
+  const ext = new Uint8Array(n);
+  const queue = new Int32Array(n);
+  let head = 0, tail = 0;
+  const seed = (i) => { if (!occ[i] && !ext[i]) { ext[i] = 1; queue[tail++] = i; } };
+  for (let y = 0; y < PH; y++) for (let z = 0; z < PD; z++) for (let x = 0; x < PW; x++) {
+    if (x === 0 || z === 0 || y === 0 || x === PW - 1 || z === PD - 1 || y === PH - 1) {
+      seed(x + y * STR[1] + z * STR[2]);
+    } else if (x === 1) {
+      x = PW - 2;   // skip the inside of this row
+    }
+  }
+  const sy = STR[1], sz = STR[2];
+  while (head < tail) {
+    const i = queue[head++];
+    const x = i % PW, r = (i - x) / PW, z = r % PD, y = (r - z) / PD;
+    if (x > 0) seed(i - 1);
+    if (x < PW - 1) seed(i + 1);
+    if (z > 0) seed(i - sz);
+    if (z < PD - 1) seed(i + sz);
+    if (y > 0) seed(i - sy);
+    if (y < PH - 1) seed(i + sy);
+  }
+  return ext;
+}
+
 function _buildSliced(model, o, res, greedy, R, t0) {
   const blocks = model.blocks;
   const sx = Math.max(1, model.sx | 0 || 1);
@@ -769,6 +899,15 @@ function _buildSliced(model, o, res, greedy, R, t0) {
   }
   // Ground plane (padded y < 0) is solid for AO — see DEFAULTS.groundAO.
   if (o.skipBottom !== false && o.groundAO !== false) occ.fill(1, 0, P * STR[1]);
+
+  // PERF (view index): which empty cells are OUTSIDE air, i.e. connected to
+  // the padded boundary. Catalog buildings are hollow shells, so every wall,
+  // roof and floor slab also emits faces into its sealed interior; those, and
+  // every -Y face (the iso camera is always above the horizon, so a -Y face is
+  // always back-facing), can never reach a pixel of the game camera. They are
+  // left out of `geo.userData.viewIndex` (same vertices, same quad order) —
+  // the shadow / world-AO passes still render the full index.
+  const extAir = o.viewIndex !== false ? _exteriorAir(occ, PW, PH, PD, STR) : null;
 
   const aoOn = o.ao !== false;
   const solidAO = !rayAO && o.aoMode !== 'box';
@@ -824,13 +963,28 @@ function _buildSliced(model, o, res, greedy, R, t0) {
 
   // growable output (quads are not known up front once merging happens)
   let cap = 1024, nq = 0;
+  let hidNext = 0;   // set right before each pushQuad (see hiddenRect)
   let qPos = new Float32Array(cap * 12), qMeta = new Int32Array(cap * 7); // ci, ao0..3, nAxis, sign
+  let qHid = new Uint8Array(cap);   // 1 = never visible to the game camera (see extAir)
+  let nHid = 0;
+  // AO ATLAS (o.aoAtlas, see _atlasSweep): per quad, its AO region index and
+  // the region-local texel coords of its 4 corners (CORNERS order).
+  let qReg = new Int32Array(cap), qUV = new Float32Array(cap * 8);
+  let regNext = -1;
+  const regUV = new Float32Array(8);
+  const regSize = [], regData = [], regDedup = new Map();
   const pushQuad = (x0, y0, z0, ux, uy, uz, vx, vy, vz, ci, a0, a1, a2, a3, f) => {
     if (nq === cap) {
       cap *= 2;
       const p2 = new Float32Array(cap * 12); p2.set(qPos); qPos = p2;
       const m2 = new Int32Array(cap * 7); m2.set(qMeta); qMeta = m2;
+      const h2 = new Uint8Array(cap); h2.set(qHid); qHid = h2;
+      const r2 = new Int32Array(cap); r2.set(qReg); qReg = r2;
+      const u2 = new Float32Array(cap * 8); u2.set(qUV); qUV = u2;
     }
+    qHid[nq] = hidNext; if (hidNext) nHid++;
+    qReg[nq] = regNext;
+    if (regNext >= 0) qUV.set(regUV, nq * 8);
     const p = nq * 12;
     // corners in (u,v) order (0,0) (0,1) (1,1) (1,0) — same as CORNERS
     qPos[p] = x0; qPos[p + 1] = y0; qPos[p + 2] = z0;
@@ -844,6 +998,17 @@ function _buildSliced(model, o, res, greedy, R, t0) {
 
   const axisOf = (v3) => (v3[0] ? 0 : v3[1] ? 1 : 2);
   const sgnOf = (v3) => v3[0] + v3[1] + v3[2];
+  // A merged w x h rectangle is hidden from the game camera when it faces -Y
+  // or when EVERY air cell in front of it is sealed interior (extAir 0).
+  const hiddenRect = (f, airBase, a, bb, w, h, sa, sb) => {
+    if (!extAir) return 0;
+    if (f === 1) return 1;
+    for (let j = 0; j < h; j++) {
+      const row = airBase + (bb + j) * sb;
+      for (let i = 0; i < w; i++) if (extAir[row + (a + i) * sa]) return 0;
+    }
+    return 1;
+  };
   let maxA = 0, maxB = 0;
   for (let d = 0; d < 3; d++) for (let e = 0; e < 3; e++) if (d !== e) { maxA = Math.max(maxA, DIM[d]); maxB = Math.max(maxB, DIM[e]); }
   const maskKey = new Int32Array(maxA * maxB);
@@ -855,6 +1020,19 @@ function _buildSliced(model, o, res, greedy, R, t0) {
   const vtxV = R > 1 && (solidAO || rayAO) ? new Float32Array((maxA + 1) * (maxB + 1)) : null;
   const vtxStamp = rayAO ? new Int32Array((maxA + 1) * (maxB + 1)) : null;
   let stamp = 0;
+  // PERF: AO ATLAS mode. The ray-AO lattice is what splits a same-colour
+  // facade into many small quads (107k -> 50k view triangles on the downtown
+  // set when colour alone decides the merge). In this mode the AO-tolerant
+  // sweep below only STAMPS each of its quads' bilinear AO onto the layer's
+  // lattice (latV; exact corner values win over interpolated ones), and a
+  // second, colour-only sweep emits the quads, each carrying an AO REGION of
+  // lattice texels that engine/materials place into one shared R8 atlas. The
+  // material then reads AO with a bilinear texture fetch: per voxel cell it is
+  // the same bilinear function of the same corner values as before.
+  const atlasOn = !!o.aoAtlas && rayAO && greedy && aoOn;
+  const latV = atlasOn ? new Float32Array((maxA + 1) * (maxB + 1)) : null;
+  const latP = atlasOn ? new Uint8Array((maxA + 1) * (maxB + 1)) : null;
+  const maskCol = atlasOn ? new Int32Array(maxA * maxB) : null;
   // AO spread (see DEFAULTS.aoSpread): radius in lattice steps + weight table.
   const spreadR = rayAO && o.ao !== false && o.aoSpread > 0 && !(o.aoSpreadGain <= 0) ? Math.max(0, Math.round(o.aoSpread * res)) : 0;
   const spreadG = Math.max(0, Math.min(1, o.aoSpreadGain != null ? +o.aoSpreadGain : 0.62));
@@ -1385,6 +1563,10 @@ function _buildSliced(model, o, res, greedy, R, t0) {
       }
       if (!any) continue;
 
+      if (atlasOn) {
+        maskCol.set(maskKey.subarray(0, DA * DB));
+        latP.fill(0, 0, (DA + 1) * (DB + 1));
+      }
       // greedy sweep
       for (let bb = 0; bb < DB; bb++) {
         for (let a = 0; a < DA; a++) {
@@ -1423,6 +1605,24 @@ function _buildSliced(model, o, res, greedy, R, t0) {
               h++;
             }
             for (let j = 0; j < h; j++) { const row = (bb + j) * DA + a; for (let k = 0; k < w; k++) maskKey[row + k] = 0; }
+            if (atlasOn) {
+              // Stamp this quad's AO (exactly what its old per-quad bilinear
+              // showed: corners quantised to unorm8, interpolated) onto the
+              // lattice. Corners are exact and outrank interpolated values.
+              const QA = Math.round(aoLUT[vtxV[bb * LA + a]] * 255), QB = Math.round(aoLUT[vtxV[bb * LA + a + w]] * 255);
+              const QC = Math.round(aoLUT[vtxV[(bb + h) * LA + a]] * 255), QD = Math.round(aoLUT[vtxV[(bb + h) * LA + a + w]] * 255);
+              for (let j = 0; j <= h; j++) {
+                const tv = j / h, row = (bb + j) * LA + a, ej = j === 0 || j === h;
+                for (let i = 0; i <= w; i++) {
+                  const pri = ej && (i === 0 || i === w) ? 2 : 1;
+                  if (pri < latP[row + i]) continue;
+                  const su = i / w;
+                  latV[row + i] = (QA + (QB - QA) * su) * (1 - tv) + (QC + (QD - QC) * su) * tv;
+                  latP[row + i] = pri;
+                }
+              }
+              continue;
+            }
             // corner levels in CORNERS (u,v) order from the lattice
             const lv = (cu, cv) => {
               const la = sU > 0 ? (cu ? a + w : a) : (cu ? a : a + w);
@@ -1431,6 +1631,7 @@ function _buildSliced(model, o, res, greedy, R, t0) {
             };
             const p = [0, 0, 0];
             p[d] = t; p[ai] = sU > 0 ? a : a + w - 1; p[bi] = sV > 0 ? bb : bb + h - 1;
+            hidNext = hiddenRect(f, airBase, a, bb, w, h, sa, sb);
             pushQuad(p[0] + F.o[0], p[1] + F.o[1], p[2] + F.o[2],
               F.u[0] * w, F.u[1] * w, F.u[2] * w,
               F.v[0] * h, F.v[1] * h, F.v[2] * h,
@@ -1454,10 +1655,99 @@ function _buildSliced(model, o, res, greedy, R, t0) {
           // start voxel of the rectangle in U/V step order, then its face origin
           const p = [0, 0, 0];
           p[d] = t; p[ai] = sU > 0 ? a : a + w - 1; p[bi] = sV > 0 ? bb : bb + h - 1;
+          hidNext = hiddenRect(f, airBase, a, bb, w, h, sa, sb);
           pushQuad(p[0] + F.o[0], p[1] + F.o[1], p[2] + F.o[2],
             F.u[0] * w, F.u[1] * w, F.u[2] * w,
             F.v[0] * h, F.v[1] * h, F.v[2] * h,
             ci, pack & 15, (pack >> 4) & 15, (pack >> 8) & 15, (pack >> 12) & 15, f);
+        }
+      }
+      if (atlasOn) {
+        // Colour-only sweep (same glow-cell split as above).
+        maskKey.set(maskCol.subarray(0, DA * DB));
+        const LA = DA + 1;
+        for (let bb = 0; bb < DB; bb++) {
+          for (let a = 0; a < DA; a++) {
+            const mi = bb * DA + a;
+            const key = maskKey[mi];
+            if (key === 0) continue;
+            const ci = key - 1;
+            const glowSplit = ci >= 200;
+            let w = 1, h = 1;
+            while (a + w < DA && maskKey[mi + w] === key && !(glowSplit && (a + w) % res === 0)) w++;
+            outer3: while (bb + h < DB && !(glowSplit && (bb + h) % res === 0)) {
+              const row = (bb + h) * DA + a;
+              for (let k = 0; k < w; k++) if (maskKey[row + k] !== key) break outer3;
+              h++;
+            }
+            for (let j = 0; j < h; j++) { const row = (bb + j) * DA + a; for (let k = 0; k < w; k++) maskKey[row + k] = 0; }
+            // AO region: the lattice vertices it needs. Along an axis where
+            // every row (column) is linear between its two ends (within one
+            // 8-bit step) two texels suffice — hardware bilinear then gives
+            // the same ramp — so a flat face is 2x2 and a wall with a ground
+            // ramp is 2 x (h+1).
+            const L0 = bb * LA + a;
+            let linU = true, linV = true;
+            for (let j = 0; j <= h && linU; j++) {
+              const row = L0 + j * LA, v0 = latV[row], v1 = latV[row + w];
+              for (let i = 1; i < w; i++) {
+                const e = v0 + (v1 - v0) * (i / w) - latV[row + i];
+                if (e > 1.0 || e < -1.0) { linU = false; break; }
+              }
+            }
+            for (let i = 0; i <= w && linV; i++) {
+              const v0 = latV[L0 + i], v1 = latV[L0 + h * LA + i];
+              for (let j = 1; j < h; j++) {
+                const e = v0 + (v1 - v0) * (j / h) - latV[L0 + j * LA + i];
+                if (e > 1.0 || e < -1.0) { linV = false; break; }
+              }
+            }
+            // ...and one texel along an axis whose two ends agree (the AO is
+            // constant that way); constant quads need a single texel.
+            let flatU = linU, flatV = linV;
+            if (flatU) for (let j = 0; j <= h; j++) { const row = L0 + j * LA; if (Math.round(latV[row]) !== Math.round(latV[row + w])) { flatU = false; break; } }
+            if (flatV) for (let i = 0; i <= w; i++) { if (Math.round(latV[L0 + i]) !== Math.round(latV[L0 + h * LA + i])) { flatV = false; break; } }
+            const rw = flatU ? 1 : linU ? 2 : w + 1, rh = flatV ? 1 : linV ? 2 : h + 1;
+            const data = new Uint8Array(rw * rh);
+            for (let jj = 0; jj < rh; jj++) {
+              const j = rh === 1 ? 0 : linV ? jj * h : jj;
+              for (let ii = 0; ii < rw; ii++) {
+                const i = rw === 1 ? 0 : linU ? ii * w : ii;
+                data[jj * rw + ii] = Math.round(latV[L0 + j * LA + i]);
+              }
+            }
+            // Small regions are shared within the model (identical data).
+            let rk = null;
+            if (rw * rh <= 4) {
+              rk = rw + 'x' + rh + ':' + data.join(',');
+              const hit = regDedup.get(rk);
+              if (hit !== undefined) regNext = hit;
+              else { regNext = regSize.length / 2; regSize.push(rw, rh); regData.push(data); regDedup.set(rk, regNext); }
+            } else {
+              regNext = regSize.length / 2;
+              regSize.push(rw, rh); regData.push(data);
+            }
+            // region-local texel centre of each corner, CORNERS (u,v) order
+            for (let k = 0; k < 4; k++) {
+              const cu = CORNERS[k][0], cv = CORNERS[k][1];
+              const la = sU > 0 ? cu : 1 - cu, lb = sV > 0 ? cv : 1 - cv;   // 0/1 along a / b
+              regUV[k * 2] = (la ? rw - 1 : 0) + 0.5;
+              regUV[k * 2 + 1] = (lb ? rh - 1 : 0) + 0.5;
+            }
+            const lvC = (cu, cv) => {
+              const la = sU > 0 ? (cu ? a + w : a) : (cu ? a : a + w);
+              const lb = sV > 0 ? (cv ? bb + h : bb) : (cv ? bb : bb + h);
+              return vtxV[lb * LA + la];
+            };
+            const p = [0, 0, 0];
+            p[d] = t; p[ai] = sU > 0 ? a : a + w - 1; p[bi] = sV > 0 ? bb : bb + h - 1;
+            hidNext = hiddenRect(f, airBase, a, bb, w, h, sa, sb);
+            pushQuad(p[0] + F.o[0], p[1] + F.o[1], p[2] + F.o[2],
+              F.u[0] * w, F.u[1] * w, F.u[2] * w,
+              F.v[0] * h, F.v[1] * h, F.v[2] * h,
+              ci, lvC(0, 0), lvC(0, 1), lvC(1, 1), lvC(1, 0), f);
+            regNext = -1;
+          }
         }
       }
     }
@@ -1481,8 +1771,11 @@ function _buildSliced(model, o, res, greedy, R, t0) {
   // its own corner coordinate (aoUV), and the material does a true bilinear
   // blend per fragment. Continuous across quads (an edge only depends on its
   // two end values) and independent of the triangulation.
-  const aoQuad = new Uint8Array(vCount * 4);
-  const aoUV = new Uint8Array(vCount * 2);
+  const aoQuad = atlasOn ? null : new Uint8Array(vCount * 4);
+  const aoUV = atlasOn ? null : new Uint8Array(vCount * 2);
+  // AO atlas: region-local texel centres now; engine's atlas placement turns
+  // them into atlas UVs in place (userData.aoRegions).
+  const aoAtlas = atlasOn ? new Float32Array(vCount * 2) : null;
   // PANE UV (surface r7). A glass face on a wall gets its position inside the
   // whole WINDOW PANE (the connected glass-class voxels facing the same air,
   // found by flood fill in the face plane, r8), not inside its quad: the
@@ -1574,8 +1867,12 @@ function _buildSliced(model, o, res, greedy, R, t0) {
     const qa2 = Math.round(aoLUT[qMeta[m + 3]] * 255), qa3 = Math.round(aoLUT[qMeta[m + 4]] * 255);
     for (let k = 0; k < 4; k++) {
       const v = v0 + k, p3 = v * 3, s = q * 12 + k * 3;
-      aoQuad[v * 4] = qa0; aoQuad[v * 4 + 1] = qa1; aoQuad[v * 4 + 2] = qa2; aoQuad[v * 4 + 3] = qa3;
-      aoUV[v * 2] = CORNERS[k][0]; aoUV[v * 2 + 1] = CORNERS[k][1];
+      if (aoAtlas) {
+        aoAtlas[v * 2] = qUV[q * 8 + k * 2]; aoAtlas[v * 2 + 1] = qUV[q * 8 + k * 2 + 1];
+      } else {
+        aoQuad[v * 4] = qa0; aoQuad[v * 4 + 1] = qa1; aoQuad[v * 4 + 2] = qa2; aoQuad[v * 4 + 3] = qa3;
+        aoUV[v * 2] = CORNERS[k][0]; aoUV[v * 2 + 1] = CORNERS[k][1];
+      }
       if (hasPane) {
         const hq = qPos[s + pAx], yq = qPos[s + 1];
         paneUV[v * 2] = 1 + Math.round(254 * Math.min(1, Math.max(0, (hq - pL) / (pR - pL))));
@@ -1610,8 +1907,13 @@ function _buildSliced(model, o, res, greedy, R, t0) {
   geo.setAttribute('glowColor', new THREE.BufferAttribute(glowColor, 3));
   geo.setAttribute('emissiveT', new THREE.BufferAttribute(emissiveT, 1));
   geo.setAttribute('aoT', new THREE.BufferAttribute(aoT, 1));
-  geo.setAttribute('aoQuad', new THREE.BufferAttribute(aoQuad, 4, true));
-  geo.setAttribute('aoUV', new THREE.BufferAttribute(aoUV, 2, false));
+  if (aoAtlas) {
+    geo.setAttribute('aoAtlas', new THREE.BufferAttribute(aoAtlas, 2));
+    geo.userData.aoRegions = { size: Uint16Array.from(regSize), data: regData, quad: qReg.slice(0, nq) };
+  } else {
+    geo.setAttribute('aoQuad', new THREE.BufferAttribute(aoQuad, 4, true));
+    geo.setAttribute('aoUV', new THREE.BufferAttribute(aoUV, 2, false));
+  }
   geo.setAttribute('paneUV', new THREE.BufferAttribute(paneUV, 2, true));
   geo.setAttribute('matParams', new THREE.BufferAttribute(matParams, 2));
   if (res > 1) {
@@ -1624,11 +1926,23 @@ function _buildSliced(model, o, res, greedy, R, t0) {
   geo.setIndex(new THREE.BufferAttribute(index, 1));
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
+  if (extAir && nHid > 0) {
+    // Same triangles in the same order, minus the hidden quads (see extAir).
+    const vi = vCount > 65535 ? new Uint32Array((nq - nHid) * 6) : new Uint16Array((nq - nHid) * 6);
+    let k = 0;
+    for (let q = 0; q < nq; q++) {
+      if (qHid[q]) continue;
+      const s6 = q * 6;
+      for (let j = 0; j < 6; j++) vi[k++] = index[s6 + j];
+    }
+    geo.userData.viewIndex = vi;
+  }
   geo.userData.voxel = {
     voxels: blocks.length,
     faces: nq,                 // emitted quads (4 vertices each)
     vertices: vCount,
     triangles: nq * 2,
+    hiddenFaces: nHid,         // quads left out of userData.viewIndex
     ao: aoOn,
     bevel: false,
     res, greedy, aoReach: R,
@@ -1937,6 +2251,51 @@ export function selfTest() {
       else ok('bilinear AO data consistent; kerb band ' + nearKerb.toFixed(3) + ' lighter than wall band ' + nearWall.toFixed(3));
     }
     g.dispose();
+  }
+
+  // PERF (perf.md 2026-09-25): view index, AO atlas regions, LOD resample.
+  {
+    // hollow res-4 box with a roof: interior + bottom faces leave the view index
+    const H = [];
+    for (let y = 0; y < 12; y++) for (let z = 0; z < 12; z++) for (let x = 0; x < 12; x++) {
+      if (x === 0 || z === 0 || x === 11 || z === 11 || y === 11 || y === 0) H.push([x, y, z, (y === 11) ? 23 : 1]);
+    }
+    const hm = { sx: 12, sy: 12, sz: 12, res: 4, blocks: H };
+    const g = buildVoxelGeometry(hm, { bevel: false });
+    const vi = g.userData.viewIndex, full = g.getIndex().array;
+    if (!vi || vi.length >= full.length) fail('view index did not drop the sealed interior');
+    else {
+      // the view index is an order-preserving subsequence of whole quads
+      let k = 0;
+      for (let q = 0; q < full.length / 6 && k < vi.length; q++) if (full[q * 6] === vi[k]) k += 6;
+      if (k !== vi.length) fail('view index is not an ordered subset of the full index');
+      else ok('view index: ' + full.length / 3 + ' -> ' + vi.length / 3 + ' triangles (sealed interior + -Y faces)');
+    }
+    const ga = buildVoxelGeometry(hm, { bevel: false, aoAtlas: true });
+    const R = ga.userData.aoRegions, at = ga.getAttribute('aoAtlas');
+    if (!R || !at) fail('aoAtlas: no regions / attribute');
+    else {
+      let bad = 0;
+      for (let q = 0; q < R.quad.length; q++) {
+        const r = R.quad[q], rw = R.size[r * 2], rh = R.size[r * 2 + 1];
+        if (R.data[r].length !== rw * rh) bad++;
+        for (let kk = 0; kk < 4; kk++) {
+          const u = at.array[(q * 4 + kk) * 2], v = at.array[(q * 4 + kk) * 2 + 1];
+          if (!(u >= 0.5 && u <= rw - 0.5 && v >= 0.5 && v <= rh - 0.5)) bad++;
+        }
+      }
+      if (ga.getAttribute('aoQuad')) bad++;
+      if (bad) fail('aoAtlas: ' + bad + ' bad regions / UVs');
+      else if (ga.userData.voxel.triangles > g.userData.voxel.triangles) fail('aoAtlas meshed MORE triangles');
+      else ok('aoAtlas: ' + g.userData.voxel.triangles + ' -> ' + ga.userData.voxel.triangles + ' triangles, ' + (R.size.length / 2) + ' regions');
+    }
+    const lm = lodModel(hm, 2);
+    if (!lm || lm.res !== 2 || lm.sx !== 6 || lm.sy !== 6 || lm.sz !== 6) fail('lodModel 4->2 size ' + (lm && [lm.sx, lm.sy, lm.sz, lm.res]));
+    else {
+      const top = lm.blocks.filter((b) => b[1] === 5);
+      if (top.length !== 36 || top.some((b) => b[3] !== 23)) fail('lodModel lost the roof colour');
+      else ok('lodModel: 12^3 res 4 -> 6^3 res 2, roof colour kept');
+    }
   }
 
   return { pass, notes };

@@ -1744,6 +1744,9 @@ export class WaterFX {
       m.name = 'waterfloat-' + i;
       m.count = 0;
       m.castShadow = true;
+      // PERF: lighting.js's static shadow cache refreshes animated casters
+      // like these (a gentle bob) at a few Hz instead of every frame.
+      m.userData.shadowLowRate = true;
       m.receiveShadow = true;
       m.frustumCulled = false;
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

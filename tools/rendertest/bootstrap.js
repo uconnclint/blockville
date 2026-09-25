@@ -19,6 +19,11 @@ window.BVBOOT = async function BVBOOT(shotName = 'hero') {
     if (click(step)) await sleep(250);
   }
   if (!window.BV) throw new Error('BV never booted');
+  // Reference shots are taken at quality 2 with the frame-time governor off
+  // (headless frames are slow; it must not change the look mid-run).
+  if (BV.engine.setAutoQuality) BV.engine.setAutoQuality(false);
+  if (BV.engine._quality !== 2) BV.engine.setQuality(2);
+  if (BV.engine._post && BV.engine._post.params.aa.ssaa !== 1.75) BV.engine._post.setParams({ aa: { ssaa: 1.75 } });
 
   const src = await (await fetch('/tools/demo-city.js', { cache: 'no-store' })).text();
   (0, eval)(src);
