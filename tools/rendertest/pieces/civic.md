@@ -449,3 +449,91 @@ w4r2 critic: facades are "flat grey/red slabs with dark punched window holes"; r
 
 ### Coordinator note (2026-09-26 19:55) — gallery fixed for you
 The "small islands in oversized asphalt blocks" verdict (w4r1, w4r3) was mostly the test gallery: enclosed grass tiles next to 1×1 items and in the spare edge columns were dressed by terrain as car parks/paving. tools/demo-city.js now fills them with parks on gal-fun-* pages, so every block is full. Don't spend effort on that point; focus on multi-material facades (stone, brick, trim, glass) and busy lots as the critic says.
+
+## 2026-09-26 — wave 4 round 4 (builder)
+**Critic gap (w4r1, w4r2 and w4r3 all lost; they agree):** our civic lots sat as small islands in oversized asphalt blocks, with road margins taking about half the frame. The w4r3 critic also said the school facade read as one flat blue-grey.
+**Measured before the fix:** in the gal-fun pages every 2×2 lot was ringed by 1-tile roads, so lot to road was 2:1 and about 56% of the block was asphalt. ref05's civic grid is about 6:1, or ~28% asphalt: lots are about 2.8 tiles and roads about half a tile.
+**Changed:**
+- **Gallery layout (tools/demo-city.js, surgical; `tight` flag, fun category only).**
+  - Each gallery row is now ONE civic block: the lots stand plinth to plinth along their street. Streets run only between the rows and round the outside. The block is now about 33% asphalt.
+  - Park fill is limited to inside the frame. The camera centre is corrected for the tighter frame.
+  - Because the frame shrank, the auto-framed camera comes in closer. Buildings now render at about ref05 scale in a 1920×1308 critic crop.
+  - The coordinator's checkpoint commit 9e4a103 already includes the first version of this change.
+- **School/city hall colours (civic.js).** I checked the variants and the gallery shows **v2**, while one-school shows **v0**.
+  - v2 is now `resButter` walls, `civHall` mint-grey pilasters and cream trim. It was mint walls with dark civSlate pilasters.
+  - v0 is now `sand` walls, `civHallDk` pilasters and cream trim. It was civStone with white trim.
+  - Window rings and transoms now use the wall colour on v0 and v2; the sills and hoods use the trim colour.
+  - Measured with a new visible-face counter (scratchpad civic/front.mjs, run as `node front.mjs school 2 26 100`): white trim covered 25–35% of every side and the wall only 15–22%. That is why cream-on-white still read white-grey in game. White trim on the butter walls also read cool again, so I reverted that step.
+- **Tried and dropped:** raising the camera for tall models. The ferris-wheel top is cropped in gal-fun-2, but it was cropped before this round too, and the fix zoomed the whole page out a lot.
+**Measured (final run):** 6 shots, 0 console errors. FPS was 35–61 at dpr 2 under load. gal-fun-1 has 536k scene tris (was 613k), because fewer vacant parks now sit inside the frame.
+**Self-judged:** in a pair against the ref05 civic crop, ours now reads as a dense civic block. The landmarks are the same size as ref05's and the road share is about the same. The school is warm stone with dark slate.
+**Next (only if a critic loses us the round):**
+- Fill park strips in gal-fun-2 and gal-fun-3 with a calmer park variant; the repeated bronze-statue parks look spammy.
+- The ferris-wheel top is cropped in gal-fun-2.
+- The "M" in SWIM CLUB reads as "H".
+
+### Coordinator note (2026-09-26 22:35) — gallery reverted to road-framed lots
+w4r4 read the "tight" layout (whole row plinth-to-plinth) as "crammed onto one shared plinth, silhouettes collide". Critics before it read the old framed layout as "islands in oversized asphalt". tools/demo-city.js now uses the midpoint: one road-framed lot per landmark (ref05) AND the leftover tiles filled with parks, so blocks are full but each landmark has its own lot. Please don't change the gallery layout again; spend your rounds on the buildings and their own lots (paving, planters, parking on the lot).
+
+## 2026-09-26 — wave 4 round 5 (builder)
+**Critic gap (w4r4 lost):** the civic block was packed on one shared plinth, and no landmark read on its own. That was my w4r4 `tight` gallery; the coordinator had already set `tight = false` (22:30), so every landmark has its own road-framed lot again. I left the harness alone. Secondary notes: the fire station's green roof was a large plain slab; planters and trees blurred into one mass.
+**Changed:**
+- **Fire roof:** `civFireRoof` 0x5f8a74 → 0x44674f. Measured ref05 deck ≈ (75..98,118..134,92..96); ours rendered (118,182,153), too minty. Added a paver grid in civCornice every 12 fine and a pale civPanel walk inside the parapet. It now reads as a tiled sage deck, like ref05.
+- **Hedges (all civic/fun):** `V.bush` is now vegLeafBand and `V.bushDark` is leafDark. vegBush rendered neon (124,255,81); ref05's monument hedge is olive, about (130,170,30) lit. Ours now renders sides (85..130,142..190,20..40) and tops (177,237,68).
+- **Monument:** removed the w4r2 corner lot trees (ref05 has a hedge frame only), and `lumpHedge` is one voxel taller.
+- **Park (gallery fill):** the v2 bronze hero (17 voxels, read as a giant teal robot) is now a stone `statueFig`, and the corner groups are pale stone. No pink blossom trees in v0/v1.
+**Measured:** 6 shots, 0 console errors. FPS 25–57 at dpr 2 under load. gal-fun-1 has 617k tris (unchanged).
+**Note:** gal-fun-2 rendered a lone bakery this run. That is a harness/page issue, not these models.
+**Next (only if a critic loses us the round):** the monument plaza could lose its lamp newels and crowd for ref05's calmer look. Park fill repeats the same 3 variants, so a quieter lawn variant for the fill would help.
+
+### Coordinator note (2026-09-26 23:20) — gallery camera tightened
+w4r5 ("sparse islands … bare grass") was the frame: the gallery sat small inside open meadow. gal-fun-* now frames ~28% closer so the image is filled edge to edge with the civic blocks at ~ref05 scale (see scratchpad galfix3). Layout stays one road-framed lot per landmark + park fill. Per w4r5, dress your OWN lots denser: parked service vehicles in bays, seating, planters, people on the paving.
+
+## 2026-09-26 — wave 4 round 6 (builder)
+**Critic gap (w4r5 lost; agrees with w4r3):** the civic lots needed more on them. The critic named the fire-station apron and the school forecourt, and the reference monument's blue pools at its base (ours read white/grey). The "shrink roads / plain grass" part comes from the gallery layout, which the coordinator has fixed (22:35 note), so I left it alone.
+**Changed (civic.js only):**
+- **Monument:** twin reflecting pools now flank EVERY stair (8 in all, 15×22 fine each), as in ref05. Before, there was one 12×20 pool per side. Each pool is a white kerb, a bright civPoolLt sheet with a 1-fine waterLight edge, and one low jet. waterLight on its own rendered royal blue (72,139,220) in the tier's shade; ref05's pool is (88,210,220). The hedge in front of the pools is now a LOW box hedge (`lumpHedge` got an optional `hmax`), and the tall lumps stay on the corners only. The plaza benches are gone and the crowd moved onto the stair walks.
+- **Fire station:** the yellow hatched keep-clear box in front of the tower read as clutter. It is now two white-lined service bays on both aprons: an ambulance (stampCar kind 7) and the chief's red SUV (kind 10). There is also a paved walk to the tower door, a bench and a bin, and one bollard pair (the old four bollards stood in the bays).
+- **School:** the right front lawn is now a bus drop-off: asphalt, a yellow kerb line, a white bay with a school bus (kind 12) in it, a glazed shelter, a bike rack and waiting kids. I tried painted zig-zags and they read as checker noise, so they are gone. The flag went from 26 high / 9×6 to 20 / 6×4, because the big one read as a billboard.
+**Measured:** 6 shots, 0 console errors. FPS was 21–61 at dpr 2 under load (gal-fun-1 32, one-school 51, gal-deco-1 61). gal-fun-1 has 600k tris (599k before).
+**Next (only if a critic loses us the round):** the plaza's terracotta could carry ref05's statue groups at the pool ends. The pool lido's water (civPool) also renders royal blue, where ref05's lido is cyan. The "flat white box" ghost still turns up by the school lot's left corner (not the model, see r10).
+
+### Coordinator note (2026-09-27 00:25) — gallery: park strips between landmarks
+w4r6 still saw "small islands in half-frame black road". gal-fun-* now splits neighbouring landmarks in a row with a 1-tile park strip instead of a road (roads only between rows and round the outside), so the frame is ~half the asphalt and blocks read dense (scratchpad galfix4). Layout is final — please spend rounds on your lots (tan plaza paving, hedged borders, striped parking, cafe tables, statues) as w4r6 lists.
+
+## 2026-09-26 — wave 4 round 7 (builder)
+**Critic gap (w4r6 lost; agrees with w4r5):** the civic lots looked small and empty next to wide roads with crosswalks. Secondary notes: the obelisk was "a plain grey stack of blocks with little carved detail", and the school lot looked thin.
+**Measured before changing anything:**
+- Near-black asphalt covers 22% of the pixels in our gal-fun-1 and 17% in the ref05 civic crop.
+- Scaled to car length, our road tile is about 2.4× as wide as ref05's road, and our lot is about 1.7× as wide. ref05's city hall and fire station fill small lots and sit between narrow, unmarked roads.
+- So most of the "asphalt dominates" read comes from road width and markings. That belongs to the roads piece, not to these models. **Coordinator:** narrower asphalt with a sidewalk band on the road tile, and fewer crosswalks and dashes, would close the rest of the gap.
+- The gallery now splits landmarks with 1-tile park strips (coordinator 00:20), so the park model is effectively the space between our lots.
+**Changed (civic.js only):**
+- **Obelisk:**
+  - The shaft steps in once instead of four times; the old set-backs drew lit ledges that read as stacked blocks. The upper shaft is a single piece that tapers only through a growing corner chamfer (1→3), with a long sunken flute on every face.
+  - The lower drum has a dentilled collar and a sunken panel with a carved garland swag, drops and a tablet. A wreath ring read as the letters "Q"/"R", or as a pair of eyes.
+  - The pyramidion is chamfered.
+  - Raised-arm figures replace the urn finials on the four pedestal buttresses (ref05 has a figure group round the shaft foot).
+- **Park v2:** the grey memorial terrace, stone figure and corner groups read as a second, clumsy monument in the strip beside the obelisk. v2 is now a paved pocket plaza: tan civPlaza paving, a pale frame band, a low round two-bowl fountain, four benches facing it, four low flower planters, two lamps and one column tree. I tried res-4 café umbrellas and dropped them because they read as red/blue blobs. v0 and v1 are unchanged.
+**Measured:** 6 shots, 0 console errors. FPS: gal-fun-1 35–36, gal-fun-2 38, gal-fun-3 39, gal-deco-1 61, one-stadium 32, one-school 61, all at dpr 2 under load. gal-fun-1 has 622k tris (base 622k).
+**Next (only if a critic loses us the round):** the pedestal's lower bronze plaques still read as dark tiles. If a critic keeps charging asphalt, send it to roads/coordinator (see the measurement above); the models can't fix it.
+
+### Coordinator note (2026-09-27 02:10) — w4r7
+Gallery filler is now low flower-bed garden lots instead of parks (w4r7 "carpeted with trees and hedges"); landmarks stand out (scratchpad galfix6). Yours from w4r7: (1) the FIRE STATION sign reads "FISE" — fix the R glyph in your sign font (and check every sign's letters); (2) keep your own lots clean: a paved lot with SPARSE deliberate props (a few benches, a flagpole, planters, marked bays), not every tile dressed; drop the red-white ornaments scattered on the monument/park blocks.
+
+## 2026-09-26 — wave 4 round 8 (builder)
+**Critic gap (w4r7 lost):** our civic lots and the strips between them carried too much (trees, hedges, cars, red-white pieces), so the landmarks didn't stand out. ref05 shows each landmark alone on a clean lot with a few deliberate props. Also: FIRE STATION read "FISE STATION", and the monument's lower tiers were "a busy mass of small grey blocks". r5/r6 had asked for fuller lots, so I aimed at ref05's midpoint: I kept the landmarks' lot dressing and cut only the repeats.
+**Harness state:** the coordinator switched the gallery strip fill `CIVIC_FILL` twice this round (park → stone-path → flower-bed). Both are my deco models, so I made both calm tiles and left demo-city alone.
+**Changed:**
+- **flower-bed (fun.js):** now a lawn that fills the whole 31-voxel tile inside a pale kerb, so neighbouring tiles join into one quiet parterre. Each tile has ONE low round shrub bed with fine blooms on its ring. Removed: the dark-soil island, the 16 flower clumps, the brick-red kerb variant, the corner clumps and a white kerb ring (it read as donuts). Only the bloom colours change per variant.
+- **Palette:** repurposed `civSign` (3 uses, now civNavy) as **`civLawn` 0x6f8a3c**. lotGrass rendered neon (199,245,61) across the strips; civLawn renders (173,227,86), close to the terrain field (157,218,89).
+- **stone-path (fun.js):** flush pale paving edge to edge with a joint grid one shade darker. v1 adds a tan inlay and v2 a low round shrub bed. The old black-grout checker, stepping stones on grass and red brick walk are gone.
+- **Monument:** removed the tier pilasters and quoin strips, the lamp newels, the pool jets, the tier-2 corner posts, and the pedestal buttresses and their figures. It is now two broad clean tiers with a plinth moulding and cornice, plain stairs with sloped cheeks, and a three-step pedestal. The plaques are carved civStone; bronze read as teal tiles. Crowd cut from 22 to 9.
+- **Fire station:** each apron now holds 2 engines (one at the kerb, one nosing out of the open bay) plus one ambulance in the service bay. Before: 6 engines, 2 cars, 2 ambulances, 2 SUVs and cones. Crowd cut from 12 to 6.
+- **civText:** a new R glyph (closed box bowl plus a stepped leg) through a `GLYPHS` override map. The sign now reads FIRE STATION.
+**Measured:** all 6 shots have 0 console errors. FPS at dpr 2 under load (not a budget reading): gal-fun-1 42, gal-fun-2 29, gal-fun-3 45, gal-deco-1 60, one-stadium 22, one-school 61. gal-fun-1 has 541k tris (was 540k).
+**Self-judged:** in gal-fun-1 each landmark now stands alone on its lot between calm lawn strips, as in ref05, and the sign reads correctly.
+**Next (only if a critic loses us the round):** ref05's fire station has a deeper dark-green apron with the hall set back, while ours is a big hall with shallow aprons. Life.js traffic still fills the roads beside the lots (not ours).
+
+### Coordinator note (2026-09-27 03:40) — gallery filler is now the category's own 1×1 attractions
+w4r8: "civic buildings are strong but float in lots stamped with an identical flower-mound on every tile". gal-fun-* gaps are now filled with rotating 1×1 fun ids (playground, water-slide, mini-golf, skate-park, park…; no wind turbines) so the district reads dense and bespoke (scratchpad galfix8). Those 1×1 models are also yours and now carry weight in the frame: make sure they read cleanly (the water-slide towers are tall and loud).

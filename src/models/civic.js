@@ -25,7 +25,10 @@ import { stampCar, stampPerson } from './vehicles.js';
 const pick = (...ks) => { for (const k of ks) if (C[k] != null) return C[k]; return C.leafMid; };
 export const V = {
   leaf: pick('vegLeaf', 'lime'), leafBand: pick('vegLeafBand', 'leafMid'), leafDot: pick('vegLeafDot', 'leafDark'),
-  trunk: pick('vegTrunk', 'trunk'), bush: pick('vegBush', 'bush'), bushDark: pick('vegBushDark', 'leafMid'),
+  // (w4r5) clipped hedges / bushes on civic & fun lots use the canopy's olive
+  // band, not vegBush: vegBush rendered neon (124,255,81) beside ref05's olive
+  // monument hedge (~130,170,30 lit / 40,58,18 shade).
+  trunk: pick('vegTrunk', 'trunk'), bush: pick('vegLeafBand', 'leafMid'), bushDark: pick('leafDark', 'vegBushDark'),
   rock: pick('vegRock', 'stone'), rockLight: pick('vegRockLight', 'concrete'),
   stem: pick('vegStem', 'leafMid'),
   petals: [pick('vegPetalW', 'signWhite'), pick('vegPetalB', 'blue'), pick('vegPetalR', 'red'), C.yellow, C.pink],
@@ -305,14 +308,18 @@ function pilasters(f, us, y0, y1, c) { for (const u of us) f.box(u, y0, 1, u, y1
 function course(g, x0, z0, x1, z1, y, c, out = 1) { g.walls(x0 - out, y, z0 - out, x1 + out, y, z1 + out, c); }
 // Clear 3×5 lettering; the core font's S reads as "I" at gallery zoom, so S
 // gets a squarer glyph here and everything else defers to pixelText.
-const GLYPH_S = '####..###..####';
+// (w4r8) critic w4r7 read FIRE STATION as "FISE STATION": the core R's open
+// bowl + slanted leg read as S at gallery zoom. R gets a closed box bowl and
+// a stepped leg (a P with a kick) so it can't be taken for S.
+const GLYPHS = { S: '####..###..####', R: '###' + '#.#' + '###' + '##.' + '#.#' };
 export function civText(f, u, y, text, c, out = 2) {
   c = signLit(c);   // [night] lit sign letters (same colour by day)
   let col = 0;
   for (const ch of String(text).toUpperCase()) {
-    if (ch === 'S') {
+    const gl = GLYPHS[ch];
+    if (gl) {
       for (let r = 0; r < 5; r++) for (let i = 0; i < 3; i++)
-        if (GLYPH_S[r * 3 + i] === '#') f.set(u + f.rd * (col + i), y + 4 - r, out, c);
+        if (gl[r * 3 + i] === '#') f.set(u + f.rd * (col + i), y + 4 - r, out, c);
     } else pixelText(f, u + f.rd * col, y, ch, c, out);
     col += 4;
   }
@@ -602,7 +609,7 @@ function svcPark(rng, v) {
     for (let k = 0; k < 5; k++) disc(g, 15, y + 13 + k, 15, 7 - k * 1.5, (k & 1) ? C.signWhite : C.roofRed);
     g.box(15, y + 18, 15, 15, y + 21, 15, C.gold);
     benchS(g, 6, y, 11, 'x', 4, { seat: C.wood }); benchS(g, 19, y, 18, 'x', 4, { seat: C.wood });
-    lotTree(g, 'round', 6, y, 24, 3); lotTree(g, 'blossom', 25, y, 5, 5); lotTree(g, 'round', 5, y, 8, 7);   // (r7) none on the lens corner
+    lotTree(g, 'round', 6, y, 24, 3); lotTree(g, 'round', 25, y, 5, 5); lotTree(g, 'round', 5, y, 8, 7);   // (r7) none on the lens corner
     planter(g, 19, 22, 24, 26, y, { box: C.woodDark, flowers: [C.red, C.yellow, C.signWhite], h: 2 });
     lampPost(g, 12, y, 2, 9, { small: true }); lampPost(g, 18, y, 28, 9, { small: true });
   } else if (kind === 1) {
@@ -625,46 +632,42 @@ function svcPark(rng, v) {
       g.set(x, y + h + 2, 15, C.signWhite); g.set(x, y + h + 2, 17, C.signWhite);
       if (x % 3 === 0) { g.box(x, y + h + 1, 15, x, y + h + 1, 15, C.signWhite); g.box(x, y + h + 1, 17, x, y + h + 1, 17, C.signWhite); }
     }
-    lotTree(g, 'pine', 5, y, 24, 2); lotTree(g, 'round', 24, y, 5, 4); lotTree(g, 'blossom', 6, y, 6, 6);
+    lotTree(g, 'pine', 5, y, 24, 2); lotTree(g, 'round', 24, y, 5, 4); lotTree(g, 'round', 6, y, 6, 6);
     rocksAt(g, 7, y, 24);
     g.box(21, y - 1, 16, 22, y, 17, C.signWhite); g.box(22, y + 1, 16, 22, y + 2, 16, C.signWhite); g.set(23, y + 1, 16, C.orange);
     lampPost(g, 27, y, 13, 9, { small: true });
   } else {
-    // ref05 memorial green: a tall stepped obelisk on a square terrace, cross
-    // paths, reflecting pools either side of the front walk, clipped hedges
-    g.box(13, y - 1, 1, 17, y - 1, 29, path); g.box(1, y - 1, 13, 29, y - 1, 17, path);
-    const mb = C.civMarble, mbDk = C.civPanel;
-    for (const [a, b, h0] of [[8, 22, 0], [10, 20, 2], [12, 18, 4]]) {
-      g.box(a, y + h0, a, b, y + h0 + 1, b, mb);
-      g.walls(a, y + h0, a, b, y + h0, b, mbDk);
+    // (w4r7) v2 is a paved pocket plaza, not a memorial. The gallery splits
+    // neighbouring landmarks with 1-tile park strips, and the v2 grey
+    // terrace + stone figure + corner groups read as a second, clumsier
+    // monument beside the obelisk (critic w4r4 "planters blur into one
+    // mass"). ref05 fills the space between its civic buildings with tan
+    // plaza paving, low hedges, cafe tables and a small fountain, so v2 is
+    // that: tan paving inside the hedge border, a low round fountain, cafe
+    // umbrellas, benches facing the water, cone topiaries (no tall trees).
+    const pave = C.civPlaza;
+    g.box(2, y - 1, 2, 28, y - 1, 28, pave);
+    g.walls(5, y - 1, 5, 25, y - 1, 25, C.lotRim);                  // a pale band framing the square
+    disc(g, 15, y - 1, 15, 7.6, C.lotRim);
+    disc(g, 15, y, 15, 6.2, C.signWhite); disc(g, 15, y, 15, 5.2, null);
+    for (let x = 9; x <= 21; x++) for (let z = 9; z <= 21; z++) {
+      const d = Math.hypot(x - 15, z - 15);
+      if (d < 5.2) { g.del(x, y, z); g.set(x, y - 1, z, d < 2.6 ? C.civPoolLt : C.civPool); }
     }
-    for (const [dx, dz] of [[0, -1], [1, 0]]) for (let r = 6; r <= 8; r++) for (let w = -2; w <= 2; w++) {
-      const x = 15 + dx * r + (dz ? w : 0), z = 15 + dz * r + (dx ? w : 0), top = y + (8 - r) * 2 + 1;
-      gclr(g, x, top + 1, z, x, y + 6, z); g.box(x, y, z, x, top, z, (r & 1) ? mb : C.signWhite);
+    g.box(14, y, 14, 16, y + 1, 16, C.civMarble);                    // a low two-bowl fountain
+    g.box(13, y + 2, 13, 17, y + 2, 17, C.signWhite);
+    g.box(15, y + 3, 15, 15, y + 4, 15, C.civMarble);
+    g.box(14, y + 5, 14, 16, y + 5, 16, C.signWhite);
+    g.set(15, y + 6, 15, C.civPoolLt);
+    for (const [bx, bz, ax, fl] of [[13, 7, 'x', true], [13, 23, 'x', false], [7, 13, 'z', true], [23, 13, 'z', false]]) benchS(g, bx, y, bz, ax, 5, { seat: C.wood, flip: fl });
+    // low flower planters in the corners (res-4 cafe umbrellas read as
+    // red/blue blobs at gallery scale)
+    for (const [px, pz] of [[6, 6], [20, 6], [6, 20], [20, 20]]) {
+      g.walls(px, y, pz, px + 4, y, pz + 4, C.civPanel);
+      bush(g, px + 1, y, pz + 1, px + 3, pz + 3, 2, { flowers: [V.petals[0], V.petals[2], C.signWhite] });
     }
-    // pedestal with cornices + bronze plaques, then the obelisk and pyramidion
-    g.box(13, y + 6, 13, 17, y + 11, 17, mb); g.box(12, y + 12, 12, 18, y + 12, 18, mb);
-    g.box(12, y + 6, 12, 18, y + 6, 18, mbDk);
-    for (const [px, pz] of [[15, 12], [18, 15]]) g.box(px - (pz === 12 ? 1 : 0), y + 8, pz - (px === 18 ? 1 : 0), px + (pz === 12 ? 1 : 0), y + 10, pz + (px === 18 ? 1 : 0), C.civBronze);
-    // (r8) a bronze hero on the pedestal, not a second obelisk: the fountain
-    // monument owns the obelisk, and a thin shaft on a 1×1 read as a stick
-    const T = y + 13, bz = C.civBronze;
-    g.box(14, T, 14, 14, T + 4, 15, bz); g.box(16, T, 14, 16, T + 4, 15, bz);
-    g.box(13, T + 5, 13, 17, T + 10, 16, bz);
-    g.box(15, T + 11, 14, 15, T + 13, 15, bz); g.box(14, T + 12, 14, 16, T + 13, 15, bz);
-    g.box(18, T + 9, 14, 18, T + 16, 15, bz); g.box(12, T + 5, 14, 12, T + 9, 15, bz);
-    g.set(18, T + 17, 14, C.gold);
-    for (const [sx, sz] of [[11, 11], [19, 11], [11, 19], [19, 19]]) {         // bronze groups on the 2nd tier corners
-      g.box(sx - 1, y + 4, sz - 1, sx + 1, y + 5, sz + 1, mbDk);
-      g.box(sx - 1, y + 6, sz, sx + 1, y + 8, sz, C.civBronze); g.box(sx, y + 6, sz - 1, sx, y + 9, sz + 1, C.civBronze); g.set(sx, y + 10, sz, C.civBronze);
-    }
-    // reflecting pools flanking the front walk, clipped hedge blocks round the rest
-    for (const [x0, x1] of [[3, 11], [19, 27]]) {
-      g.walls(x0, y, 2, x1, y, 7, C.signWhite); g.box(x0 + 1, y - 1, 3, x1 - 1, y - 1, 6, C.civPool); g.box(x0 + 1, y - 1, 3, x1 - 1, y - 1, 3, C.civPoolLt);
-    }
-    for (const [x0, z0, x1, z1] of [[3, 20, 11, 22], [19, 20, 27, 22], [3, 9, 5, 11], [25, 9, 27, 11], [3, 24, 5, 27], [25, 24, 27, 27]]) bush(g, x0, y, z0, x1, z1, 3);
-    lotTree(g, 'column', 8, y, 27, 1);
-    benchS(g, 19, y, 10, 'x', 4, { seat: C.wood }); benchS(g, 7, y, 10, 'x', 4, { seat: C.wood });
+    lampPost(g, 20, y, 9, 9, { small: true }); lampPost(g, 9, y, 20, 9, { small: true });
+    lotTree(g, 'column', 26, y, 26, 1);
   }
   bin(g, 26, y, 12);
   crowd(g, [[1, 1, 29, 29]], y, 9, 51 + kind);
@@ -690,7 +693,7 @@ const SLATE = () => (C.resSlate != null ? C.resSlate : C.roofGray);
 // Navy sign plate on a facade (u0..u1, y0..y0+2) with a row of small light
 // "lettering" marks: reads as a name plate, never as a billboard.
 export function signPlate(f, u0, u1, y0, o = {}) {
-  const bg = o.bg != null ? o.bg : C.civSign, fg = o.fg != null ? o.fg : C.signWhite, out = o.out || 1;
+  const bg = o.bg != null ? o.bg : C.civNavy, fg = o.fg != null ? o.fg : C.signWhite, out = o.out || 1;
   const rim = o.rim != null ? o.rim : null;
   f.box(u0, y0, out, u1, y0 + 2, out, bg);
   if (rim != null) { f.box(u0 - 1, y0 - 1, out, u1 + 1, y0 - 1, out, rim); f.box(u0 - 1, y0 + 3, out, u1 + 1, y0 + 3, out, rim); f.box(u0 - 1, y0, out, u0 - 1, y0 + 2, out, rim); f.box(u1 + 1, y0, out, u1 + 1, y0 + 2, out, rim); }
@@ -730,9 +733,15 @@ function svcSchool(rng, v) {
   // (PIL: walls #f0f0e0 warm cream, pilasters #709080 mint-grey, roof #104050)
   // → v0 (the variant the gallery shows) is now warm cream walls with the
   // grey-teal pilasters under the dark slate; civStone read cool grey-blue.
-  const wall = [C.cream, C.civBrick, C.civHall][vi];
-  const trim = [C.signWhite, C.cream, C.signWhite][vi];
-  const quoin = [C.civHallDk, C.brickDark, C.civSlate][vi];
+  // Measured (visible fine faces, v0): white trim was 25-35% of every side
+  // vs 15-22% wall, so cream-on-white still read white-grey in game. v0 is
+  // now warm sandstone walls with cream stone trim.
+  // The gallery shows v2, so v2 carries ref05's hall directly: warm butter
+  // walls, mint-grey pilasters, cream trim (it was mint wall + dark civSlate
+  // pilasters, which read as the cool blue-grey slab).
+  const wall = [C.sand, C.civBrick, C.resButter][vi];
+  const trim = [C.cream, C.cream, C.cream][vi];   // (w4r4) white trim on v2 read white/cool again in game
+  const quoin = [C.civHallDk, C.brickDark, C.civHall][vi];
   const accent = [C.civSlate, C.roofGreen, C.civNavy][vi];
   const slate = [C.civSlate, C.civSlate, C.civSlate][vi], slateTop = C.stone, mb = C.civMarble, mbDk = C.civPanel;
   // (w2r1) ref05's hall windows are DARK navy glass in white frames
@@ -798,7 +807,12 @@ function svcSchool(rng, v) {
   // (w2r1) no centre mullion on 3-wide windows: in game the white bars and
   // ring covered the glass, so the facade read as white blocks (ref05: dark
   // glass in thin white frames)
-  const win = (f, u, k, w = 2, h = 5) => fineWin(g, f.side, f.plane, u, fy(k), w, h, { frame: trim, trim, surround: trim, glass: winG, key: k === 1 ? trim : false, mullion: false });
+  // (w4r4) v0: the white rings + sills covered almost every cream voxel, so in
+  // game the facade read as white-grey with navy reveals ("one flat blue-grey",
+  // critic w4r3). The ring/transom is now the cream wall; sills, hoods and
+  // keystones stay white, so it reads as ref05's cream wall with white trim.
+  const wfr = vi === 1 ? trim : wall;
+  const win = (f, u, k, w = 2, h = 5) => fineWin(g, f.side, f.plane, u, fy(k), w, h, { frame: wfr, trim, surround: wfr, glass: winG, key: k === 1 ? trim : false, mullion: false });
   // ---- long faces (front and back): wings, recessed runs, pavilion
   for (const back of [false, true]) {
     const side = back ? 'back' : 'front';
@@ -830,7 +844,7 @@ function svcSchool(rng, v) {
       g.box(22, EY, 8, 40, EY + 2, 13, trim);
       g.box(22, EY + 3, 7, 40, EY + 3, 13, trim);
       const E = facade(g, 'front', 8);
-      E.box(24, EY, 1, 38, EY + 2, 1, C.civSign);
+      E.box(24, EY, 1, 38, EY + 2, 1, C.civNavy);
       hiText(g, 'front', 8, 31.5, EY + 0.5, 'SCHOOL', C.signWhite, 1);
       // (r9) fine pediment: 1-fine steps, a raking cornice proud of a
       // recessed tympanum, a fine slate roof behind, a gold crest
@@ -852,7 +866,7 @@ function svcSchool(rng, v) {
       g.box(27, G + 8, 41, 35, G + 8, 43, trim);
       for (const px of [27, 35]) g.box(px, G, 43, px, G + 7, 43, trim);
       const B = facade(g, 'back', 40);
-      B.box(26, FRZ, 1, 36, FRZ + 2, 1, C.civSign);
+      B.box(26, FRZ, 1, 36, FRZ + 2, 1, C.civNavy);
       hiText(g, 'back', 40, 31.5, FRZ + 0.5, 'SCHOOL', C.signWhite, 1);
     }
     // dormers on the main slope, one each side of the tower
@@ -903,7 +917,7 @@ function svcSchool(rng, v) {
   }
   // ---- forecourt: two lawns boxed by clipped hedges with flower beds, cone
   // topiaries, lamps at the stair, benches, a flag, kids on the stair
-  for (const [a, b] of [[2, 18], [44, 60]]) {
+  for (const [a, b] of [[2, 18]]) {
     g.box(a, y - 1, 2, b, y - 1, 9, C.lotGrass);
     bush(g, a, y, 2, b, 2, 2); bush(g, a, y, 2, a, 9, 2); bush(g, b, y, 2, b, 9, 2);
     g.box(a + 2, y - 1, 4, b - 2, y - 1, 7, V.bushDark != null ? V.stem : C.lotGrass);   // (r9) a planted bed with fine blooms
@@ -911,8 +925,23 @@ function svcSchool(rng, v) {
     topiary(g, a === 2 ? 15 : 57, y, 7, 7);
     benchS(g, a === 2 ? 4 + 6 : 47, y, 8, 'x', 4, { seat: C.wood, flip: true });
   }
+  // (w4r6) critic w4r5: "fill … the school forecourt" with vehicles and
+  // props (ref05 lots carry their service vehicles). The right lawn is now a
+  // painted bus drop-off: asphalt bay, yellow kerb line, a white bay, a school
+  // bus at the kerb, a glazed shelter with a bench, a bike rack and kids.
+  g.box(44, y - 1, 1, 61, y - 1, 9, C.lotAsphalt);
+  g.box(44, y - 1, 9, 61, y - 1, 9, C.yellow);
+  g.box(45, y - 1, 3, 56, y - 1, 3, C.lotLine); g.box(45, y - 1, 3, 45, y - 1, 8, C.lotLine); g.box(56, y - 1, 3, 56, y - 1, 8, C.lotLine);
+  stampCar(g, 12, 46, y, 4, 1);
+  { const sx0 = 56, sx1 = 60;                                     // bus shelter on the kerb strip
+    g.box(sx0, y - 1, 10, sx1, y - 1, 10, C.lotPave);
+    for (const x of [sx0, sx1]) g.box(x, y, 10, x, y + 6, 10, C.metalDark);
+    g.box(sx0 + 1, y + 1, 10, sx1 - 1, y + 5, 10, C.civGlass);
+    g.box(sx0 - 1, y + 7, 9, sx1 + 1, y + 7, 10, accent); g.box(sx0 - 1, y + 7, 9, sx1 + 1, y + 7, 9, C.signWhite); }
+  for (let k = 0; k < 4; k++) g.box(47 + 2 * k, y, 10, 47 + 2 * k, y + 2, 10, C.metal);   // bike rack hoops
+  g.box(47, y + 2, 10, 53, y + 2, 10, C.metal);
   for (const lx of [19, 43]) lampPost(g, lx, y, 3, 13, { small: true });
-  flagPole(g, 9, y, 6, 26, [C.red, C.signWhite, C.civSeat], { w: 9, fh: 6 });
+  flagPole(g, 9, y, 6, 20, [C.red, C.signWhite, C.civSeat], { w: 6, fh: 4 });   // (w4r6) 26/9×6 read as a billboard
   // side strips along the podium: hedges and small trees
   for (const [a, b] of [[1, 1], [61, 61]]) {
     bush(g, a, y, 12, b, 22, 3, { flowers: [C.red, C.yellow, C.signWhite] });
@@ -950,7 +979,7 @@ function svcSchool(rng, v) {
   railRun(g, 1, 47, 1, 61, y, C.signWhite, accent); railRun(g, 61, 47, 61, 61, y, C.signWhite, accent);
   lotTree(g, 'round', 3, y, 44, 4); lotTree(g, 'round', 59, y, 44, 6);
   // ---- people: parents at the stair, kids on the forecourt and in the yard
-  crowd(g, [[4, 10, 18, 10], [44, 10, 58, 10]], y, 8, 7 + vi);
+  crowd(g, [[4, 10, 18, 10], [56, 3, 60, 8]], y, 8, 7 + vi);
   crowd(g, [[4, 49, 24, 60], [39, 49, 59, 59], [27, 48, 35, 58]], y, 16, 3 + vi, { shirts: [C.red, C.yellow, C.civSeat, C.pink, C.roofGreen, C.orange] });
   crowd(g, [[22, 8, 40, 10]], PY, 5, 11 + vi);
   return doneHi(g);
@@ -1023,10 +1052,17 @@ function svcFire(rng, v) {
       const m = (u0 + u1) >> 1;
       for (let z = 2; z < Z0 - 5; z += 3) g.set(m, y - 1, Z(z), C.signWhite);
     }
-    g.box(2, y - 1, Z(1), 20, y - 1, Z(1), C.yellow); g.box(2, y - 1, Z(7), 20, y - 1, Z(7), C.yellow);
-    g.box(20, y - 1, Z(1), 20, y - 1, Z(7), C.yellow);
-    for (let x = 2; x <= 19; x++) for (let z = 2; z <= 6; z++) if (((x + z) % 4) === 0) g.set(x, y - 1, Z(z), C.yellow);   // hatched keep-clear box
+    // (w4r6) critic w4r5: "fill the fire station apron … parked ambulances
+    // and fire trucks" (ref05). The hatched keep-clear box in front of the
+    // tower read as yellow clutter; it is now two marked service bays (an
+    // ambulance and the chief's red SUV) beside a paved walk to the tower door.
+    for (const x of [10, 16, 21]) g.box(x, y - 1, Z(1), x, y - 1, Z(8), C.lotLine);
+    g.box(10, y - 1, Z(1), 21, y - 1, Z(1), C.lotLine);
+    if (!back) g.box(4, y - 1, 1, 8, y - 1, 8, C.lotPave);
   }
+  // (w4r8) one ambulance per apron (critic w4r7: "cut cars on civic lots";
+  // ref05's apron holds three trucks and nothing else)
+  stampCar(g, 7, 11.5, y, 0, 0); stampCar(g, 7, 11.5, y, 53, 2);
   // ---- the hall
   g.box(X0, y, Z0, X1, TOP, Z1, wall);
   course(g, X0, Z0, X1, Z1, y, C.civPanel);
@@ -1141,6 +1177,14 @@ function svcFire(rng, v) {
     // (w4r2) critic: ref05 roofs carry "AC units, vents and roof clutter" —
     // the bigger deck gets two AC banks, a framed skylight, a solar array, a
     // water tank on legs, a stair hatch, vents, duct runs and a radio mast.
+    // (w4r5) critic: "the fire station's green roof is a large plain slab".
+    // ref05's deck is a darker sage (~#4b765c lit) laid in square pavers with
+    // a pale walkway strip inside the parapet: a lighter paver grid every 12
+    // fine and a pale perimeter walk break the slab into tiles.
+    for (let x = 36; x <= 116; x += 12) Hr.box(x, RY, 28, x, RY, 97, corn);
+    for (let z = 36; z <= 96; z += 12) Hr.box(26, RY, z, 117, RY, z, corn);
+    Hr.box(26, RY, 27, 117, RY, 27, C.civPanel); Hr.box(26, RY, 98, 117, RY, 98, C.civPanel);
+    Hr.box(118, RY, 27, 118, RY, 98, C.civPanel);
     for (const [ax, az] of [[34, 34], [42, 34], [34, 42], [42, 42], [104, 84], [112, 84], [104, 92], [112, 92], [60, 90], [34, 88]]) fineAC(g, ax, RY, az, 6, 5);
     Hr.box(62, RY, 34, 85, RY + 1, 57, stone);
     Hr.box(63, RY + 2, 35, 84, RY + 2, 56, C.civGlass);
@@ -1169,16 +1213,17 @@ function svcFire(rng, v) {
   // hydrants, cones, hose reels, bollards, crew
   // (w4r2) the aprons are 11 deep now: engines (9 long) fill each bay to
   // the kerb, and the one in the open bay noses half out of the door.
-  fireTruck(g, 24, y, 1, 'z', { len: 11 }); fireTruck(g, 33, y, 1, 'z', { len: 11 });
-  fireTruck(g, 42, y, 6, 'z', { len: 11 });
-  fireTruck(g, 51, y, 51, 'z', { len: 11, rev: true }); fireTruck(g, 42, y, 51, 'z', { len: 11, rev: true });
-  fireTruck(g, 33, y, 46, 'z', { len: 11, rev: true });
-  car(g, 52, y, 2, 'z', C.fireRed, {}); car(g, 25, y, 52, 'z', C.signWhite, { rev: true });
+  // (w4r8) critic w4r7: "cut trees and cars on civic lots by ~60% … the fire
+  // station's apron with three trucks" (ref05). Two engines per apron (one
+  // at the kerb, one nosing out of the open bay) + one ambulance, so the
+  // yellow bay lines and the doors read; the chief's cars and cones are gone.
+  fireTruck(g, 24, y, 1, 'z', { len: 11 }); fireTruck(g, 42, y, 6, 'z', { len: 11 });
+  fireTruck(g, 51, y, 51, 'z', { len: 11, rev: true }); fireTruck(g, 33, y, 46, 'z', { len: 11, rev: true });
   hydrant(g, 61, y, 10); hydrant(g, 61, y, 52); hydrant(g, 1, y, 52);
-  for (const [cx, cz] of [[21, 3], [21, 59], [60, 3], [60, 59]]) { g.box(cx, y, cz, cx, y + 1, cz, C.orange); g.set(cx, y + 1, cz, C.signWhite); }
-  for (const z of [9, 52]) { g.box(19, y, z, 21, y + 2, z + 1, C.fireRed); g.box(20, y + 1, z, 20, y + 1, z + 1, C.metal); }
-  for (const x of [4, 8, 12, 16]) { g.box(x, y, 1, x, y + 2, 1, C.yellow); g.box(x, y, 61, x, y + 2, 61, C.yellow); }
-  crowd(g, [[3, 2, 18, 7], [3, 53, 18, 60], [22, 8, 58, 10], [22, 52, 58, 54]], y, 12, 61 + vi, { shirts: [C.civNavy, C.fireRed, C.yellow] });
+  for (const z of [9, 51]) { g.box(19, y, z, 21, y + 2, z + 1, C.fireRed); g.box(20, y + 1, z, 20, y + 1, z + 1, C.metal); }
+  benchS(g, 2, y, 2, 'z', 4, { seat: C.wood, flip: true }); bin(g, 2, y, 7);
+  for (const z of [1, 61]) { g.box(9, y, z, 9, y + 2, z, C.yellow); g.set(9, y + 2, z, C.signWhite); }
+  crowd(g, [[4, 2, 8, 7], [3, 53, 9, 60], [22, 8, 58, 10], [22, 52, 58, 54]], y, 6, 61 + vi, { shirts: [C.civNavy, C.fireRed, C.yellow] });
   return doneHi(g);
 }
 
@@ -1219,9 +1264,9 @@ export function fineStatue(H, x, y, z, c) {
 // Lumpy clipped hedge (ref05 monument border): a row of 4-voxel cubes of
 // staggered heights with rounded tops and a darker foot, along the longer
 // axis of x0..x1 × z0..z1.
-export function lumpHedge(g, x0, z0, x1, z1, y, seed = 0) {
+export function lumpHedge(g, x0, z0, x1, z1, y, seed = 0, hmax = 99) {
   const alongX = (x1 - x0) >= (z1 - z0);
-  const a0 = alongX ? x0 : z0, a1 = alongX ? x1 : z1, HS = [4, 5, 4, 5, 3, 5, 4];
+  const a0 = alongX ? x0 : z0, a1 = alongX ? x1 : z1, HS = [5, 6, 5, 6, 4, 6, 5].map((h) => Math.min(h, hmax));   // (w4r5) a touch taller, like ref05's shrub row
   const B = (p0, yy0, p1, yy1, c) => (alongX ? g.box(p0, yy0, z0, p1, yy1, z1, c) : g.box(x0, yy0, p0, x1, yy1, p1, c));
   for (let a = a0, i = seed; a <= a1; a += 4, i++) {
     const b = Math.min(a1, a + 2), h = HS[i % HS.length];
@@ -1246,7 +1291,9 @@ function svcFountain(rng, v) {
   const mb = C.civMarble, lip = C.signWhite, relief = C.civStone != null ? C.civStone : C.cream;
   // (w4) gold plaques rendered as flat orange tiles on the white pedestal
   // (gallery shows v1); ref05's reliefs are dark carved panels.
-  const plaque = C.civBronze;
+  // (w4r8) bronze plaques read as teal tiles on the white pedestal; ref05's
+  // pedestal panels are carved in the same pale stone.
+  const plaque = relief;
   const c = 31, H = hiGrid(g), O = 63;
   // fine helpers: x/z are centre-relative fine offsets, y absolute fine rows,
   // all ranges half-open. sb() boxes in a side frame: `a` outward along the
@@ -1272,18 +1319,21 @@ function svcFountain(rng, v) {
   };
   const F0 = 2 * y, T1 = 2 * (y + 5), T2 = 2 * (y + 9);        // fine: plaza, tier-1 top, tier-2 top
   // ---- lumpy hedge border with gaps at the four stair walks
-  for (const [p0, p1] of [[1, 23], [39, 61]]) {
-    lumpHedge(g, p0, 1, p1, 3, y, p0); lumpHedge(g, p0, 59, p1, 61, y, p0 + 2);
-    lumpHedge(g, 1, p0, 3, p1, y, p0 + 1); lumpHedge(g, 59, p0, 61, p1, y, p0 + 3);
+  // (w4r6) tall clipped lumps at the corners only; a LOW box hedge in front
+  // of the twin pools so the water reads over it (ref05's pools show over a
+  // low shrub edge)
+  for (const [p0, p1, hm] of [[1, 11, 99], [12, 23, 3], [39, 50, 3], [51, 61, 99]]) {
+    lumpHedge(g, p0, 1, p1, 3, y, p0, hm); lumpHedge(g, p0, 59, p1, 61, y, p0 + 2, hm);
+    lumpHedge(g, 1, p0, 3, p1, y, p0 + 1, hm); lumpHedge(g, 59, p0, 61, p1, y, p0 + 3, hm);
   }
   // ---- corner gardens: lawn, a grey statue group on a stepped plinth, topiary
   for (const [gx, gz] of [[51, 51], [5, 51], [5, 5], [51, 5]]) {
     g.box(gx, y - 1, gz, gx + 6, y - 1, gz + 6, C.lotGrass);
     g.walls(gx, y, gz, gx + 6, y, gz + 6, C.lotRim);
     g.box(gx + 1, y, gz + 1, gx + 5, y, gz + 5, V.bush);
-    // (w4r2) critic: ref05's plaza is "crowded right up to the kerb" — a small
-    // cuboid tree in each corner garden, on the kerb side of the statue
-    lotTree(g, 'round', gx < 31 ? gx - 1 : gx + 7, y, gz < 31 ? gz - 1 : gz + 7, gx + gz);
+    // (w4r5) the w4r2 corner lot trees are gone: w4r4 critic saw the plaza's
+    // trees and planters "blur into one mass" with the neighbours. ref05's
+    // plaza is framed by its olive hedge alone, with statue groups inside.
     const sx = gx + 3, sz = gz + 3;
     g.box(sx - 1, y, sz - 1, sx + 1, y + 2, sz + 1, C.civPanel); g.box(sx - 1, y + 3, sz - 1, sx + 1, y + 3, sz + 1, lip);
     fineStatue(H, 2 * sx + 1, 2 * (y + 4), 2 * sz + 1, C.civPanel);
@@ -1299,11 +1349,14 @@ function svcFountain(rng, v) {
   for (const n of SIDES) {
     sbm(n, 37, 38, 13, 38, F0, F0 + 2, mb);                        // tier 1 (face at a 37)
     sbm(n, 37, 39, 13, 39, T1 - 3, T1, lip);
-    for (const b of [17, 25]) sbm(n, 37, 38, b, b + 2, F0 + 2, T1 - 3, mb);
-    sbm(n, 37, 38, 33, 37, F0 + 2, T1 - 3, lip);                  // corner quoin strip
+    // (w4r8) critic w4r7: "the monument's lower tiers are a busy mass of
+    // small grey blocks; the reference uses fewer, larger stepped tiers".
+    // The tier pilasters, quoin strips, lamp newels, pool jets, tier-2 posts
+    // and pedestal buttresses are gone: two broad clean tiers (plinth
+    // moulding + cornice only), a plain stair with sloped cheeks, and a
+    // three-step pedestal.
     sbm(n, 29, 30, 13, 30, T1, T1 + 2, mb);                        // tier 2 (face at a 29)
     sbm(n, 29, 31, 13, 31, T2 - 3, T2, lip);
-    for (const b of [18, 24]) sbm(n, 29, 30, b, b + 2, T1 + 2, T2 - 3, mb);
     // ---- the stair: 18 fine steps from the plaza to the tier-2 top
     for (let s = 0; s < 18; s++) sb(n, 46 - s, 47 - s, -11, 11, F0, F0 + 1 + s, mb);
     for (let s = 0; s < 18; s += 2) sb(n, 46 - s, 47 - s, -11, 11, F0 + s, F0 + 1 + s, lip);   // pale nosings
@@ -1312,18 +1365,19 @@ function svcFountain(rng, v) {
       const ct = Math.min(T2 + 3, Math.max(F0 + 5, F0 + 1 + (46 - a) + 3));
       sbm(n, a, a + 1, 11, 13, F0, ct - 1, mb); sbm(n, a, a + 1, 11, 13, ct - 1, ct, lip);
     }
-    sbm(n, 47, 50, 10, 14, F0, F0 + 6, mb); sbm(n, 47, 50, 10, 14, F0 + 6, F0 + 7, lip);
-    sbm(n, 48, 49, 11, 12, F0 + 7, F0 + 13, C.darkGray); sbm(n, 48, 49, 11, 12, F0 + 13, F0 + 15, C.lamp);
-    sbm(n, 48, 49, 11, 12, F0 + 15, F0 + 16, C.darkGray);
-    // ---- the raised pool beside the stair (clockwise side), two jets
-    sb(n, 40, 52, 16, 36, F0, F0 + 3, lip);
-    sb(n, 41, 51, 17, 35, F0, F0 + 2, C.civPool); sb(n, 41, 51, 17, 35, F0 + 2, F0 + 3, null);
-    sb(n, 42, 50, 18, 34, F0 + 1, F0 + 2, C.civPoolLt);
-    for (const b of [21, 29]) {
-      sb(n, 45, 47, b, b + 2, F0 + 2, F0 + 4, lip);
-      sb(n, 45, 47, b, b + 2, F0 + 4, F0 + 8, C.civPoolLt);
-      sb(n, 44, 48, b - 1, b + 3, F0 + 8, F0 + 9, lip); sb(n, 45, 47, b, b + 2, F0 + 9, F0 + 10, lip);
-    }
+    // ---- (w4r6) TWIN reflecting pools flanking every stair, ref05: critic
+    // w4r5 "the reference monument plaza has blue pool fountains at its base,
+    // while ours reads mostly white/grey with small blue accents". Each pool
+    // now fills the plaza between the tier-1 face and the hedge (15 × 22 fine,
+    // was one 12 × 20 pool per side) in ref05's bright cyan (PIL ref pool
+    // ~(88,210,220)): a white kerb, cyan water with a pale sheen band and one
+    // low jet in the middle.
+    sbm(n, 39, 54, 15, 38, F0, F0 + 3, lip);
+    // (a bright civPoolLt sheet with a 1-fine waterLight edge: the tier and
+    // hedge shade the pools for most of the day, and waterLight alone
+    // rendered royal blue (72,139,220) there)
+    sbm(n, 40, 53, 16, 37, F0, F0 + 2, C.waterLight); sbm(n, 40, 53, 16, 37, F0 + 2, F0 + 3, null);
+    sbm(n, 41, 52, 17, 36, F0 + 1, F0 + 2, C.civPoolLt);
     // ---- relief plaques on the pedestal's first stage
     sb(n, 14, 15, -9, 9, T2 + 3, T2 + 10, lip);
     sb(n, 15, 16, -6, 6, T2 + 4, T2 + 9, plaque);
@@ -1337,9 +1391,6 @@ function svcFountain(rng, v) {
     const cx = sx * 33, cz = sz * 33;
     hb(cx - 3, cx + 3, T1, T1 + 6, cz - 3, cz + 3, mb); hb(cx - 4, cx + 4, T1 + 6, T1 + 7, cz - 4, cz + 4, lip);
     fineStatue(H, O + cx, T1 + 7, O + cz, lip);
-    const px = sx * 25, pz = sz * 25;
-    hb(px - 2, px + 2, T2, T2 + 8, pz - 2, pz + 2, mb); hb(px - 3, px + 3, T2 + 8, T2 + 9, pz - 3, pz + 3, lip);
-    hb(px - 1, px + 1, T2 + 9, T2 + 11, pz - 1, pz + 1, lip);
   }
   // ---- the core floor: marble, a narrow round water channel, a white rim
   for (let i = -27; i < 27; i++) for (let k = -27; k < 27; k++) {
@@ -1357,42 +1408,56 @@ function svcFountain(rng, v) {
   sq(15, T2, T2 + 2, mb); sq(14, T2 + 2, T2 + 11, mb);
   sq(15, T2 + 11, T2 + 12, lip); sq(14, T2 + 12, T2 + 13, lip);
   sq(12, T2 + 13, T2 + 23, mb);
-  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-    hb(sx > 0 ? 9 : -14, sx > 0 ? 14 : -9, T2 + 13, T2 + 21, sz > 0 ? 9 : -14, sz > 0 ? 14 : -9, mb);   // corner buttresses
-    hb(sx > 0 ? 9 : -14, sx > 0 ? 14 : -9, T2 + 21, T2 + 22, sz > 0 ? 9 : -14, sz > 0 ? 14 : -9, lip);
-    hb(sx > 0 ? 10 : -13, sx > 0 ? 13 : -10, T2 + 22, T2 + 26, sz > 0 ? 10 : -13, sz > 0 ? 13 : -10, mb);   // urn-like finials
-    hb(sx > 0 ? 11 : -12, sx > 0 ? 12 : -11, T2 + 26, T2 + 28, sz > 0 ? 11 : -12, sz > 0 ? 12 : -11, lip);
-  }
   sq(13, T2 + 23, T2 + 24, lip);
   sq(11, T2 + 24, T2 + 31, mb);
   sq(12, T2 + 31, T2 + 32, lip); sq(11, T2 + 32, T2 + 33, mb);
-  // ---- obelisk: a thick chamfered shaft tapering smoothly 18 → 10 fine
-  // (1-fine steps every ~24 rows), one carved band low down, pyramidion,
-  // gold tip
-  const S0 = T2 + 33, S1 = S0 + 100;
-  for (let yy = S0; yy < S1; yy++) {
-    const h = 9 - Math.floor(4 * (yy - S0) / (S1 - S0));
-    for (let i = -h; i < h; i++) for (let k = -h; k < h; k++) {
-      if ((i === -h || i === h - 1) && (k === -h || k === h - 1)) continue;   // chamfer
-      H.set(O + i, yy, O + k, mb);
+  // ---- obelisk (w4r7). Critic w4r6: "the monument's obelisk is a plain grey
+  // stack of blocks with little carved detail". The old shaft stepped in four
+  // times (18 → 10 fine) and every set-back drew a lit ledge, so it read as
+  // stacked blocks; its framed relief panel read as a window. Now: a carved
+  // lower drum (sunken panels holding a proud laurel wreath with ribbon tails,
+  // a dentilled collar), then ONE smooth shaft that tapers only by its
+  // growing corner chamfer (no ledges) with a long sunken flute on every face
+  // (two vertical shadow lines, dressed stone), a chamfered pyramidion and a
+  // gold tip. Raised-arm figures stand on the four pedestal buttresses round
+  // the shaft foot, like ref05's.
+  const S0 = T2 + 33, SM = S0 + 30, S1 = S0 + 104;
+  const csq = (h, y0, y1, cf, col) => {                             // chamfered square, corner cut cf
+    for (let yy = y0; yy < y1; yy++) for (let i = -h; i < h; i++) for (let k = -h; k < h; k++) {
+      const ex = Math.min(i + h, h - 1 - i), ez = Math.min(k + h, h - 1 - k);
+      if (ex + ez < cf) continue;
+      H.set(O + i, yy, O + k, col);
     }
-  }
-  sq(10, S0, S0 + 2, lip); sq(10, S0 + 30, S0 + 31, lip);
+  };
+  csq(9, S0, SM, 1, mb);                                            // lower drum
+  for (let yy = SM; yy < S1; yy++) csq(8, yy, yy + 1, 1 + Math.floor(3 * (yy - SM) / (S1 - SM)), mb);
+  sq(10, S0, S0 + 2, lip);                                          // base moulding
+  csq(10, SM - 3, SM - 1, 1, lip); csq(9, SM - 1, SM, 1, lip);      // collar
   for (const n of SIDES) {
-    sb(n, 9, 10, -5, 5, S0 + 5, S0 + 27, lip); sb(n, 10, 11, -3, 3, S0 + 8, S0 + 24, relief);   // relief panel
-    sb(n, 10, 11, -1, 1, S0 + 12, S0 + 20, plaque);
+    for (let b = -8; b <= 7; b += 2) sb(n, 9, 10, b, b + 1, SM - 4, SM - 3, lip);   // dentils under it
+    // sunken panel on the drum with a proud laurel wreath + ribbon tails
+    sb(n, 8, 9, -6, 6, S0 + 4, SM - 6, null);
+    sb(n, 7, 8, -6, 6, S0 + 4, SM - 6, relief);
+    // (a full wreath ring + ribbon tails read as letters "Q"/"R" in game, and
+    // a ring per face read as a pair of eyes) → a hanging garland swag under
+    // a small carved tablet, with drops at both ends
+    const wy = S0 + 17;
+    for (let b = -5; b < 5; b++) for (let yy = wy - 5; yy < wy; yy++) {
+      const d = Math.hypot(b + 0.5, (yy - wy + 0.5) * 1.3);
+      if (d >= 3.2 && d < 5.2) sb(n, 8, 9, b, b + 1, yy, yy + 1, mb);
+    }
+    sb(n, 8, 9, -5, -4, wy - 3, wy + 2, mb); sb(n, 8, 9, 4, 5, wy - 3, wy + 2, mb);   // drops
+    sb(n, 8, 9, -4, 4, wy + 3, wy + 6, mb);                          // tablet
+    // the long flute up each face of the shaft (2 shadow lines)
+    sb(n, 7, 8, -2, 2, SM + 6, S1 - 10, null);
   }
-  for (let k = 0; k < 5; k++) sq(5 - k, S1 + 2 * k, S1 + 2 * k + 2, k === 4 ? lip : mb);
-  sq(1, S1 + 10, S1 + 13, C.gold);
+  for (let k = 0; k < 8; k++) csq(8 - k, S1 + 2 * k, S1 + 2 * k + 2, Math.max(0, 3 - k), k === 7 ? lip : mb);   // pyramidion
+  sq(1, S1 + 16, S1 + 19, C.gold);
   // ---- benches and lamps on the plaza, visitors on the walks and tiers
-  for (const n of SIDES) {
-    const [x0, z0, x1, z1] = cellRect(n, 21, 23, -17, -9);
-    benchS(g, x0, y, z0, x1 - x0 > z1 - z0 ? 'x' : 'z', 4, { seat: C.wood, flip: n[0] > 0 || n[1] > 0 });
-  }
-  const walk = SIDES.map((n) => cellRect(n, 19.5, 26.5, -18, -8));
-  crowd(g, walk, y, 14, 71 + vi);
-  crowd(g, SIDES.flatMap((n) => [cellRect(n, 14.5, 18.5, 6.5, 13), cellRect(n, 14.5, 18.5, -13, -6.5)]), y + 5, 8, 17 + vi);
-  crowd(g, SIDES.map((n) => cellRect(n, 13.5, 14.5, -11, 11)), y + 9, 4, 29 + vi);
+  // (w4r6) the plaza benches gave way to the twin pools (ref05 has none)
+  const walk = SIDES.map((n) => cellRect(n, 23.5, 27, -5, 5));
+  crowd(g, walk, y, 6, 71 + vi);
+  crowd(g, SIDES.flatMap((n) => [cellRect(n, 14.5, 18.5, 6.5, 13), cellRect(n, 14.5, 18.5, -13, -6.5)]), y + 5, 3, 17 + vi);
   return doneHi(g);
 }
 

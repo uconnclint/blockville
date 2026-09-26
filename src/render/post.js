@@ -155,9 +155,11 @@ function defaultParams() {
       // and at 0 the whole mip chain is skipped (saves ~0.4 ms by day).
       // night r1: 0.9 / 0.30 -> 0.8 / 0.38 — lit panes (HDR ~0.9-1.2) and
       // lamp heads now get a gentle halo, neon a clear one; still no haze.
-      threshold: 0.8,
+      // night w4r8: 0.8 / 0.38 -> 0.72 / 0.46 — lit rooms (now whole panes, see
+      // materials winRoom) read as a warm glow rather than pinpricks.
+      threshold: 0.72,
       softness: 0.6,      // soft-knee width as a fraction of threshold
-      strength: 0.38,
+      strength: 0.46,
       radius: 0.85,       // upsample tent spread
       clamp: 2.4,         // max pre-blur highlight magnitude (hue-preserving)
       nightOnly: true,
@@ -279,7 +281,7 @@ function defaultParams() {
       // w2r1: 0.24 -> 0.18. White probe cube (tools/rendertest/faceratio.sh) right/top
       // was 0.69 at 0.24 vs the ref04 target 0.63; 0.17 measured 0.64. The shade side
       // is now ON target, which is what gives iso-mid its three-tone read back.
-      floor: { amount: 0.18, neutral: 0.0, shape: 2.5, green: 0.15 },
+      floor: { amount: 0.18, neutral: 0.0, shape: 2.5, green: 0.15, peakKey: 0.5 },   // peakKey: surface w4r4 (see uFloorPk)
       // r12 above-ground key (world Y lo..hi): pixels above the ground layer are
       // exempt from the asphalt ops and take the floor lift even when neutral.
       above: { enabled: true, amount: 1.0, lo: 1.0, hi: 1.3 },   // roads y 0, sidewalks ~0.3, lot tops ~0.9
@@ -408,6 +410,11 @@ function defaultParams() {
     // tower), so unlit masses separate. Scaled by the night factor (0 by day).
     // strength = mix toward `color` (display sRGB) at the rim's core.
     moonRim: { enabled: true, strength: 0.55, width: 1.4, minStep: 0.35, slope: 3, color: [0.55, 0.66, 0.82] },
+    // night w4r6: lawns / canopies at night pulled back from sage-teal toward lime (grade shader).
+    nightGreen: { enabled: true, amount: 1.0, lift: 0.15, blueKeep: 0.45 },   // green px mean (61,103,64) -> (66,110,49)
+    nightCool: { enabled: true, amount: 1.0, gain: 0.66, mul: [0.74, 0.9, 1.45], fade: [0.5, 0.9], warmKeep: 0.9, warmSat: [0.35, 0.6] },   // w4r8: cool grade of unlit night masses (0 = off). w4r9 (critic w4r8: ground/lot/building too close in value, one slate+ochre texture; ref05-night masses are blue at luma 60-130 with nothing at 130-180): 0.6/[0.88,0.97,1.25] luma-kept -> 1.0/[0.74,0.9,1.45] x gain 0.66, fade 0.35..0.75 -> 0.5..0.9, warm protection only for saturated warm light (0.18..0.40 -> 0.35..0.6, tan walls now cool too)
+    nightToe: { enabled: true, amount: 1.0, color: [0.012, 0.018, 0.04], fade: 0.10 },   // w4r9: [0.042,0.06,0.125] -> near-black navy (ref05-night roads ~(5,7,13); critic w4r8: push roads darker)
+      // w4r7: navy lift of night near-black (streets). w4r8: 0.028/0.042/0.095 -> 0.042/0.06/0.125 (critic w4r7: roads a heavy navy-black, road vs lot separation weak)
     // Round 9 — overview read (critic r8, 'iso' shot: "soft, slightly hazy,
     // pale is the dominant cast; buildings and lots don't stand out; ref05 has
     // crisp dark silhouette edges and much stronger local contrast"). A zoom
@@ -1130,6 +1137,7 @@ uniform float uDeepDark;   // round 6: neutral dark (asphalt) value deepen + de-
 uniform vec2  uAsphalt;    // round 7: (amount, target display luma) neutral-dark flatten
 uniform float uNightK;     // night r1: 0 day .. 1 night (fades the daylight asphalt ops)
 uniform float uFloorGreen; // r9: floor amount (r8 kernel) for lawn/foliage hues
+uniform float uFloorPk;    // surface w4r4: floor kernel keyed on mix(luma, peak channel, x) (grade.floor.peakKey)
 uniform vec4  uFloor;      // round 8: (peak lift, neutral share, kernel exponent n, 1/peak of y(1-y)^n) shaded-face floor
 uniform vec3  uAtmo;      // (strength, startDist, endDist) — aerial perspective
 uniform vec4  uGround;    // r9 overview ground key: (amount, y0, y1 world height band, 0)
@@ -1142,6 +1150,11 @@ uniform float uEdgeThr;   // depth step (world units) where the ink starts
 uniform float uEdgeR;     // ink tap radius in internal texels (line width)
 uniform vec4  uMoonRim;   // night w4r4: (strength, tap radius [internal texels], depth step [world u], 0)
 uniform vec3  uMoonRimCol; // night w4r4: display-space colour the rim lifts toward
+uniform vec3  uNightGreen; // night w4r6: (amount, value lift, blue keep) of the night lawn/foliage hue pull
+uniform vec4  uNightToe;   // night w4r7: (navy lift rgb * amount, luma where it has faded out)
+uniform vec4  uNightCool;  // night w4r8: (amount, luma fade lo, luma fade hi, warm-light protect) cool moonlit grade of the masses
+uniform vec3  uNightCoolMul; // night w4r8: luma-normalised cool multiplier
+uniform vec2  uNightCoolWarm; // night w4r9: (lo, hi) warm-chroma ramp that protects warm light from the cool grade
 uniform vec2  uDTexel;    // 1 / depth texture size
 uniform float uAspect2;
 uniform int   uDebug;     // 0 none, 1 ao, 2 bloom, 3 coc, 4 depth, 5 normals
@@ -1577,6 +1590,18 @@ void main() {
     // amount at every zoom (uFloorGreen): grass is the frame's biggest top
     // face and must stay lime, not sink to olive with the building mids.
     float lift = uFloor.x * uFloor.w * y * pow(om, uFloor.z);
+    // surface w4r4 (critics w4r1/w4r3: "the red/cream shade face is almost
+    // as bright as the lit one"): the gain d *= 1 + lift / y is a LUMA ratio,
+    // and a saturated red/pink/orange has a low luma at a high peak channel,
+    // so its shaded face took x1.8 and landed on the clip beside the lit one
+    // (probe tower right/left, red 1.14, pink 0.88). Keying the kernel on
+    // mix(luma, peak) gives saturated colours the gain their brightness
+    // implies; neutrals (peak == luma: the white probe cube) are unchanged.
+    if (uFloorPk > 0.0) {
+      float yk = max(mix(y, mx, uFloorPk), 1e-4);
+      float omk = 1.0 - min(yk, 1.0);
+      lift = uFloor.x * uFloor.w * yk * pow(omk, uFloor.z) * (y / yk);
+    }
     if (chrOk(d)) {
       float wg = greenKey(d);
       lift = mix(lift, uFloorGreen * 6.75 * y * om * om, wg);
@@ -1666,6 +1691,63 @@ void main() {
   // veg r14: props.js vegetation (scene alpha = uPropVegSsao 0.2) takes no
   // ink — ref06 canopies have clean edges (critic r13: "thin dark outline").
   if (uEdge > 0.0) d *= 1.0 - uEdge * inkK(uEdgeR, uEdgeThr) * smoothstep(0.04, 0.08, abs(lit0.a - 0.2));
+
+  // ---- NIGHT w4r6: lawns and canopies stay lime, not olive/teal ----------
+  // Critics w4r3 + w4r5: "grass and parks at night desaturate toward muddy
+  // olive". The blue-teal moon + navy sky fill turn the lime lawn (~#a8cf50)
+  // into a grey sage-teal (measured 71,109,79; hue ~133). On the ground layer
+  // and vegetation only (buildings keep their own paint), green-dominant
+  // pixels are pulled back toward yellow-green: the blue channel drops toward
+  // uNightGreen.z of itself, the red rises a touch, luma is restored and lifted
+  // by uNightGreen.y. Chroma-gated so grey concrete, asphalt and near-black
+  // never move. Day: uNightGreen.x = 0, nothing runs.
+  if (uNightGreen.x > 0.0 && waterK < 0.5) {
+    float mxG = max(max(d.r, d.g), d.b);
+    float chG = mxG - min(min(d.r, d.g), d.b);
+    if (mxG == d.g && chG > 0.02) {
+      float hG = 60.0 * ((d.b - d.r) / chG + 2.0);
+      float kG = smoothstep(70.0, 90.0, hG) * (1.0 - smoothstep(150.0, 170.0, hG))
+               * smoothstep(0.10, 0.22, chG / mxG) * smoothstep(0.06, 0.14, mxG);
+      if (kG > 0.0) {
+        float vegG = 1.0 - smoothstep(0.04, 0.08, abs(lit0.a - 0.2));
+        float dzG = texture2D(tDepth, vUv).x;
+        float zcG = linearDepth(dzG, uNear, uFar);
+        vec3 vpG = vec3(mix(uOrthoBox.x, uOrthoBox.y, vUv.x), mix(uOrthoBox.z, uOrthoBox.w, vUv.y), -zcG);
+        float groundG = 1.0 - smoothstep(1.2, 2.2, dot(uWorldRowY, vec4(vpG, 1.0)));
+        kG *= uNightGreen.x * max(vegG, groundG);
+        float yG = max(luma(d), 1e-4);
+        vec3 tG = vec3(d.r * 1.15, d.g, d.b * uNightGreen.z);
+        tG *= yG * (1.0 + uNightGreen.y) / max(luma(tG), 1e-4);
+        d = mix(d, tG, kG);
+      }
+    }
+  }
+
+  // ---- NIGHT w4r7: moonlit toe -------------------------------------------
+  // Critic w4r6: "lift the murky brown-black ground so the lamp pools read as
+  // distinct round pools". Night asphalt and the street canyons sat at
+  // ~(10,10,12): pure black, so a pool's warm fringe read as brown-on-black.
+  // Near-black pixels get a small navy lift (fading out by uNightToe.w luma),
+  // so streets are a deep moonlit blue and the pools sit on it as warm discs.
+  // Additive on the toe only; everything brighter is untouched. Day: 0.
+  if (uNightToe.w > 0.0) {
+    d += uNightToe.rgb * (1.0 - smoothstep(0.0, uNightToe.w, luma(d)));
+  }
+
+  // ---- NIGHT w4r8: cool moonlit masses, warm lights ------------------------
+  // Critics w4r5..r7: the core's unlit masses read "murky olive and slate" —
+  // measured mid-body (84,94,88), a green-grey, so warm windows sat on a
+  // warm-ish wall and read as noise. Unlit masses take a gentle luma-kept
+  // cool multiply (colour stays: gold towers stay gold, a touch cooler);
+  // bright pixels (lit panes, neon) and warm light (lamp pools, lit rooms)
+  // are protected, so warm-on-cool is the night's contrast. Day: 0.
+  if (uNightCool.x > 0.0) {
+    float yC = luma(d);
+    float mxC = max(max(d.r, d.g), d.b);
+    float warmC = smoothstep(uNightCoolWarm.x, uNightCoolWarm.y, (d.r - d.b) / max(mxC, 1e-4)) * smoothstep(0.12, 0.30, yC);
+    float kC = uNightCool.x * (1.0 - smoothstep(uNightCool.y, uNightCool.z, yC)) * (1.0 - uNightCool.w * warmC);
+    d *= mix(vec3(1.0), uNightCoolMul, kC);
+  }
 
   // ---- NIGHT w4r4: moonlit silhouette rim ---------------------------------
   // Critics w4r1..r3 (all three): at night unlit masses share one dark value,
@@ -2321,10 +2403,10 @@ export class PostFX {
       uShadowLift: U(0), uShadowSat: U(0), uVibrance: U(0), uGreenLift: U(0),
       uShoulder: U(0.76), uBlackSlope: U(0), uBlackOffset: U(0.04), uCurve: U(new THREE.Vector3(1, 0.05, 0.3)), uCurveSat: U(0), uCurveGreen: U(0), uCurveDip: U(new THREE.Vector2(0, 0.3)), uCoolSat: U(new THREE.Vector2(0, 195)), uDeepDark: U(0), uAsphalt: U(new THREE.Vector2(0, 0.086)), uNightK: U(0), uFloor: U(new THREE.Vector4(0, 0.35, 2, 6.75)), uAtmo: U(new THREE.Vector3(0.1, 200, 900)),
       uAspect2: U(1.6), uDebug: U(0),
-      uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0),
+      uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0), uFloorPk: U(0),
       uOrthoBox: U(new THREE.Vector4(-1, 1, -1, 1)), uWorldRowY: U(new THREE.Vector4(0, 1, 0, 0)),
       uEdge: U(0), uEdgeThr: U(0.4), uEdgeR: U(2), uDTexel: U(new THREE.Vector2(1, 1)),
-      uMoonRim: U(new THREE.Vector4(0, 2, 0.4, 0)), uMoonRimCol: U(new THREE.Vector3(0.55, 0.66, 0.82)),
+      uMoonRim: U(new THREE.Vector4(0, 2, 0.4, 0)), uMoonRimCol: U(new THREE.Vector3(0.55, 0.66, 0.82)), uNightGreen: U(new THREE.Vector3(0, 0, 1)), uNightToe: U(new THREE.Vector4(0, 0, 0, 0)), uNightCool: U(new THREE.Vector4(0, 0.35, 0.75, 0.9)), uNightCoolMul: U(new THREE.Vector3(1, 1, 1)), uNightCoolWarm: U(new THREE.Vector2(0.18, 0.40)),
       uNear: U(1), uFar: U(2000),
     });
 
@@ -2870,6 +2952,7 @@ export class PostFX {
         const fAmt = clamp(F.amount || 0, 0, 0.4) * (1 - ov * (1 - clamp(Ov.floor ?? 1, 0, 1)))
           * dLerp(1, clamp(Dp.floor ?? 1, 0, 1));
         u.uFloorGreen.value = clamp(F.green != null ? F.green : (F.amount || 0), 0, 0.4);
+        u.uFloorPk.value = clamp(F.peakKey || 0, 0, 1);
         u.uFloor.value.set(fAmt, nu, n, 1 / (ym * Math.pow(1 - ym, n)));
       }
       const A = P.atmo || { strength: 0, start: 0.35, rangeScale: 3.5 };
@@ -2917,6 +3000,32 @@ export class PostFX {
         u.uMoonRim.value.set(k, R, Math.max(MR.minStep > 0 ? MR.minStep : 0.35, wpp * Math.max(2, R * (MR.slope > 0 ? MR.slope : 3))), 0);
         const col = MR.color || [0.55, 0.66, 0.82];
         u.uMoonRimCol.value.set(col[0], col[1], col[2]);
+      }
+      // night w4r6: night lawn / foliage hue pull (see the grade shader).
+      {
+        const NG = P.nightGreen || {};
+        const k = (ortho && NG.enabled !== false && P.debug === 'none') ? (this._nightEffK || 0) * clamp(NG.amount || 0, 0, 1) : 0;
+        u.uNightGreen.value.set(k, NG.lift || 0, NG.blueKeep != null ? NG.blueKeep : 0.6);
+      }
+      // night w4r7: moonlit toe (see the grade shader).
+      {
+        const NT = P.nightToe || {};
+        const k = (NT.enabled !== false && P.debug === 'none') ? (this._nightEffK || 0) * clamp(NT.amount != null ? NT.amount : 1, 0, 1) : 0;
+        const c = NT.color || [0.028, 0.042, 0.095];
+        u.uNightToe.value.set(c[0] * k, c[1] * k, c[2] * k, k > 0 ? (NT.fade || 0.10) : 0);
+      }
+      // night w4r8: cool moonlit grade of the unlit masses (see the grade shader).
+      {
+        const NC = P.nightCool || {};
+        const k = (NC.enabled !== false && P.debug === 'none') ? (this._nightEffK || 0) * clamp(NC.amount != null ? NC.amount : 0, 0, 1) : 0;
+        const f = NC.fade || [0.35, 0.75];
+        u.uNightCool.value.set(k, f[0], f[1], NC.warmKeep != null ? NC.warmKeep : 0.9);
+        const m = NC.mul || [0.88, 0.97, 1.25];
+        // w4r9: gain = luma scale of the unlit masses (1 = luma kept, as w4r8).
+        const lm = (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / (NC.gain != null ? NC.gain : 1);
+        u.uNightCoolMul.value.set(m[0] / lm, m[1] / lm, m[2] / lm);
+        const ws = NC.warmSat || [0.18, 0.40];
+        u.uNightCoolWarm.value.set(ws[0], ws[1]);
       }
       u.uNear.value = near;
       u.uFar.value = far;

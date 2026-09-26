@@ -287,7 +287,7 @@ const DEFAULTS = {
   // the saturating knee below. Near hits dominate (fall 1.5) so the ramp still
   // hugs the corner, but a small overhang (cornice, sill, awning) now lays a
   // clearly visible band, and deep slots floor at 1 - aoRayStrength = 0.34.
-  aoDist: 2.0,
+  aoDist: 2.25,        // w4r9 FROZEN (coordinator 02:30: midpoint of r7 3.0 / r8 1.5; wider pools, toe keeps open faces clean).  w4r8: 3.0 -> 1.5 with aoBroad 0.8 -> 0 (critic w4r7: 'blotchy smeared gradient on the roof slab, muddy smear on the plinth front'; coordinator 01:35: CONTAINED AO, open faces exactly 1.0). The long rays + broad cone greyed whole roof decks and lot paving (bake: deck 86% < 0.95, paving median ~0.5); now the pools sit in the crease (deck ~0.52 at the parapet, 0.93 within ~4 voxels) and materials' exponents + aoToe carry the depth. Mesh time -20%.  wave-4 r4: the stacked sky-shadow + broad terms dimmed every recessed panel to one flat ~0.55 grey (bakery +z facade median 0.58, 'flat, AO faint' x3 critics); ray-only with a longer reach gives ref04's open panel + soft corner pools (aomap w4r4-ao/c2cmp.png). was 2.0
   aoRays: 32,
   aoRayFall: 1.5,
   aoRayLevels: 12,
@@ -295,7 +295,7 @@ const DEFAULTS = {
   // 0.835 / 1.1 puts a crease at 0.61 and an inside corner at 0.39 — the
   // same two levels the classic res-1 term gives, so res 1 and res 4 models
   // standing side by side read as one family.
-  aoRayStrength: 0.62,   // wave-4 r2: 0.55 -> 0.62 (critic w4r1: ledges 'pasted on'; the r13 note's first step). r13: 0.76 -> 0.55 with knee 5 -> 2.5 (critic r12: ground floor "muddy ... almost black"; a plain crease went to 0.30, now ~0.57, corner rolls into the 0.55 wall floor, small ledge ~0.76). r9 0.66 -> 0.76 (critic r8: 'raise its strength a lot'); floor 0.24. r8: floor 0.34
+  aoRayStrength: 0.78,   // wave-4 r4: 0.62 -> 0.78 with knee 2.5 -> 2.0 (see aoDist; floors stay aoWallFloor + materials aoWallCap).  wave-4 r2: 0.55 -> 0.62 (critic w4r1: ledges 'pasted on'; the r13 note's first step). r13: 0.76 -> 0.55 with knee 5 -> 2.5 (critic r12: ground floor "muddy ... almost black"; a plain crease went to 0.30, now ~0.57, corner rolls into the 0.55 wall floor, small ledge ~0.76). r9 0.66 -> 0.76 (critic r8: 'raise its strength a lot'); floor 0.24. r8: floor 0.34
   aoRayCurve: 1.0,    // r8: the knee does the shaping now (r4-r7: 0.66)
   // TOE (surface r4): a soft-knee threshold on occ (quadratic below 2*toe,
   // occ - toe above, renormalised by 1 - toe) before the curve. Open-ish faces (a roof deck inside a low parapet, lot paving beside
@@ -304,7 +304,7 @@ const DEFAULTS = {
   // them pure albedo and spends the whole ramp on real concave corners.
   aoRayToe: 0.03,     // r12: 0.05 -> 0.03 (small overhangs register). r8: 0.16 -> 0.05 (the knee needs the small-occlusion range)
   // aoRayKnee: saturating shape (1 - e^-k f)/(1 - e^-k) on the occlusion (r8).
-  aoRayKnee: 2.5,     // r13: 5 -> 2.5 (see aoRayStrength). r12: 4 -> 5 (critic r11: ledges read as painted lines; r12-e pink lit-face luma p10 120 -> ~87)
+  aoRayKnee: 2.0,     // wave-4 r4: 2.5 -> 2.0 (softer, wider ramp).  r13: 5 -> 2.5 (see aoRayStrength). r12: 4 -> 5 (critic r11: ledges read as painted lines; r12-e pink lit-face luma p10 120 -> ~87)
   // AO SPREAD (surface r9; critic r8: "AO is only a thin line under the
   // cornice, around the frames and sills and where the storey meets the sign
   // band ... it should spread about 1-2 voxels from each contact edge"). The
@@ -350,8 +350,8 @@ const DEFAULTS = {
   // r12/aomap.mjs: the r9-r11 symmetric 1-unit dilation stamped the reveal
   // darkness of four windows over the whole panel, ~0.45 flat, which is why
   // the bakery's storeys read as one flat tone).
-  aoSkyShadow: 1.0,   // wave-4 r3: 0.9 -> 1.0 (critics w4r1+w4r2 agree: no soft AO under cornice / sills / around the window bays on the upper walls). wave-4 r2: 0.8 -> 0.9 (with aoSkyDepth: deep overhangs pool, thin sills stay short). r13: 0.85 -> 0.8 (it is also scaled by the lower aoRayStrength)
-  aoSkyReach: 1.6,    // wave-4 r3: 1.25 -> 1.6 (wider soft pools; see aoSkyShadow). r13: 1.5 -> 1.25
+  aoSkyShadow: 0.3,   // wave-4 r4: 1.0 -> 0.3 (see aoDist: its downward dilation flattened recessed panels).  wave-4 r3: 0.9 -> 1.0 (critics w4r1+w4r2 agree: no soft AO under cornice / sills / around the window bays on the upper walls). wave-4 r2: 0.8 -> 0.9 (with aoSkyDepth: deep overhangs pool, thin sills stay short). r13: 0.85 -> 0.8 (it is also scaled by the lower aoRayStrength)
+  aoSkyReach: 0.8,    // wave-4 r4: 1.6 -> 0.8.  wave-4 r3: 1.25 -> 1.6 (wider soft pools; see aoSkyShadow). r13: 1.5 -> 1.25
   aoSkyPow: 1.3,
   // wave-4 r2 (critic w4r1: "almost no soft AO under the cornice, sills,
   // awnings ... the ledges look pasted on"). Measured (aomap, bakery +z):
@@ -376,11 +376,11 @@ const DEFAULTS = {
   // plinth under a wall, a parapet round a roof, a storey over a shopfront.
   // aoBroadLift = start point off the face, aoBroadCone = box half-size per
   // unit of distance (both world units / ratios).
-  aoBroad: 0.35,      // wave-4 r2: 0.45 -> 0.35 (open wall nearer 1.0, so the ledge pools have something to contrast with). r13: 0.8 -> 0.45 (critic r12: gradient up the whole storey). r12: 0.6 -> 0.8 (critic r11: no contact shading where walls meet roof and plinth)
-  aoBroadDist: 3.5,   // r13: 4.5 -> 3.5. r12: 3.5 -> 4.5
+  aoBroad: 0.4,       // w4r9 FROZEN: midpoint of r7 0.8 / r8 0, with a SHORT reach (aoBroadDist 4, aoBroadTop 1.0) so the pools stay in recesses and materials aoToe zeroes the far tails (bakery roof std 48 -> 50, no blotches).  w4r8: 0.8 -> 0 (see aoDist: the massing-scale cone term was the low-frequency mottling on decks / paving).  w4r7: 0.6 -> 0.8 with aoBroadDist 5 -> 6 and aoBroadGround 0.35 -> 0.7 (critics w4r4-w4r6 all: 'no broad soft falloff where walls meet the lot paving; building looks pasted on'). A/B one-bakery (rounds/surface/w4r7 v4 vs v5): the lower storey and white columns now darken softly toward the plinth, the storefront is not muddy (aoWallFloor still floors it), bakery mesh time 251 -> 265 ms, tris -3%.  wave-4 r5: 0 -> 0.6 0 -> 0.6 with aoBroadDist 3.5 -> 5 (critics w4r1-w4r4 ALL: 'AO too weak, needs a WIDE soft band'). Measured: ref04's pools run ~100-150 px of a 2048 render, i.e. ~2.5-3 of OUR world units at matched object size, while the fine ray AO pools ~0.5-1 unit; only this massing-scale term reaches that. A/B one-bakery/iso-close (rounds/surface/w4r5 br6d5/br8d5): soft pools on roof decks by the parapet, walls under cornices and at the plinth, no muddy storefront (aoWallFloor still floors it).  wave-4 r4: 0.35 -> 0 (see aoDist; the 3-unit ray covers roof/plinth contact).  wave-4 r2: 0.45 -> 0.35 (open wall nearer 1.0, so the ledge pools have something to contrast with). r13: 0.8 -> 0.45 (critic r12: gradient up the whole storey). r12: 0.6 -> 0.8 (critic r11: no contact shading where walls meet roof and plinth)
+  aoBroadDist: 4.0,   // w4r9 FROZEN: 6 -> 4 (short reach; see aoBroad).  w4r7: 5 -> 6 (see aoBroad). wave-4 r5: 3.5 -> 5 (see aoBroad). r13: 4.5 -> 3.5. r12: 3.5 -> 4.5
   aoBroadFall: 1.0,
   aoBroadKnee: 2.0,
-  aoBroadTop: 0.5,    // share of aoBroad on up-facing faces (paving, roof decks)
+  aoBroadTop: 1.0,    // w4r9 FROZEN: 1.6 -> 1.0 (coordinator 01:35: pull back toward 0.8-1.0).  was: share of aoBroad on up-facing faces (paving, roof decks). w4r6: 0.5 -> 1.6 (effective 0.96, capped at 1) with aoTopFloor 0.5 -> 0.32. Critics w4r1-w4r5 all: AO too weak/narrow; coordinator's ref04 deck profile is ~0.2-0.25 at the parapet reaching full only after ~12 of our voxels. Bakery deck bake: 0.50 -> 0.34 at the parapet, 0.93 reached at ~5 -> ~9 voxels. Walls are unchanged (the wall share is aoBroad).
   aoBroadLift: 0.125,
   aoBroadCone: 0.3,
   // r13 (critic r12: "ground-floor storefront faces fall off into a heavy,
@@ -390,7 +390,7 @@ const DEFAULTS = {
   // analytic ground (y < 0) in the broad cone trace: the fine ray AO and
   // lighting's contact shadow already mark the ground line, and the broad
   // ground at full weight stacked a gradient up the whole storey.
-  aoBroadGround: 0.35,
+  aoBroadGround: 0.5,   // w4r9 FROZEN: 0.7 -> 0.5 (midpoint).  w4r7: 0.35 -> 0.7 (see aoBroad; r13 halved it against the r12 'muddy storefront', aoWallFloor now guards that)
   // COMBINED FLOOR (building-scale callers only, aoDist >= 1): the fine, sky,
   // spread and broad terms multiply up, and on a recessed res-8 shopfront
   // under a storey and awnings they reached the 0.24 ray floor, which the
@@ -399,7 +399,7 @@ const DEFAULTS = {
   // into aoWallFloor on vertical faces and aoTopFloor on up/down faces, so
   // a crease is a confident step darker but never muddy or near-black.
   aoWallFloor: 0.48,   // wave-4 r2: 0.55 -> 0.48 (with materials aoWallCap 0.5: bakery cornice crease 0.82 -> 0.75 of no-AO in sRGB, the coordinator's ~0.65-0.7 'of lit' midpoint)
-  aoTopFloor: 0.5,
+  aoTopFloor: 0.32,   // w4r6: 0.5 -> 0.32 (see aoBroadTop)
   aoFloorKnee: 0.1,
   // ray mode merges a rectangle when bilinear AO across it stays within this
   // many AO levels of every vertex inside (0 = only exact ramps/flat).
@@ -410,6 +410,9 @@ const DEFAULTS = {
   // screen-space grime term. Only with skipBottom (the bottom faces it would
   // hide are already skipped).
   groundAO: true,
+  // w4r10: atlas AO is stored unquantised (see vtxA in _buildSliced); darkness
+  // below this snaps to exactly open (matches materials aoToe's lower edge).
+  aoAtlasSnap: 0.03,
   // wave-4 r3: a model that brings its own lot (full y = 0 layer) stands on
   // terrain's LOT_Y (0.42) footing; outside its footprint the AO ground plane
   // sits this far (world units) lower. See _lotGroundDropV. false = off.
@@ -1092,6 +1095,24 @@ function _buildSliced(model, o, res, greedy, R, t0) {
   const atlasOn = !!o.aoAtlas && rayAO && greedy && aoOn;
   const latV = atlasOn ? new Float32Array((maxA + 1) * (maxB + 1)) : null;
   const latP = atlasOn ? new Uint8Array((maxA + 1) * (maxB + 1)) : null;
+  // w4r10 CONTINUOUS ATLAS AO (critics w4r7 + w4r9: 'blotchy, smeared light-
+  // dark mottling on the flat roof slab / plinth'). The lattice levels above
+  // are quantised to L = 15 steps (0.052 of light each) for the 4-bit merge
+  // key; materials then raise up-face AO to the 3rd power, so one level step
+  // on a roof deck became a ~12% brightness terrace, and the ray field's +-1
+  // level jitter plus the tolerant bilinear stamping read as blotches. The
+  // atlas is R8, so in atlas mode every lattice vertex keeps its UNQUANTISED
+  // light factor (vtxA) and that is what the atlas stores: pools become one
+  // smooth monotonic ramp, open faces stay exactly flat. The per-vertex
+  // fallback (atlas full / off) keeps the quantised levels.
+  // Darkness below aoAtlasSnap is stored as exactly 1.0: materials' aoToe
+  // (smoothstep from 0.03) shows none of it anyway, and exact 1.0 lets open
+  // faces keep 1-texel regions (atlas budget).
+  const vtxA = atlasOn && o.aoAtlasCont !== false ? new Float32Array((maxA + 1) * (maxB + 1)) : null;
+  const aSnap = 1 - Math.max(0, +o.aoAtlasSnap || 0);
+  // tolerance (8-bit AO units) for storing a region axis as 2 texels (linear)
+  const linTol = o.aoAtlasLinTol > 0 ? +o.aoAtlasLinTol : 1.0;
+  const contA = (x) => (x >= aSnap ? 1 : x);
   const maskCol = atlasOn ? new Int32Array(maxA * maxB) : null;
   // AO spread (see DEFAULTS.aoSpread): radius in lattice steps + weight table.
   const spreadR = rayAO && o.ao !== false && o.aoSpread > 0 && !(o.aoSpreadGain <= 0) ? Math.max(0, Math.round(o.aoSpread * res)) : 0;
@@ -1394,7 +1415,7 @@ function _buildSliced(model, o, res, greedy, R, t0) {
       if (v < 0) { v = coneOcc(x, y, z, f); cBuf[k] = v; }
       return v;
     };
-    const broadTop = broadS * Math.max(0, Math.min(1, o.aoBroadTop != null ? +o.aoBroadTop : 0.5));
+    const broadTop = Math.min(1, broadS * Math.max(0, Math.min(2, o.aoBroadTop != null ? +o.aoBroadTop : 0.5)));   // w4r6: share may exceed 1 (tops pool wider than walls)
     const q = [0, 0, 0];
     broadDark = (px, py, pz, f) => {
       const F = FACES[f], ai = axisOf(F.u), bi = axisOf(F.v), d = axisOf(F.n);
@@ -1573,6 +1594,7 @@ function _buildSliced(model, o, res, greedy, R, t0) {
               if (kf > k0) kf = floorKn > 0 ? k0 + floorKn * (1 - Math.exp(-(kf - k0) / floorKn)) : cap;
             }
             vtxV[vi] = rayS > 0 ? Math.round(L * (1 - kf - rayMin) / rayS) : L;
+            if (vtxA) vtxA[vi] = contA(1 - kf);
             vtxStamp[vi] = stamp;
           }
         }
@@ -1617,6 +1639,7 @@ function _buildSliced(model, o, res, greedy, R, t0) {
                   let a = 1 - rayS * rayShape(Math.pow(ot, rayG));
                   if (broadDark) a = Math.max(rayMin, a * (1 - broadDark(pt[0], pt[1], pt[2], f)));
                   vtxV[vi] = rayS > 0 ? Math.round(L * (a - rayMin) / rayS) : L;
+                  if (vtxA) vtxA[vi] = contA(a);
                 }
                 lvl = vtxV[vi];
               } else if (solidAO) {
@@ -1656,6 +1679,18 @@ function _buildSliced(model, o, res, greedy, R, t0) {
           if (key === 0) continue;
           let w = 1, h = 1;
           const ci = (key > 0 ? key & 511 : -key) - 1;
+          if (vtxA) {
+            // w4r10: stamp this cell's 4 lattice corners with the continuous
+            // light factor (see vtxA); the colour-only sweep below emits the
+            // quads, so no AO-tolerant merge is needed here.
+            maskKey[mi] = 0;
+            const LA = DA + 1;
+            for (let k = 0; k < 4; k++) {
+              const vi = (bb + (k >> 1)) * LA + a + (k & 1);
+              latV[vi] = vtxA[vi] * 255;
+            }
+            continue;
+          }
           if (rayAO && greedy) {
             // TOLERANT MERGE (ray mode). The AO lives on the lattice vertices
             // (vtxV, one level per vertex for this layer), so a same-colour
@@ -1773,14 +1808,14 @@ function _buildSliced(model, o, res, greedy, R, t0) {
               const row = L0 + j * LA, v0 = latV[row], v1 = latV[row + w];
               for (let i = 1; i < w; i++) {
                 const e = v0 + (v1 - v0) * (i / w) - latV[row + i];
-                if (e > 1.0 || e < -1.0) { linU = false; break; }
+                if (e > linTol || e < -linTol) { linU = false; break; }
               }
             }
             for (let i = 0; i <= w && linV; i++) {
               const v0 = latV[L0 + i], v1 = latV[L0 + h * LA + i];
               for (let j = 1; j < h; j++) {
                 const e = v0 + (v1 - v0) * (j / h) - latV[L0 + j * LA + i];
-                if (e > 1.0 || e < -1.0) { linV = false; break; }
+                if (e > linTol || e < -linTol) { linV = false; break; }
               }
             }
             // ...and one texel along an axis whose two ends agree (the AO is
@@ -2324,8 +2359,10 @@ export function selfTest() {
         // r9: probed 4 voxels from the occluder face (was 1). aoSpread gives
         // every contact the same soft band out to ~2 voxels by design; past
         // that the wall's own (physical) occlusion must reach further.
-        if (Math.abs(x - 1.25) < 1e-3) nearWall = Math.min(nearWall, ao[v]);
-        if (Math.abs(x - 2.75) < 1e-3) nearKerb = Math.min(nearKerb, ao[v]);
+        // w4r8: 4 -> 3 voxels (contained AO, aoDist 1.5: a wall's pool is
+        // ~gone by 4 voxels by design; at 2 the aoSpread band is identical for both, coordinator 01:35 target).
+        if (Math.abs(x - 1.0) < 1e-3) nearWall = Math.min(nearWall, ao[v]);
+        if (Math.abs(x - 3.0) < 1e-3) nearKerb = Math.min(nearKerb, ao[v]);
       }
       if (bad) fail(bad + ' vertices whose aoQuad corner != aoT');
       else if (!(nearKerb > nearWall)) fail('1-voxel kerb darkens as much as a wall (' + nearKerb.toFixed(3) + ' vs ' + nearWall.toFixed(3) + ')');

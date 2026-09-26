@@ -307,7 +307,8 @@ function sawtooth(g, x0, x1, z0, z1, y, o = {}) {
     for (let j = 0; j < H; j++) {
       const ze = zs + Math.max(1, Math.round((D - 1) * (1 - j / H)));
       g.box(x0, y + j, zs, x1, y + j, ze, roof);
-      for (let x = x0; x <= x1; x++) g.set(x, y + j, zs, j === H - 1 || x === x0 || x === x1 || (x & 3) === 0 ? frame : glass);
+      const mu = o.mull || 4;
+      for (let x = x0; x <= x1; x++) g.set(x, y + j, zs, j === H - 1 || x === x0 || x === x1 || (x - x0) % mu === 0 ? frame : glass);
     }
   }
 }
@@ -497,10 +498,20 @@ const WZ0 = 13, WZ1 = 28;                               // hall front / back wal
 // w4 r3 (critic w4r2: "clones of an office block … ref05's industry is broad,
 // low-slung warehouses"): halls 20/19 → 15 high, the office an annex under the
 // hall's parapet, not a tower above it
-const WK = { dock: { hx1: 21, h: 15 }, process: { hx1: 18, h: 15 } };
+// w4 r4 (critic w4r3: "crowded piles of small pale-grey boxes … no single mass
+// that reads as a building"; ref05: ONE big coherent shed per lot): the dock
+// hall spans the whole lot width, its office is a glazed tier at the hall's
+// front-right (x 22..28, one mass with it), not a separate annex / silo /
+// head-house / conveyor; the yard is one clear striped apron
+const WK = { dock: { hx1: 28, h: 15 }, process: { hx1: 18, h: 15 } };
+const W_OX0 = 22;                                       // dock office tier x 22..28
 // stack spots (voxel index) on the hall roof, per kind — shared with VENTS
 const WSTACK = { dock: [[4, 25], [8, 25]], process: [[15, 25], [15, 19]] };
 const W_STACK_H = 46;
+// w4 r8 (critic w4r7: "a nearly identical pale-blue lot … turn the lots into
+// large asphalt truck yards"): civSlate rendered a pale teal #7cb1bd; the new
+// indTarmac renders near ref05's dark blue-slate yard asphalt (#3f5d6c)
+const W_YARD = globalThis.__IND_YARD != null ? globalThis.__IND_YARD : C.indTarmac;
 
 // Small sign: white board, 1× letters inlaid flush in the accent colour
 // (ref05's "POLICE STATION" / red "EPS" boards), 7 voxels tall.
@@ -595,6 +606,8 @@ function glassOffice(g, x0, z0, x1, z1, y0, h, o = {}) {
 // a pilaster every `pitch`, a 4-wide recessed glass strip in each bay from y0
 // to y1 with a dark navy transom every 4 rows.
 function glazeBays(f, u0, u1, y0, y1, pitch = 5, skip = [], pc = C.indWall) {
+  // w4 r5: blue-grey Dk pilasters drew stripes; ref05's are light
+  if (pc === C.indSteelDk || pc === C.indCorrDk) pc = C.indWall;
   for (let u = u0; u <= u1; u += pitch) {
     f.box(u, y0 - 2, 1, u, y1 + 1, 1, pc);
     // r9 (critic r8: ref05's works have "glazed blue curtain-wall facades"):
@@ -602,11 +615,13 @@ function glazeBays(f, u0, u1, y0, y1, pitch = 5, skip = [], pc = C.indWall) {
     // r12 (critic r11: ref05's "blue glass curtain walls"): 4 of every 5 columns glass
     const a = pitch >= 5 ? u + 1 : u + 2, b = pitch >= 5 ? u + 4 : u + 3;
     if (b >= u1 || skip.some(([s0, s1]) => b >= s0 && a <= s1)) continue;
+    // w4 r5 (critic w4r4: "big clear glass … panels", not thin stripes): tall
+    // unbroken glass, one transom only on very tall bays (ref05 power plant)
+    const tall = y1 - y0 >= 16, ym = y0 + ((y1 - y0) >> 1);
     for (let uu = a; uu <= b; uu++) for (let y = y0; y <= y1; y++) {
-      const r = (y - y0) % 4;
-      if (r === 3) { f.set(uu, y, 0, C.dtGlassDeep); continue; }
+      if (tall && y === ym) { f.set(uu, y, 0, C.dtGlassDeep); continue; }
       f.del(uu, y, 0);
-      f.set(uu, y, -1, igl(uu, y, r === 0));
+      f.set(uu, y, -1, igl(uu, y, y === y0));
     }
     f.box(a, y0 - 1, 1, b, y0 - 1, 1, C.white);
     f.box(a, y1 + 1, 0, b, y1 + 1, 0, C.dtNavyPanel);
@@ -619,8 +634,9 @@ function curtainBand(f, u0, u1, y0, y1, o = {}) {
   f.box(u0 - 1, y0 - 1, 1, u1 + 1, y0 - 1, 1, C.white);
   f.box(u0 - 1, y1 + 1, 1, u1 + 1, y1 + 1, 1, o.mull != null ? o.mull : C.indWall);
   for (let u = u0; u <= u1; u++) {
-    if ((u - u0) % 4 === 0 || u === u1) { f.box(u, y0, 0, u, y1, 0, mull); continue; }
-    for (let y = y0; y <= y1; y++) f.set(u, y, 0, y === ym ? C.dtNavyPanel : igl(u, y, y === y0));
+    // w4 r5: wider panes, no mid transom stripe (critic w4r4)
+    if ((u - u0) % 6 === 0 || u === u1) { f.box(u, y0, 0, u, y1, 0, mull); continue; }
+    for (let y = y0; y <= y1; y++) f.set(u, y, 0, (y1 - y0 >= 10 && y === ym) ? C.dtNavyPanel : igl(u, y, y === y0));
   }
 }
 // r7 cladding schemes (critic r6: "every factory sits on the same white-plinth-
@@ -631,7 +647,7 @@ const CLAD = {
   // w4 r1: steel / navy are light bodies now; their blue Dk tone is for
   // pilasters only — as a seam every 5 rows it drew blue pinstripes
   steel: () => ({ wall: C.indSteel, pil: C.indSteelDk, seam: C.indShade }),
-  navy: () => ({ wall: C.indNavy, pil: C.indNavyDk, seam: C.indShade }),
+  navy: () => ({ wall: C.indNavy, pil: C.indSteelDk, seam: C.indShade }),
   corr: () => ({ wall: C.indCorr, pil: C.indCorrDk, seam: C.indCorrDk }),
   white: () => ({ wall: C.indWall, pil: C.indShade, seam: C.indShade }),
   concrete: () => ({ wall: C.indCorr, pil: C.indWall, seam: C.indShade }),
@@ -641,6 +657,12 @@ const CLAD = {
   brick: () => ({ wall: C.resTerracotta, pil: C.resTerraTrim, seam: C.resTerraTrim }),
   cream: () => ({ wall: C.dtLime, pil: C.dtLimeShade, seam: C.dtLimeShade }),
   sage: () => ({ wall: C.resSage, pil: C.resTileGreenDk, seam: C.resTileGreenDk }),
+  // w4 r7 (critic w4r6: "near-identical blue-grey boxes … the reference mixes
+  // cream, tan and teal"; coordinator 01:05: "brick red works, white/teal
+  // plant, grey sheds with orange trim"): more families from the shared palette
+  redbrick: () => ({ wall: C.brick, pil: C.brickDark, seam: C.brickDark }),
+  tan: () => ({ wall: C.sand, pil: C.sandDark, seam: C.sandDark }),
+  teal: () => ({ wall: C.civHall, pil: C.civHallDk, seam: C.civHallDk }),
 };
 // Horizontal panel joints on a hall's bare wall voxels (only where the wall
 // colour still shows, so glazing / doors / signs are untouched): a flush seam
@@ -650,6 +672,9 @@ function gget(g, x, y, z) {
   return g.map.get(Math.round(x) + ',' + y + ',' + Math.round(z));
 }
 function panelSeams(g, x0, z0, x1, z1, y0, y1, wall, seam, every = 6) {
+  // w4 r5 (critic w4r4: "façades busy with thin stripes … simplify banding
+  // into big panels"): seam courses off — big faces stay one calm colour
+  if (!globalThis.__IND_SEAMS) return;
   for (let y = y0 + every; y < y1; y += every) {
     for (let x = x0; x <= x1; x++) for (const z of [z0, z1]) if (gget(g, x, y, z) === wall) g.set(x, y, z, seam);
     for (let z = z0; z <= z1; z++) for (const x of [x0, x1]) if (gget(g, x, y, z) === wall) g.set(x, y, z, seam);
@@ -732,6 +757,20 @@ function shapedRoof(g, x0, z0, x1, z1, top, kind, accent) {
   }
   if (kind === 'gable') for (let x = x0 + 4; x <= x1 - 4; x += 5) { g.box(x, top + Hr + 1, Math.floor(zc), x + 1, top + Hr + 2, Math.ceil(zc), C.indShade); g.set(x, top + Hr + 3, Math.floor(zc), C.indBase); }
 }
+// w4 r4: roof monitor — a long glazed lantern along the hall's ridge (z 18..23)
+// from x0 to x1: glass sides with white mullions every 4, solid ends, a flat
+// cap with a white coping edge.
+function monitorRoof(g, x0, x1, top, cap) {
+  const za = WZ0 + 6, zb = WZ1 - 6, yt = top + 3;
+  g.box(x0, top, za, x1, yt - 1, zb, C.indShade);
+  for (const z of [za, zb]) for (let x = x0; x <= x1; x++) {
+    const m = x === x0 || x === x1 || ((x - x0) & 3) === 0;
+    g.set(x, top, z, C.indBase);
+    for (let y = top + 1; y < yt; y++) g.set(x, y, z, m ? C.white : C.civGlass);
+  }
+  g.box(x0 - 1, yt, za - 1, x1 + 1, yt, zb + 1, C.white);
+  g.box(x0, yt, za, x1, yt, zb, cap);
+}
 // Tall hopper / mill tower at the hall's back-left with an inclined conveyor
 // gallery running down to the roof (flour for the bakery, sorting for ECO).
 function hopperTower(g, top, accent, o = {}) {
@@ -751,6 +790,7 @@ function hopperTower(g, top, accent, o = {}) {
   g.box(x0 + 1, yt + 2, z0 + 2, x0 + 3, yt + 4, z0 + 4, C.indShade); g.set(x1 - 1, yt + 2, z1 - 1, C.metalDark); g.set(x1 - 1, yt + 3, z1 - 1, C.metalDark);
   // conveyor gallery from the tower down to the roof
   const zc = 23, a0 = x1 + 1, a1 = x1 + 10;
+  if (o.noConv) return;                                // w4 r4: tower only (the gallery added to the "pile")
   if (o.H) {
     // w4 r3 (critic w4r2: "staircase-towers"): the 1-voxel stepped box read as a
     // staircase; a smooth sloped gallery (surf) with a light roof and trestles
@@ -796,9 +836,10 @@ function works(rng, T = {}) {
     kind, h, hx1, full, nst, stk, stackH: T.stackH || W_STACK_H,
     tk: T.tank || { c: C.indTank, band: accent }, tk2: T.tank2 || T.tank || { c: C.indTank, band: accent },
     th: T.tankH || 18, saw: !!T.saw, text: T.text || '', fg: T.signFg != null ? T.signFg : accent,
-    silo: !proc && !full && !T.hopper,
+    silo: false,                                                  // w4 r4: no free-standing silo on the 1×1 works
     roofK: T.roof || (T.saw ? 'saw' : 'flat'), clad: T.clad || 'concrete', hop: T.hopper ? T.hopper.h || 22 : 0,
     trl: T.trailers || null, trk: T.truck || null,               // r9: yard vehicles live in the fine part
+    trim: T.trim != null ? T.trim : null, r7: 1,
   };
   const H = hiRes(S, 160, 'works:' + JSON.stringify(spec), false), g = H.g;
   const y0 = lotPlinth(g, 0, 0, S - 1, S - 1, { fill: C.indPave });
@@ -807,6 +848,7 @@ function works(rng, T = {}) {
   // r10 (critic r9: pale boxes with thin accent pinstripes): no pinstripe band,
   // a dark slate roof deck under the light rooftop plant (ref05's value contrast)
   const top = hall(g, 2, WZ0, hx1, WZ1, y0, h, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  const dockK = !proc && !full, shx1 = dockK ? W_OX0 - 1 : hx1;   // w4 r4: the shed part (the office tier stands at x ≥ W_OX0)
   const F = facade(g, 'front', WZ0), L = facade(g, 'left', 2), B = facade(g, 'back', WZ1), Rt = facade(g, 'right', hx1);
   const p = { g, H, y0, yl, top, h, hx1, F, L, B, Rt, accent, rng, T, kind, cl };
   // free yard in front of the loading bay nobody is backed onto (theme goods)
@@ -817,40 +859,51 @@ function works(rng, T = {}) {
   // layout"): the dock bays are real recesses cut into the hall front with
   // trucks backed into them, the yard in front is kept clear — striped bays,
   // a dashed lane, the forklift and the theme goods at the free bay only.
-  g.box(1, yl, 1, 29, yl, WZ0 - 1, C.lotAsphalt);   // r12: near-black asphalt truck yard (ref05)
+  // w4 r7 (PIL on ref05's truck yard: blue-slate asphalt ~#3c5e6d, L ~85,
+  // clearly lighter than its #131313 roads): our near-black yards merged with
+  // the street, so the lots lost their footprint — a blue-slate yard now
+  g.box(1, yl, 1, 29, yl, WZ0 - 1, W_YARD);
   const bays = proc ? [3, 10] : full ? [3, 9, 15, 21] : [3, 9, 15];
   for (const u of bays) for (let z = 5; z <= WZ0 - 1; z++) { g.set(u - 1, yl, z, C.lotLine); g.set(u + 5, yl, z, C.lotLine); }
   for (let x = 1; x <= 29; x++) if (x % 4 < 2) g.set(x, yl, 3, C.indLine);
   const RD = 3;
   for (const u of bays) {
     F.clear(u, y0, -(RD - 1), u + 4, y0 + 7, 0);
-    F.box(u - 1, y0, -RD, u - 1, y0 + 8, -1, C.indBase); F.box(u + 5, y0, -RD, u + 5, y0 + 8, -1, C.indBase);
+    F.box(u - 1, y0, -RD, u - 1, y0 + 8, -1, cl.pil); F.box(u + 5, y0, -RD, u + 5, y0 + 8, -1, cl.pil);   // w4 r7: jambs in the family's tone (was blue-grey on every works)
     F.box(u, y0 + 8, -RD, u + 4, y0 + 8, -1, C.indYard);                         // soffit
     F.box(u, y0, -RD, u + 4, y0 + 3, -RD, C.darkGray);                           // open: dark interior
     for (let y = y0 + 4; y <= y0 + 7; y++) F.box(u, y, -RD, u + 4, y, -RD, (y - y0) & 1 ? C.indShade : C.indWall);
-    F.box(u, yl, -(RD - 1), u + 4, yl, 1, C.lotAsphalt);                          // drive well
+    F.box(u, yl, -(RD - 1), u + 4, yl, 1, W_YARD);                          // drive well
     for (const x of [u - 1, u + 5]) { F.box(x, y0, 1, x, y0 + 7, 1, C.black); F.set(x, y0 + 1, 2, C.yellow); }
   }
   const lastU = bays[bays.length - 1] + 6;
-  if (lastU + 3 <= hx1) door(F, lastU + 1, y0 + 3, 2, 7, { color: accent, frame: C.white, step: null });
+  if (lastU + 3 <= shx1) door(F, lastU + 1, y0 + 3, 2, 7, { color: accent, frame: C.white, step: null });
   // w2 r1 (coordinator 22:35: "big BLUE GLASS curtain walls on office/hall
   // fronts"): a continuous glass band across the hall front over the dock
   // canopy; the sign board stands proud of it
   // w4 r3: a slim clerestory ribbon (the full-height blue band made every
   // shed read as another glass office block)
-  ribbon(F, 3, hx1 - 1, y0 + 11, 2, { glass: C.dtGlass, frame: C.indWall });
-  g.box(2, y0 + 9, WZ0 - 3, hx1, y0 + 9, WZ0 - 1, C.indRoof);                     // dock canopy
-  g.box(2, y0 + 8, WZ0 - 3, hx1, y0 + 9, WZ0 - 3, C.indWall);                     // its fascia
-  for (let x = 2; x <= hx1; x += 6) g.box(x, y0 + 8, WZ0 - 1, x, y0 + 8, WZ0 - 2, C.indBase); // brackets
+  ribbon(F, 3, shx1 - 1, y0 + 11, 2, { glass: C.dtGlass, frame: C.indWall });
+  g.box(2, y0 + 9, WZ0 - 3, shx1, y0 + 9, WZ0 - 1, C.indRoof);                     // dock canopy
+  // w4 r7: the fascia carries the works' trim colour (teal / orange / red …) —
+  // one chunky band per plant, so neighbours differ at a glance
+  const trimC = T.trim != null ? T.trim : C.indBase;
+  g.box(2, y0 + 8, WZ0 - 3, shx1, y0 + 9, WZ0 - 3, trimC);                        // its fascia (w4 r4b: mid steel — ref05's canopies are dark; the white fascia doubled every front's white stripe)
+  for (let x = 2; x <= shx1; x += 6) g.box(x, y0 + 8, WZ0 - 1, x, y0 + 8, WZ0 - 2, C.indBase); // brackets
   // the sign lives in the res-8 part: 1× letters there are HALF the size of
   // res-4 ones (r4 critic: "shrink the signs"), front over the canopy + back
   // w4 r3 (critic w4r2: "shrink the signage to small plaques"): ONE plaque —
   // on the office annex over its door, or on the process hall over the canopy
+  // w4 r7 (critic w4r6: "the pixel sign text (TOYS/CHOCO/MILK/ART) is
+  // oversized"; coordinator 01:05: "cut … to small plaques"): the plaque is
+  // drawn in a res-16 part, so the letters are half the res-8 size
+  if (T.text) H.fine2((F4) => {
+    const pq = { fg: spec.fg, plaque: true, pad: 1, inv: false, edge: spec.fg };
+    if (proc) tag(facade(F4, 'front', 4 * WZ0), 4 * hx1 - 16, 4 * y0 + 42, T.text, pq);
+    else if (full) tag(facade(F4, 'right', 4 * 29 + 3), 4 * WZ0 + 20, 4 * y0 + 40, T.text, pq);
+    else tag(facade(F4, 'front', 4 * WZ0), 4 * W_OX0 + 14, 4 * y0 + 36, T.text, pq);
+  });
   if (T.text) H.fine((Fg) => {
-    const pq = { fg: spec.fg, plaque: true, pad: 1, inv: false, edge: spec.fg };   // w4 r3: bare white plaque, accent letters + base line (no frame / rail / brackets)
-    if (proc) tag(facade(Fg, 'front', 2 * WZ0), 2 * hx1 - 8, 2 * y0 + 21, T.text, pq);
-    else if (full) tag(facade(Fg, 'right', 2 * 29 + 1), 2 * WZ0 + 10, 2 * y0 + 20, T.text, pq);
-    else tag(facade(Fg, 'front', 2 * WZ0), 52, 2 * y0 + 18, T.text, pq);
     // numbered dock doors: a white digit on a dark plate on the canopy fascia
     const Ff = facade(Fg, 'front', 2 * (WZ0 - 3));
     bays.forEach((u, i) => {
@@ -879,59 +932,79 @@ function works(rng, T = {}) {
   // process works' vehicle is its tanker at the rack
   const used = proc ? [] : full ? [0, 1] : [0];
   const tkD = T.truck && !T.truck.tanker ? T.truck : null;
+  // w4 r6 (critic w4r5: "every loading dock repeats the same parked trucks and
+  // green bars, so the gallery rows look copy-pasted; the reference varies its
+  // yard layouts"): the theme word picks the truck's bay, the staging bay and
+  // the planting on the yard edge (hedge / trees / planter boxes)
+  const LV = { TOYS: 0, CARS: 1, YUM: 2, NOM: 0, ECO: 1, CHOCO: 2, ROBOT: 2, TOOLS: 1, JUICE: 0, MILK: 1, ART: 2, POP: 0 };
+  const lv = LV[T.text] != null ? LV[T.text] : [...(T.text || 'x')].reduce((a, ch) => a + ch.charCodeAt(0), 0) % 3;
+  const tb = proc || full ? 0 : lv;
   if (proc) { /* the tanker / truck at the loading rack */ } else if (!full && tkD) {
-    fTruck(H, bays[0] + 1, y0, WZ0 - 6.5, 'z', 1, { ...tkD, len: 16 });
+    fTruck(H, bays[tb] + 1, y0, WZ0 - 6.5, 'z', 1, { ...tkD, len: 16 });
     // w4 r3 (critic w4r2: "trailers backed into bays"): a dropped trailer nosed
     // into bay 2 — two of three bays filled, the third is the staging bay
-    const tc = (T.trailers && T.trailers[0]) || C.white;
-    fTrailer(H, bays[1] + 1, y0, WZ0 - 6, 'z', 1, 15, tc, { stripe: tc === C.white ? accent : C.white });
+    // w4 r4 (critic w4r3: "back-to-back trucks … cut the trucks per lot by
+    // about half"): the dropped trailer is gone — one truck per dock lot
   }
   else used.forEach((i, k) => { const c = tcol[k % tcol.length]; fTruck(H, bays[i] + 1, y0, WZ0 - 6.5, 'z', 1, { len: 16, cab: k & 1 ? C.white : accent, box: c, stripe: c === C.white ? accent : C.white, logo: c === C.white ? accent : C.white }); });
-  const fb = bays[proc ? 1 : full ? 3 : 2];
+  const fb = bays[proc ? 1 : full ? 3 : tb === 2 ? 0 : 2];
   crates(g, fb, y0, WZ0 + 1, 2, 2, 2, T.crates || [C.wood, C.plank]);             // pallets inside the free bay
   crates(g, fb + 3, y0, WZ0 + 1, 2, 2, 1, [C.indBlue]);
   // w4 r2: the heap of theme goods in the yard read as clutter; only the
   // balloon works keeps its (tall, light) balloon bunch on a staging pad
   if (T.goods && T.keepGoods) { g.box(p.gx0, yl, p.gz0 - 1, p.gx1, yl, WZ0 - 1, C.indPave); T.goods(p); }
   // hedge along the lot's left edge (ref05: planted strips frame every yard)
-  g.box(1, yl, 1, 1, yl, WZ0 - 1, C.lotGrass); g.box(1, y0, 2, 1, y0, WZ0 - 2, C.bush);
+  g.box(1, yl, 1, 1, yl, WZ0 - 1, C.lotGrass);
+  if (tb === 1 && !proc) { tree(g, 1, y0, 3, 5); tree(g, 1, y0, 9, 4); }
+  else if (tb === 2) for (const z of [2, 6, 10]) g.box(1, y0, z, 1, y0 + 1, z + 1, C.bush);
+  else g.box(1, y0, 2, 1, y0, WZ0 - 2, C.bush);
   // r12: no default pallet heap in the yard — the stalls stay quiet
 
   // ---- hall sides + back: clerestory glazing, pilasters, downpipes, doors ----
-  if (!proc) glazeBays(L, WZ0 + 1, WZ1, y0 + 4, y0 + h - 6, 5, [], cl.pil);
+  // w4 r7 (critic w4r6: "near-identical blue-grey boxes … vary the wall
+  // colours"): masonry families (brick, tan, cream, teal, sage) keep their long
+  // walls as WALL — fineFacades gives them framed window rows and panels — so
+  // the family colour shows; only the sheet-metal families get glazed bays
+  const masonry = ['redbrick', 'brick', 'tan', 'cream', 'teal', 'sage'].includes(T.clad);
+  if (masonry) { /* bare wall: fine window grid */ }
+  else if (!proc) glazeBays(L, WZ0 + 1, WZ1, y0 + 4, y0 + h - 6, 5, [], cl.pil);
   else { glazeBays(L, WZ0 + 1, 21, y0 + 4, y0 + h - 6, 5, [], cl.pil); }
-  const bx1 = proc ? hx1 : full ? 21 : hx1;
+  const bx1 = proc ? hx1 : full ? 21 : shx1;
   const bx0 = proc ? 10 : 2;
-  rollDoor(B, bx0 + 2, bx0 + 6, y0, 9, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
-  if (bx1 - 2 >= bx0 + 9) glazeBays(B, bx0 + 9, bx1, y0 + 4, y0 + h - 7, 5, [], cl.pil);
-  for (let x = bx0 + 9; x <= bx1 - 2; x += 8) crates(g, x, y0, WZ1 + 1, 2, 1, 1, T.crates || [C.wood, C.plank]);
+  rollDoor(B, bx0 + 2, bx0 + 6, y0, 9, { hood: T.trim != null ? T.trim : C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
+  if (bx1 - 2 >= bx0 + 9 && !masonry) glazeBays(B, bx0 + 9, bx1, y0 + 4, y0 + h - 7, 5, [], cl.pil);
+  // w4 r4: a planted strip along the back (was a crate every 8)
+  g.box(1, yl, WZ1 + 1, proc ? 19 : 29, yl, WZ1 + 1, C.lotGrass);
 
   // ---- roof: skylights or sawtooth up front, HVAC pads + stacks at the back ----
-  const rx0 = 3, rx1 = hx1 - 1;
+  const rx0 = 3, rx1 = shx1 - 1;
   const zm = WZ0 + 7;
   // r6 (critic r5: the 1×1 works were "near-identical white boxes that differ
   // only in sign colour"): the roof FORM varies by theme — flat + skylights,
   // sawtooth, a barrel vault or a slate gable — so silhouettes differ.
   const roofK = T.roof || (T.saw ? 'saw' : 'flat');
-  if (roofK === 'vault' || roofK === 'gable') shapedRoof(g, proc ? 10 : 2, WZ0, hx1, WZ1, top, roofK, accent);
-  else {
-    if (roofK === 'saw') sawtooth(g, rx0, rx1, WZ0 + 1, zm, top, { D: 4, H: 3, roof: C.indRoofLt, glass: C.civGlass });
-    else skyStrip(g, rx0 + 1, WZ0 + 2, rx1 - 1, WZ0 + 4, top);
-    let pads = [];
-    if (proc) pads = [];                              // r8: the fine roof plant fills it
-    else if (full) pads = [];
-    else pads = nst > 1 ? [[11, 6]] : nst ? [[8, 6], [15, 6]] : [[4, 6], [11, 6]];
-    if (spec.silo) pads = nst ? [[16, 5]] : [[3, 6], [16, 5]];
-    if (T.hopper) pads = [[11, 6]];
-    for (const [x, w] of pads) hvacPad(g, x, top, zm + 2, w, 5);
-    if (!proc && !full && !spec.silo) { ventPipe(g, 19, zm + 2, top, top + 3); ventPipe(g, 19, WZ1 - 2, top, top + 2, C.metalDark, C.darkGray); }
-    if (spec.silo) { ventPipe(g, 20, WZ1 - 1, top, top + 3); acBox(g, 16, top, WZ1 - 1 - 1, { w: 3, d: 2, h: 2, body: C.indShade }); }
-    if (full) roofHut(g, 4, top, zm + 2);
-    if (proc && nst < 2) { ventPipe(g, 16, zm + 7, top, top + 3); }
-  }
-  if (T.hopper) hopperTower(g, top, accent, { wall: C.indRoofLt, ...T.hopper, H });   // w4 r1c: dark steel tower (was light)
-  // w4 r2: no portal crane over the yard (critic w4r1 listed gantries among the clutter)
+  // w4 r4 (critics w4r2 "staircase" / w4r3 "piles of small boxes"): the voxel
+  // vault and gable stepped like grey pyramids; both are now a glazed roof
+  // MONITOR (a long lantern along the ridge) on a flat deck — a real factory
+  // form that stays crisp — and the fine roof plant packs round it
+  const mon = roofK === 'vault' || roofK === 'gable';
+  // w4 r7 (critic w4r6: "big flat dark-grey slabs with only a few scattered AC
+  // cubes … ref05 breaks every roof into sawtooth or glazed skylight bands";
+  // coordinator 01:05: "linear, repeated structure … vents in neat ROWS"):
+  // the sawtooth spans the whole shed; flat decks get glazed roof-light bands
+  // alternating with aligned unit rows (fine part); a rail runs round the coping
   const spots = WSTACK[kind].slice(0, nst);
+  const sawZ0 = WZ0 + 2, sawD = 4, sawH = 4;
+  {
+    if (roofK === 'saw') {
+      sawtooth(g, rx0, rx1, sawZ0, WZ1 - 1, top, { D: sawD, H: sawH, roof: C.indRoofLt, glass: C.dtGlass, mull: 6 });
+      for (const [sx, sz] of spots) for (let x = sx - 3; x <= sx + 3; x++) for (let z = sz - 3; z <= sz + 3; z++)
+        if (Math.hypot(x - sx, z - sz) < 2.9) for (let y = top; y < top + sawH; y++) g.del(x, y, z);
+    } else if (mon) monitorRoof(g, proc ? 11 : rx0 + 1, rx1 - 1, top, C.indRoof);
+    if (full) roofHut(g, 4, top, zm + 2);
+  }
+  if (T.hopper) hopperTower(g, top, accent, { wall: C.indRoofLt, ...T.hopper, H, noConv: true });   // w4 r1c: dark steel tower (was light)
+  // w4 r2: no portal crane over the yard (critic w4r1 listed gantries among the clutter)
   if (spots.length) H.surf((M) => { for (const [x, z] of spots) surfStack(M, x + 0.5, z + 0.5, top, 1.8, spec.stackH, stk); });
   panelSeams(g, 2, WZ0, hx1, WZ1, y0 + 2, y0 + h - 4, wall, cl.seam, 5);
   // r8 (critic r7: MILK / ART / POP / DEPOT / ECO were "big clean boxes: flat
@@ -939,15 +1012,27 @@ function works(rng, T = {}) {
   // roof plant over every free bit of deck, fans along vault / gable ridges,
   // and downpipes, pipe runs, AC boxes and a ladder on the side + back walls
   H.fine((Fg) => {
-    if (roofK === 'gable') { /* ridge vents are in the base */ } else if (roofK === 'vault') {
-      const hx0 = proc ? 10 : 2, zc = (WZ0 + WZ1) / 2, ry = top + 5;
-      for (let x = hx0 + 3; x + 3 <= hx1 - 2; x += 5) {
-        fineItem(Fg, 2 * x, Math.round(2 * zc) - 3, 6, 6, 2 * ry, (x & 1) ? 'fan' : 'vents', srng(x * 31 + hx1), { accent, pad: C.indBase });
-      }
-    } else fineRoof(Fg, g, rx0, WZ0 + 1, rx1, WZ1 - 1, top, { accent, seed: spec.text.length });
+    if (mon) {                                         // fans + vents along the monitor's cap
+      const hx0 = proc ? 11 : rx0 + 1, zc = (WZ0 + WZ1) / 2, ry = top + 4;
+      for (let x = hx0 + 1; x + 3 <= rx1 - 1; x += 4) fineItem(Fg, 2 * x, Math.round(2 * zc) - 3, 6, 6, 2 * ry, (x & 1) ? 'fan' : 'vents', srng(x * 31 + hx1), { accent, pad: C.indBase });
+      fineRoof(Fg, g, rx0, WZ0 + 1, rx1, WZ1 - 1, top, { accent, seed: spec.text.length, rows: true });
+    } else if (roofK !== 'saw') fineRoof(Fg, g, rx0, WZ0 + 1, rx1, WZ1 - 1, top, { accent, seed: spec.text.length, rows: true });
+    if (roofK !== 'saw') roofRail(Fg, 2, WZ0, hx1, WZ1, top + 1);
     const skipB = [[bx0 + 1, bx0 + 7]];
     fineWall(Fg, 'left', 2, WZ0, proc ? 20 : WZ1, y0, top - 1, { ac: 1, pc: accent === C.indBlue ? C.yellow : accent, ladder: !proc });
     fineWall(Fg, 'back', WZ1, proc ? bx0 : 2, bx1, y0, top - 1, { ac: 1, skip: skipB, ladder: false, pipe: bx1 - bx0 > 12 });
+  });
+  // w4 r7 (critic w4r6: "pipe runs between buildings"): a low pipe rack along
+  // the lot's back edge, end to end — in a packed row the racks of neighbouring
+  // works join into one continuous run, with a branch into each hall
+  if (!globalThis.__IND_NORACK) H.surf((M) => {
+    const yr = y0 + 7.5, zr = 30.0;
+    surfPipeBridge(M, [[0.05, zr], [30.95, zr]], y0, yr, { cols: [C.yellow, C.indShade, C.indBlue], sp: 0.42, w: 0.34, step: 7.5 });
+    const bxs = proc ? [12, 24.5] : [full ? 14 : 12.5];
+    for (const bx of bxs) {
+      M.beam([bx, yr + 0.05, zr - 0.2], [bx, yr + 0.05, WZ1 + 1.05], 0.34, C.indShade);   // branch into the back wall / tank bund
+      M.box(bx - 0.35, yr - 0.35, WZ1 + 1.0, bx + 0.35, yr + 0.45, WZ1 + 1.25, C.indBase);
+    }
   });
 
   if (full) {
@@ -958,60 +1043,48 @@ function works(rng, T = {}) {
     ribbon(Rt, WZ0 + 2, 19, y0 + 12, 3, { glass: C.dtGlass, frame: C.indWall });
     door(Rt, 16, y0, 3, 7, { color: accent, frame: C.white, step: C.indShade });
     if (T.extra) T.extra(p);
-    yardFill(g, y0, rng, { maxL: 10, skip: [[1, 1, 29, WZ0 - 1]] });
-    return p;
+    return p;                                          // w4 r4: no yardFill clutter on the 1×1 works
   }
   if (!proc) {
-    // ---- glass office (front right) + a piped process tank behind it ----
-    const ot = glassOffice(g, 22, WZ0, 29, 21, y0, 14, { mull: cl.seam, core: cl.wall });   // w4 r3: low annex (was a 26-high tower)
-    door(facade(g, 'front', WZ0), 24, y0, 3, 7, { color: C.civGlass, frame: C.white, glass: C.winCool, step: C.indShade, canopy: accent });
-    hvacPad(g, 23, ot, 14, 5, 4);
-    g.box(28, ot, 19, 28, ot + 7, 19, C.metalDark); g.set(28, ot + 8, 19, C.red);
-    H.fine((Fg) => fineRoof(Fg, g, 23, WZ0 + 1, 28, 20, ot, { accent, kinds: ['cond', 'fan', 'vents', 'wtank', 'tank'] }));
-    for (const x of [22, 23, 27, 28, 29]) { g.set(x, y0, WZ0 - 1, C.leafMid); g.set(x, y0 + 1, WZ0 - 1, C.bush); }
-    g.box(22, yl, 23, 29, yl, 29, C.indShade);
-    if (spec.silo) {
-      // r7 (critic r6: "link the buildings on each lot with pipe runs, catwalks
-      // and conveyors"): the silo rises above the hall and an enclosed conveyor
-      // gallery climbs to it from a head-house on the hall roof
-      const hh = top + 6;
-      g.box(11, top, 22, 15, hh, 27, wall);
-      g.walls(11, hh, 22, 15, hh, 27, C.white); g.box(12, hh, 23, 14, hh, 26, C.indRoofLt);
-      for (let z = 23; z <= 26; z += 3) g.box(11, top + 2, z, 11, top + 3, z + 1, C.civGlass);
-      g.box(12, top + 2, 22, 14, top + 3, 22, C.civGlass);
-      g.box(13, hh + 1, 24, 13, hh + 3, 24, C.metalDark);
-      // w4 r3 (critic w4r2: "staircase-towers"): a smooth sloped gallery (surf)
-      const ya = top + 3.5, yb = y0 + 22;
-      H.surf((M) => {
-        M.beam([15.5, ya, 25.5], [24, yb, 25.5], 2.6, C.indShade);
-        M.beam([15.5, ya + 1.45, 25.5], [24, yb + 1.45, 25.5], 0.5, C.indWall);
-        M.beam([22.5, y0, 25.5], [22.5, yb - 2, 25.5], 0.5, C.indBase);            // trestle
-      });
-      g.box(22, y0, 25, 22, y0 + 1, 25, C.yellow);
+    // ---- w4 r4: the office is the glazed END of the hall (x W_OX0..28, the
+    // full depth, same parapet) — one box with the shed, like ref05's
+    // warehouses. Curtain glass on its street face only;
+    // the side and back get ribbon-window rows (no second glass block). ----
+    const ox0 = W_OX0, ox1 = hx1;
+    // w4 r4b (PIL vs ref05: blue glass 6% of our district pixels, 12% of the
+    // ref's): the office end is curtain glass on its street AND side faces
+    // w4 r7: masonry works show their wall on the office's side face (fine
+    // window rows) — curtain glass on every end made the district one blue-grey
+    const ot = glassOffice(g, ox0, WZ0, ox1, WZ1, y0, h, { sides: masonry ? ['front'] : ['front', 'right'], mull: cl.seam, core: cl.wall });   // same height: one box
+    g.walls(ox0, y0, WZ0, ox1, y0 + 1, WZ1, C.indBase);
+    for (const yy of [y0 + 3, y0 + 8]) {
+      ribbon(B, ox0 + 2, ox1 - 2, yy, 3, { glass: C.dtGlass, frame: C.indWall });
     }
-    H.surf((M) => {
-      surfSilo(M, 26, 26, y0, 2.6, spec.silo ? 25 : 13, { legs: 1.4, seg: 32, hut: false, coneH: 1.2, tip: 0.6, ladderA: Math.PI, seam: false, ribs: spec.silo, ...spec.tk });
-      M.beam([hx1 + 1, y0 + 8.5, 24.5], [23.6, y0 + 8.5, 24.5], 0.7, C.indShade);
-      M.beam([23.9, y0 + 8.5, 24.5], [23.9, y0, 24.5], 0.5, C.indBase);
-    });
-    ribbon(Rt, 23, WZ1 - 1, y0 + 12, 3, { glass: C.dtGlass, frame: C.indWall });
+    for (const [x, z] of [[ox1 + 1, WZ0], [ox1, WZ0 - 1], [ox1 + 1, WZ1], [ox1, WZ1 + 1], [ox0 - 1, WZ0], [ox0 - 1, WZ1]]) g.box(x, y0, z, x, ot - 1, z, cl.pil);
+    door(facade(g, 'front', WZ0), ox0 + 2, y0, 3, 7, { color: C.civGlass, frame: C.white, glass: C.winCool, step: C.indShade, canopy: accent });
+    g.box(ox1 - 1, ot, WZ1 - 2, ox1 - 1, ot + 7, WZ1 - 2, C.metalDark); g.set(ox1 - 1, ot + 8, WZ1 - 2, C.red);
+    H.fine((Fg) => fineRoof(Fg, g, ox0 + 1, WZ0 + 1, ox1 - 1, WZ1 - 1, ot, { accent, kinds: ['cond', 'cond', 'fan', 'vents', 'duct', 'wtank'] }));
+    for (const x of [ox0, ox0 + 1, ox1 - 1, ox1, ox1 + 1]) { g.set(x, y0, WZ0 - 1, C.leafMid); g.set(x, y0 + 1, WZ0 - 1, C.bush); }
     // theme truck parked in front of the office (or the theme's own lot)
     const tk = T.truck || { cab: C.white, box: accent, stripe: C.white };
-    g.box(22, yl, 1, 29, yl, 10, C.lotAsphalt);
-    for (let z = 1; z <= 10; z++) g.set(29, yl, z, C.lotLine);
+    // w4 r7 (critic w4r6: ref05 "mixes cream, tan and teal paving"): the office
+    // forecourt is warm beige plant paving with grey stall lines, not asphalt
+    g.box(22, yl, 1, 29, yl, 10, C.indPave);
+    for (let z = 1; z <= 10; z++) g.set(29, yl, z, C.lotSide);
     // w4 r2: a clipped hedge splits the office forecourt from the dock apron
-    if (!T.lot) { g.box(21, yl, 1, 21, yl, WZ0 - 1, C.lotGrass); g.box(21, y0, 2, 21, y0, WZ0 - 4, C.bush); }
+    if (!T.lot) { g.box(21, yl, 1, 21, yl, WZ0 - 1, C.lotGrass); if (tb !== 1) g.box(21, y0, 2, 21, y0, WZ0 - 4, C.bush); else g.box(21, y0, 4, 21, y0 + 1, 5, C.bush); }
     if (T.lot) T.lot(p);
     else if (tk.tanker) fTanker(H, 24, y0, 2, 'z', 1, { ...tk, len: 16 });
     else {                                             // w4 r2b: a staff car in a striped stall (the theme truck is at the dock)
-      for (let z = 1; z <= 10; z++) g.set(22, yl, z, C.lotLine);
+      for (let z = 1; z <= 10; z++) g.set(22, yl, z, C.lotSide);
       car(g, 23, y0, 2, 'z', 1, pk(rng, [C.red, C.indBlue, C.white, C.teal, C.yellow]));
     }
   } else {
     // ---- office wing rising at the hall's back-left ----
-    const ot = glassOffice(g, 2, 21, 9, WZ1, y0, h + 3, { from: top, mull: cl.seam, core: cl.wall });
-    hvacPad(g, 3, ot, 22, 5, 4); g.box(8, ot, 27, 8, ot + 6, 27, C.metalDark); g.set(8, ot + 7, 27, C.red);
-    H.fine((Fg) => fineRoof(Fg, g, 3, 22, 8, 27, ot, { accent, kinds: ['cond', 'fan', 'vents', 'wtank'] }));
+    // w4 r5 (critics w4r3/w4r4: one calm mass, not a stepped pile): the office
+    // is the hall's glazed back-left END (flush parapet, curtain glass on its
+    // two outer faces), no longer a wing rising 3 above the roof
+    glassOffice(g, 2, 21, 9, WZ1, y0, h, { sides: masonry ? ['back'] : ['left', 'back'], mull: cl.seam, core: cl.wall });
     // ---- bunded tank farm, pipe rack into the hall ----
     g.box(20, yl, WZ0, 29, yl, 29, C.indShade);
     g.walls(20, y0, WZ0, 29, y0, 29, C.indBase);
@@ -1022,35 +1095,398 @@ function works(rng, T = {}) {
     H.surf((M) => {
       surfTankFarm(M, y0, spec);
       for (const cz of [17, 25]) M.beam([21.2, y0 + 10.5, cz], [20.9, y0 + 10.5, cz], 0.6, C.indShade);
-      M.beam([22.3, y0, 13.6], [22.3, y0 + 14.6, 13.6], 0.6, C.indShade);           // fill line to the gantry
-      M.beam([22.3, y0 + 14.6, 13.9], [22.3, y0 + 14.6, 6.5], 0.6, C.indShade);
     });
     // ---- tanker under a loading gantry ----
     const tk = T.truck || { tanker: true, cab: accent, tank: C.indTank, band: accent };
-    g.box(20, yl, 1, 29, yl, WZ0 - 1, C.lotAsphalt);
+    g.box(20, yl, 1, 29, yl, WZ0 - 1, W_YARD);
     for (let z = 1; z <= 11; z++) { g.set(21, yl, z, C.lotLine); g.set(28, yl, z, C.lotLine); }
     if (tk.tanker) fTanker(H, 23.5, y0, 2, 'z', 1, { ...tk, len: 18 });
     else fTruck(H, 23.5, y0, 2, 'z', 1, { ...tk, len: 18 });
-    // w2 r1: a tanker LOADING RACK (was an empty portal frame that read as a
-    // bare blue-grey box in every process lot): a steel tower on the yard's
-    // left edge, a railed platform, a charcoal canopy over it only, a riser
-    // manifold down to a pump skid and two yellow loading arms dropped onto
-    // the tanker's hatches
-    for (const x of [20, 22]) for (const z of [4, 10]) g.box(x, y0, z, x, y0 + 12, z, C.indBase);
-    for (const x of [20, 22]) for (const z of [4, 10]) g.box(x, y0, z, x, y0 + 1, z, C.yellow);
-    g.box(20, y0 + 8, 4, 22, y0 + 8, 10, C.indShade);                                // platform deck
-    for (let z = 4; z <= 10; z++) g.set(22, y0 + 10, z, C.yellow);                  // handrail
-    g.box(20, y0 + 13, 3, 24, y0 + 13, 11, C.indRoof);                              // canopy
-    g.walls(20, y0 + 13, 3, 24, y0 + 13, 11, C.indWall);
-    // w4 r2 (critic w4r1: yards crammed): one riser + skid and a single slim
-    // grey loading arm; the yellow arm pair, stair treads and bollards are gone
+    // w4 r4 (critic w4r3: "crowded piles"): the loading-rack tower and canopy are
+    // gone — a riser on a pump skid and one slim arm over the tanker
     g.box(21, y0, 7, 21, y0 + 7, 7, C.indBlue);                                     // riser
     g.box(20, y0, 6, 21, y0 + 1, 8, C.indBase);                                     // pump skid
     g.box(22, y0 + 9, 7, 24, y0 + 9, 7, C.indShade); g.box(24, y0 + 7, 7, 24, y0 + 8, 7, C.indShade);   // loading arm
   }
   if (T.extra) T.extra(p);
-  yardFill(g, y0, rng, { maxL: 10, skip: [[1, 1, proc ? 19 : hx1, WZ0 - 1]] });   // r7: no bare paving; r10: truck yard stays clear
+  // w4 r4 (critic w4r3: "cut the props per lot by about half, leave clear
+  // paved yards"): no yardFill clusters on the 1×1 works any more
   return p;
+}
+
+// ===========================================================================
+// w4 r8 ARCHETYPES (critic w4r7: "the factory row repeats one grey sawtooth-
+// roof block over and over … each lot in ref05 has its own silhouette: tall
+// banded stacks on a heavy power-plant hall, tank farms joined by pipe racks,
+// a large glazed warehouse with rows of rooftop units … big dark-asphalt truck
+// yards full of striped bays and parked semis"). Beside works()'s long dock
+// shed (TOYS, DEPOT) each 1×1 works now picks one of four distinct layouts:
+//   'tanks'  a bunded tank farm (vertical domed tanks or horizontal bullets)
+//            joined by a pipe rack to a pump hall; glass office; tanker lane
+//   'plant'  a TALL process block + an open dark-steel process frame with a
+//            distillation column and vessels, stacks on a boiler house
+//   'silo'   a row of tall silos (+ conveyor gallery), a slim head tower, an
+//            inclined conveyor down to a low intake shed; small glass office
+//   'yard'   a compact hall at the back-right; the rest is ONE dark asphalt
+//            truck yard: trailers backed onto a dock face, striped bays, a
+//            gatehouse, the theme's stock grouped in one tidy zone
+// All share the lot plinth, the back pipe rack (joins up in packed rows), a
+// small plaque, fineFacades window grids and the structured fineRoof rows.
+// ===========================================================================
+function tarmac(g, x0, z0, x1, z1, yl) { g.box(x0, yl, z0, x1, yl, z1, W_YARD); }
+function linesX(g, yl, xs, z0, z1) { for (const x of xs) for (let z = z0; z <= z1; z++) g.set(x, yl, z, C.lotLine); }
+function linesZ(g, yl, zs, x0, x1) { for (const z of zs) for (let x = x0; x <= x1; x++) g.set(x, yl, z, C.lotLine); }
+function dashX(g, yl, z, x0, x1) { for (let x = x0; x <= x1; x++) if (x % 4 < 2) g.set(x, yl, z, C.indLine); }
+function plaque(H, side, plane, uc, y, text, fg) {
+  if (!text) return;
+  H.fine2((F4) => tag(facade(F4, side, side === 'back' || side === 'right' ? 4 * plane + 3 : 4 * plane), Math.round(4 * uc), Math.round(4 * y), text, { fg, plaque: true, pad: 1, inv: false, edge: fg }));
+}
+// the shared back-edge pipe rack (z 30), with branches into [x, wall face z]
+function backRack(H, y0, branches) {
+  if (globalThis.__IND_NORACK) return;
+  H.surf((M) => {
+    const yr = y0 + 7.5, zr = 30.0;
+    surfPipeBridge(M, [[0.05, zr], [30.95, zr]], y0, yr, { cols: [C.yellow, C.indShade, C.indBlue], sp: 0.42, w: 0.34, step: 7.5 });
+    for (const [bx, bz] of branches) {
+      M.beam([bx, yr + 0.05, zr - 0.2], [bx, yr + 0.05, bz], 0.34, C.indShade);
+      M.box(bx - 0.35, yr - 0.35, bz, bx + 0.35, yr + 0.45, bz + 0.25, C.indBase);
+    }
+  });
+}
+// railed deck (surf): plate x0..x1 × z0..z1 at y, yellow handrail + posts
+function railDeck(M, x0, z0, x1, z1, y, o = {}) {
+  M.box(x0, y - 0.3, z0, x1, y, z1, o.c != null ? o.c : C.indRoofLt);
+  if (o.rail === false) return;
+  const P = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+  for (let i = 0; i < 4; i++) {
+    const [ax, az] = P[i], [bx, bz] = P[(i + 1) % 4];
+    if (o.open && o.open.includes(i)) continue;
+    M.beam([ax, y + 1.05, az], [bx, y + 1.05, bz], 0.12, C.yellow);
+    const n = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / 1.6));
+    for (let k = 0; k < n; k++) { const t = k / n; M.beam([ax + (bx - ax) * t, y, az + (bz - az) * t], [ax + (bx - ax) * t, y + 1.05, az + (bz - az) * t], 0.1, C.yellow); }
+  }
+}
+// small domed-head vertical vessel (surf) on a plinth
+function vessel(M, cx, cz, r, yb, yt, c, band) {
+  M.lathe(cx, cz, () => r + 0.35, yb, yb + 0.6, 1, C.indShade, { seg: 16, flat: true });
+  M.disc(cx, cz, r, r + 0.35, yb + 0.6, C.indShade, { seg: 16 });
+  M.lathe(cx, cz, () => r, yb + 0.6, yt, 1, c, { seg: 18, flat: true });
+  if (band != null) M.lathe(cx, cz, () => r + 0.03, yt - 2.2, yt - 1.4, 1, band, { seg: 18, flat: true });
+  const hd = r * 0.55;
+  M.lathe(cx, cz, (y) => r * Math.sqrt(Math.max(0, 1 - ((y - yt) / hd) ** 2)), yt, yt + hd, 3, C.white, { seg: 18 });
+  return yt + hd;
+}
+
+function archWorks(rng, T = {}) {
+  const S = 31, accent = T.accent != null ? T.accent : C.indBlue;
+  const H = hiRes(S, 160, 'arch:' + T.arch + ':' + JSON.stringify(T), false), g = H.g;
+  const y0 = lotPlinth(g, 0, 0, S - 1, S - 1, { fill: C.indPave }), yl = y0 - 1;
+  const cl = CLAD[T.clad || 'concrete']();
+  const masonry = ['redbrick', 'brick', 'tan', 'cream', 'teal', 'sage'].includes(T.clad);
+  const p = { g, H, y0, yl, T, accent, cl, wall: cl.wall, masonry, trim: T.trim != null ? T.trim : C.indBase, rng, fg: T.signFg != null ? T.signFg : accent };
+  ({ tanks: tankWorks, plant: plantWorks, silo: siloWorks, yard: yardWorks })[T.arch](p);
+  g.box(1, yl, 29, 29, yl, 29, C.lotGrass);                // planted back strip under the rack
+  if (T.extra) T.extra(p);
+  return p;
+}
+
+// ---- 'tanks' -------------------------------------------------------------
+function tankWorks(p) {
+  const { g, H, y0, yl, T, accent, cl, wall, masonry, trim, fg } = p;
+  // tanker lane along the street: three stalls, one tanker under the gantry
+  tarmac(g, 1, 1, 29, 8, yl);
+  linesX(g, yl, [2, 12, 22], 2, 8);
+  const tk = T.truck || { tanker: true, cab: accent, tank: C.indTank, band: accent };
+  fTanker(H, 3, y0, 3, 'x', 1, { ...tk, len: 18 });
+  fTanker(H, 13, y0, 3, 'x', -1, { ...tk, cab: C.white, len: 18 });
+  // bund: light concrete floor, kerb wall
+  g.box(1, yl, 10, 19, yl, 28, C.indShade);
+  g.walls(1, y0, 10, 19, y0, 28, C.indBase);
+  // glass office (front-right) + pump hall behind it
+  const ot = glassOffice(g, 21, 10, 29, 16, y0, 11, { sides: masonry ? ['front'] : ['front', 'right'], mull: cl.seam, core: wall });
+  door(facade(g, 'front', 10), 23, y0, 3, 7, { color: C.civGlass, frame: C.white, glass: C.winCool, step: C.indShade, canopy: accent });
+  const top = hall(g, 21, 18, 29, 28, y0, T.h || 15, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  const L = facade(g, 'left', 21);
+  rollDoor(L, 23, 26, y0, 7, { hood: trim, color: C.indWall, slat: C.indShade, frame: C.indBase, bollards: false });
+  if (!masonry) glazeBays(facade(g, 'back', 28), 22, 28, y0 + 4, y0 + (T.h || 15) - 6, 5, [], cl.pil);
+  g.box(20, yl, 10, 20, yl, 28, C.lotGrass);
+  for (const z of [11, 14]) g.box(20, y0, z, 20, y0 + 1, z + 1, C.bush);
+  plaque(H, 'front', 10, 26.5, y0 + 8.2, T.text, fg);
+  H.fine((Fg) => {
+    fineRoof(Fg, g, 22, 19, 28, 27, top, { accent, seed: 3, rows: true });
+    fineRoof(Fg, g, 22, 11, 28, 15, ot, { accent, kinds: ['cond', 'fan', 'vents', 'wtank'] });
+    roofRail(Fg, 21, 18, 29, 28, top + 1);
+    fineWall(Fg, 'left', 21, 18, 28, y0, top - 1, { ladder: true, ladderU: 20 });
+  });
+  H.surf((M) => {
+    // loading gantry over stall 1: two columns, a railed platform, drop arms
+    const yg = y0 + 7.6;
+    for (const x of [6.2, 10.4]) M.beam([x, y0, 7.6], [x, yg, 7.6], 0.4, C.indBase);
+    railDeck(M, 5.4, 6.6, 11.2, 8.2, yg, { open: [0] });
+    for (const x of [6.8, 9.8]) { M.beam([x, yg - 0.2, 6.8], [x, yg - 1.6, 4.6], 0.26, C.indShade); M.box(x - 0.25, yg - 2.3, 4.35, x + 0.25, yg - 1.6, 4.85, C.indBase); }
+    M.beam([11.6, y0, 8.4], [11.6, yg, 6.9], 0.7, C.indBase);             // stair
+    if (T.bullets) {
+      // horizontal bullet tanks on saddles, a catwalk across their crowns
+      const r = 2.2, cy = y0 + 1.5 + r, z0 = 12.4, z1 = 27.2;
+      [[4.6, T.tank], [10.2, T.tank2 || T.tank], [15.8, T.tank]].forEach(([cx, t]) => {
+        for (const z of [14.2, 20, 25.6]) M.box(cx - 1.9, y0, z - 0.45, cx + 1.9, cy - 0.9, z + 0.45, C.indShade);
+        const band = t.band != null ? t.band : accent;
+        M.tube([cx, cy, z0], [cx, cy, 18.8], r, t.c, { seg: 20, h0: 1.1 });
+        M.tube([cx, cy, 18.8], [cx, cy, 21.2], r + 0.02, band, { seg: 20 });
+        M.tube([cx, cy, 21.2], [cx, cy, z1], r, t.c, { seg: 20, h1: 1.1 });
+        for (const z of [15.6, 24.4]) M.tube([cx, cy, z - 0.14], [cx, cy, z + 0.14], r + 0.13, C.indShade, { seg: 20 });
+        M.box(cx - 0.45, cy + r - 0.2, 16.4, cx + 0.45, cy + r + 0.45, 17.3, C.indShade);   // manway
+        M.beam([cx, cy - 1.0, z0 - 0.9], [cx, y0 + 1.1, z0 - 1.3], 0.3, C.indShade);       // drain to the manifold
+      });
+      railDeck(M, 1.8, 19.4, 19.2, 20.6, cy + r + 0.25, { open: [1, 3] });
+      for (const x of [7.4, 13.0]) M.beam([x, y0, 20], [x, cy + r, 20], 0.3, C.indBase);
+      M.beam([19.4, y0, 21.2], [19.4, cy + r + 0.3, 20.2], 0.6, C.indBase);                 // ladder
+      surfPipeBridge(M, [[1.6, 11.1], [21.0, 11.1]], y0, y0 + 1.1, { cols: [C.yellow, C.indBlue], sp: 0.4, w: 0.3, legs: false });
+      surfPipeBridge(M, [[19.6, 22.5], [21.0, 22.5]], y0, y0 + 5, { cols: [C.yellow, C.indShade, C.indBlue], sp: 0.4, w: 0.3 });
+    } else {
+      // 2 × 2 vertical domed tanks, a railed catwalk ring between their eaves
+      const r = 3.0, h = T.tankH || 12, ye = y0 + 3 + h;
+      const pts = [[5.5, 14.8, T.tank], [14.5, 14.8, T.tank2 || T.tank], [5.5, 24.2, T.tank2 || T.tank], [14.5, 24.2, T.tank]];
+      pts.forEach(([cx, cz, t], i) => surfDomeTank(M, cx, cz, y0, r, h, { c: t.c, band: t.band != null ? t.band : accent, seg: 24, dome: r * 0.42, stairA: [Math.PI * 0.75, Math.PI * 0.25, Math.PI * 1.25, Math.PI * 1.75][i] }));
+      railDeck(M, 8.3, 14.2, 11.7, 15.4, ye, { open: [1, 3] });
+      railDeck(M, 8.3, 23.6, 11.7, 24.8, ye, { open: [1, 3] });
+      railDeck(M, 4.9, 17.6, 6.1, 21.4, ye, { open: [0, 2] });
+      railDeck(M, 13.9, 17.6, 15.1, 21.4, ye, { open: [0, 2] });
+      // pipe rack between the tank rows into the pump hall, nozzles off each tank
+      surfPipeBridge(M, [[1.4, 19.5], [21.0, 19.5]], y0, y0 + 5.5, { cols: [C.yellow, C.indShade, C.indBlue, C.white], sp: 0.36, w: 0.28, step: 4.8 });
+      for (const [cx, cz] of pts) { const s = cz < 19.5 ? 1 : -1; M.beam([cx + 0.8, y0 + 5.2, cz + s * 2.9], [cx + 0.8, y0 + 5.2, 19.5 - s * 0.7], 0.3, C.indShade); }
+    }
+  });
+  backRack(H, y0, [[25, 29]]);
+}
+
+// ---- 'plant' --------------------------------------------------------------
+function plantWorks(p) {
+  const { g, H, y0, yl, T, accent, cl, wall, masonry, trim, fg } = p;
+  tarmac(g, 1, 1, 19, 11, yl); tarmac(g, 20, 1, 29, 8, yl);
+  linesX(g, yl, [3, 10, 17], 5, 11);
+  dashX(g, yl, 2, 1, 29);
+  const hB = T.h || 24;
+  const top = hall(g, 2, 12, 17, 28, y0, hB, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  const F = facade(g, 'front', 12), L = facade(g, 'left', 2), B = facade(g, 'back', 28);
+  const rd = { hood: trim, color: C.indWall, slat: C.indShade, frame: C.indBase };
+  rollDoor(F, 4, 8, y0, 9, rd); rollDoor(F, 11, 15, y0, 9, rd);
+  if (!masonry) {
+    curtainBand(F, 3, 16, y0 + 13, y0 + 19);
+    glazeBays(L, 13, 27, y0 + 4, y0 + hB - 6, 5, [], cl.pil);
+    glazeBays(B, 3, 16, y0 + 4, y0 + hB - 6, 5, [], cl.pil);
+  }
+  // penthouse plant room on the roof
+  const t2 = hall(g, 5, 18, 13, 25, top, 6, { wall: C.indShade, trim: C.indBase, roof: C.indYard, base: C.indBase });
+  // boiler house + stacks (front-right)
+  const bt = hall(g, 20, 10, 29, 15, y0, 9, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  rollDoor(facade(g, 'front', 10), 22, 25, y0, 6, rd);
+  const tk = T.truck || { cab: C.white, box: C.orange, stripe: accent };
+  fTruck(H, 4.75, y0, 4, 'z', 1, { ...tk, len: 16 });
+  plaque(H, 'front', 12, 9.5, y0 + 20.6, T.text, fg);
+  H.fine((Fg) => {
+    fineRoof(Fg, g, 3, 13, 16, 27, top, { accent, seed: 5, rows: true });
+    fineRoof(Fg, g, 6, 19, 12, 24, t2, { accent, kinds: ['cond', 'fan', 'vents'] });
+    roofRail(Fg, 2, 12, 17, 28, top + 1);
+    fineWall(Fg, 'left', 2, 12, 28, y0, top - 1, { ladder: true });
+  });
+  const stk = Object.assign({ body: C.white, stripe: C.orange, bands: 3, bandH: 3, gap: 3, style: 'banded' }, T.stack || {});
+  const nst = T.stacks != null ? T.stacks : 2;
+  H.surf((M) => {
+    [[23.5, 12.5], [27.0, 12.5]].slice(0, nst).forEach(([x, z]) => surfStack(M, x, z, bt, 1.45, y0 + (T.stackH || 44), stk));
+    // open dark-steel process frame (x 19.6..28.6, z 16.6..28.4)
+    const X = [19.6, 24.1, 28.6], Z = [16.6, 22.6, 28.4], L1 = y0 + 7, L2 = y0 + 13, L3 = y0 + 19, st = C.indRoof;
+    for (const x of X) for (const z of Z) M.beam([x, y0, z], [x, x >= 24 && z <= 22.6 ? L3 : L2, z], 0.42, st);
+    railDeck(M, 19.3, 16.3, 24.4, 28.7, L1, { c: C.indRoofLt });
+    railDeck(M, 19.3, 16.3, 28.9, 28.7, L2, { c: C.indRoofLt });
+    railDeck(M, 23.8, 16.3, 28.9, 22.9, L3, { c: C.indRoofLt });
+    // bracing
+    M.beam([24.1, y0 + 0.4, 16.6], [28.6, L1, 16.6], 0.24, st); M.beam([28.6, y0 + 0.4, 16.6], [24.1, L1, 16.6], 0.24, st);
+    M.beam([28.6, L1, 22.6], [28.6, L2, 28.4], 0.24, st); M.beam([28.6, L2, 16.6], [28.6, L3, 22.6], 0.24, st);
+    M.beam([19.6, L1, 22.6], [19.6, L2, 28.4], 0.24, st);
+    // stair up the side facing the main block
+    M.beam([18.8, y0, 27.6], [18.8, L1, 19.6], 0.8, C.indBase);
+    M.beam([18.3, y0 + 1.1, 27.6], [18.3, L1 + 1.1, 19.6], 0.1, C.yellow);
+    // distillation column through the frame, ring platform, accent band
+    const cx = 21.8, cz = 25.8, r = 1.35, yT = y0 + 30;
+    vessel(M, cx, cz, r, y0, yT, C.white, accent);
+    for (let y = y0 + 4; y < yT - 3; y += 3.2) M.lathe(cx, cz, () => r + 0.15, y, y + 0.3, 1, C.indShade, { seg: 18, flat: true });
+    M.arc(cx, cz, r, r + 1.1, 0, 2 * Math.PI, yT - 0.4, 0.2, C.indRoofLt, 16);
+    M.lathe(cx, cz, () => r + 1.05, yT + 0.6, yT + 0.75, 1, C.yellow, { seg: 16 });
+    // vapour line: column head → down the frame → into the main block
+    M.beam([cx - r, y0 + 27, cz], [18.9, y0 + 27, cz], 0.4, C.yellow);
+    M.beam([18.9, y0 + 27.2, cz], [18.9, y0 + 14.5, cz], 0.4, C.yellow);
+    M.beam([19.1, y0 + 14.5, cz], [18.0, y0 + 14.5, cz], 0.4, C.yellow);
+    // drum vessel + small reflux drum on L2, exchangers on L1
+    vessel(M, 26.4, 25.6, 1.9, y0, y0 + 10, C.indTank, accent);
+    vessel(M, 26.3, 19.6, 1.0, L2, L2 + 3.2, C.indTank, null);
+    for (const z of [18.6, 20.8]) {
+      M.tube([20.3, L1 + 1.0, z], [23.3, L1 + 1.0, z], 0.72, C.indTank, { seg: 14, heads: 0.4 });
+      for (const x of [20.9, 22.7]) M.box(x - 0.3, L1, z - 0.6, x + 0.3, L1 + 0.5, z + 0.6, C.indShade);
+    }
+    // risers up the front column pair, condensers on the top deck
+    for (const [dx, c] of [[0.45, C.indBlue], [0.85, C.yellow], [1.25, C.indShade]]) M.beam([19.6 + dx, y0, 16.3], [19.6 + dx, L2 + 0.8, 16.3], 0.26, c);
+    M.beam([19.6 + 0.85, L2 + 0.8, 16.3], [26.0, L2 + 0.8, 16.3], 0.26, C.yellow);
+    for (const x of [24.8, 26.8]) { M.box(x, L3, 17.2, x + 1.6, L3 + 1.1, 19.0, C.indBase); M.disc(x + 0.8, 18.1, 0, 0.6, L3 + 1.12, C.darkGray, { seg: 10 }); }
+  });
+  backRack(H, y0, [[10, 29], [24.1, 28.6]]);
+}
+
+// ---- 'silo' ---------------------------------------------------------------
+function siloWorks(p) {
+  const { g, H, y0, yl, T, accent, cl, wall, masonry, trim, fg, rng } = p;
+  tarmac(g, 1, 1, 29, 8, yl); tarmac(g, 12, 9, 18, 17, yl);
+  linesX(g, yl, [20, 27], 2, 8);
+  g.box(1, y0, 19, 20, y0, 28, C.indShade);                                     // silo slab
+  const h = T.tankH || 26, yb = y0 + 1, ys = yb + h;
+  // head tower (back-right), intake shed (front-right), glass office (front-left)
+  const TH = h + 8, tt = hall(g, 22, 18, 28, 27, y0, TH, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  g.walls(22, y0 + TH - 4, 18, 28, y0 + TH - 4, 27, trim);
+  const st = hall(g, 19, 9, 29, 15, y0, 10, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  rollDoor(facade(g, 'front', 9), 21, 26, y0, 7, { hood: trim, color: C.indWall, slat: C.indShade, frame: C.indBase });
+  const ot = glassOffice(g, 2, 9, 10, 16, y0, 10, { sides: masonry ? ['front'] : ['front', 'left'], mull: cl.seam, core: wall });
+  door(facade(g, 'front', 9), 4, y0, 3, 7, { color: C.civGlass, frame: C.white, glass: C.winCool, step: C.indShade, canopy: accent });
+  g.box(11, yl, 9, 11, yl, 17, C.lotGrass); g.box(11, y0, 10, 11, y0, 16, C.bush);
+  car(g, 13, y0, 9, 'z', 1, pk(rng, [C.red, C.indBlue, C.white, C.teal, C.yellow]));
+  const tk = T.truck || { cab: C.white, box: C.indTank, stripe: accent };
+  fTruck(H, 22.25, y0, 1, 'z', 1, { ...tk, len: 16 });
+  plaque(H, 'front', 18, 25, y0 + TH - 3, T.text, fg);
+  H.fine((Fg) => {
+    fineRoof(Fg, g, 23, 19, 27, 26, tt, { accent, kinds: ['cond', 'fan', 'vents'] });
+    fineRoof(Fg, g, 20, 10, 28, 14, st, { accent, seed: 9, rows: true });
+    fineRoof(Fg, g, 3, 10, 9, 15, ot, { accent, kinds: ['cond', 'fan', 'wtank'] });
+    fineWall(Fg, 'left', 22, 18, 27, y0, tt - 1, { ladder: true });
+  });
+  H.surf((M) => {
+    const xs = [4.5, 10.5, 16.5], cz = 23.8, r = 2.6;
+    xs.forEach((cx, i) => surfSilo(M, cx, cz, yb, r, h, { ...(i === 1 ? T.tank2 || T.tank : T.tank), seg: 24, hut: false, ladderA: Math.PI * 0.5, landings: 1, cage: i === 0 }));
+    if (T.gallery !== false) {
+      // conveyor gallery over the silo heads into the tower
+      M.box(1.6, ys + 0.5, 22.6, 22.0, ys + 2.7, 25.0, C.indWall);
+      M.box(1.55, ys + 1.3, 22.55, 22.0, ys + 2.0, 25.05, C.dtGlass);
+      M.box(1.4, ys + 2.7, 22.4, 22.0, ys + 3.0, 25.2, C.indRoofLt);
+      for (const cx of xs) M.box(cx - 0.6, ys - 0.2, cz - 0.6, cx + 0.6, ys + 0.5, cz + 0.6, C.indShade);
+    }
+    // pneumatic pipes along the silo feet into the tower
+    for (const [dy, c] of [[4.2, C.yellow], [4.8, C.indShade]]) M.beam([1.6, y0 + dy, 20.3], [22.0, y0 + dy, 20.3], 0.3, c);
+    for (const cx of xs) M.beam([cx, y0 + 4.5, 20.3], [cx, y0 + 4.5, cz - r + 0.2], 0.28, C.indShade);
+    // inclined conveyor from the tower down onto the intake shed
+    const ya = y0 + TH - 8, yb2 = st + 1.6;
+    // w4 r8b: an enclosed conveyor GALLERY (the plain 2-wide beam read as a plank):
+    // light cladding, a window strip each side, a darker roof
+    M.beam([25, ya, 18.0], [25, yb2, 12.5], 1.5, C.indWall);
+    for (const s of [-1, 1]) M.beam([25 + s * 0.6, ya + 0.1, 18.0], [25 + s * 0.6, yb2 + 0.1, 12.5], 0.45, C.dtGlass);
+    M.beam([25, ya + 0.85, 18.0], [25, yb2 + 0.85, 12.5], 0.7, C.indRoofLt);
+    M.beam([25, y0, 16.8], [25, ya - (ya - yb2) * 0.22 - 0.9, 16.8], 0.45, C.indBase);
+  });
+  backRack(H, y0, [[25, 28]]);
+}
+
+// ---- 'yard' ---------------------------------------------------------------
+function yardWorks(p) {
+  const { g, H, y0, yl, T, accent, cl, wall, masonry, trim, fg } = p;
+  tarmac(g, 1, 1, 29, 13, yl); tarmac(g, 1, 14, 12, 28, yl);
+  const hH = T.h || 13;
+  const top = hall(g, 13, 14, 29, 28, y0, hH, { wall, trim: cl.pil, roof: C.indYard, base: C.indBase });
+  const F = facade(g, 'front', 14), L = facade(g, 'left', 13), B = facade(g, 'back', 28);
+  const rd = { hood: trim, color: C.indWall, slat: C.indShade, frame: C.indBase, bollards: false };
+  for (const u of [16, 20, 24]) rollDoor(L, u, u + 2, y0, 7, rd);
+  rollDoor(F, 15, 19, y0, 8, rd);
+  ribbon(L, 15, 27, y0 + 9, 2, { glass: C.dtGlass, frame: C.indWall });
+  if (!masonry) glazeBays(B, 14, 28, y0 + 4, y0 + hH - 6, 5, [], cl.pil);
+  // side yard: striped stalls, two trailers + a truck backed onto the dock face
+  linesZ(g, yl, [15, 19, 23, 27], 1, 12);
+  const tc = T.trailers || [C.white, C.orange];
+  fTrailer(H, 3, y0, 16.25, 'x', 1, 20, tc[0], { stripe: accent });
+  fTrailer(H, 3, y0, 24.25, 'x', 1, 20, tc[1 % tc.length]);
+  const tk = T.truck || { cab: accent, box: C.white, stripe: accent };
+  fTruck(H, 5, y0, 20.25, 'x', 1, { ...tk, len: 16 });
+  // front: a truck at the front door, stalls, glass office + gatehouse
+  linesX(g, yl, [14, 20], 6, 13);
+  fTruck(H, 15.75, y0, 6, 'z', 1, { cab: C.white, box: tc[0] === C.white ? C.orange : C.white, stripe: accent, len: 16 });
+  const ot = glassOffice(g, 23, 8, 29, 13, y0, 9, { sides: masonry ? ['front'] : ['front', 'right'], mull: cl.seam, core: wall });
+  door(facade(g, 'front', 8), 24, y0, 3, 6, { color: C.civGlass, frame: C.white, glass: C.winCool, step: C.indShade, canopy: accent });
+  g.box(26, y0, 2, 28, y0 + 4, 4, C.indWall); g.box(26, y0 + 2, 2, 28, y0 + 3, 2, C.dtGlass); g.box(26, y0 + 2, 2, 26, y0 + 3, 4, C.dtGlass);
+  g.box(26, y0 + 5, 2, 28, y0 + 5, 4, C.white); g.box(26, y0 + 4, 2, 28, y0 + 4, 2, trim);
+  g.box(25, y0, 3, 25, y0 + 2, 3, C.indBase);
+  for (let x = 20; x <= 24; x++) g.set(x, y0 + 2, 3, (x & 1) ? C.red : C.white);
+  g.box(29, yl, 1, 29, yl, 7, C.lotGrass); g.box(29, y0, 6, 29, y0, 7, C.bush);
+  // roof: sawtooth / monitor / structured rows
+  const rk = T.roof || 'flat';
+  if (rk === 'saw') sawtooth(g, 14, 28, 16, 27, top, { D: 4, H: 4, roof: C.indRoofLt, glass: C.dtGlass, mull: 6 });
+  else if (rk === 'monitor') monitorRoof(g, 15, 27, top, C.indRoof);
+  plaque(H, 'front', 8, 26, y0 + 6.3, T.text, fg);
+  H.fine((Fg) => {
+    if (rk !== 'saw') { fineRoof(Fg, g, 14, 15, 28, 27, top, { accent, seed: 11, rows: true }); roofRail(Fg, 13, 14, 29, 28, top + 1); }
+    fineRoof(Fg, g, 24, 9, 28, 12, ot, { accent, kinds: ['cond', 'fan', 'vents'] });
+    fineWall(Fg, 'back', 28, 13, 29, y0, top - 1, { ladder: false });
+  });
+  if (T.stock) T.stock(p);
+  backRack(H, y0, [[20, 29]]);
+}
+// yard stock (zone x 2..12, z 2..12 — the front-left of a 'yard' lot)
+function stockCars(p) {
+  const cc = [C.red, C.indBlue, C.yellow, C.teal, C.white, C.orange];
+  const k = (p.rng() * 6) | 0;
+  linesX(p.g, p.yl, [1, 5, 9, 13], 2, 11);
+  [2, 6, 10].forEach((x, i) => car(p.g, x, p.y0, 2, 'z', 1, cc[(k + i) % 6]));
+}
+function stockEco(p) {
+  // w4 r8b: drawn in the FINE part (half size — the res-4 skips / bales read as
+  // giant toy blocks next to the half-size trucks); muted skip colours
+  p.H.fine((F) => {
+    const Y = 2 * p.y0;
+    const skip = (x, z, c, fill) => {
+      F.box(x, Y, z, x + 7, Y + 4, z + 4, c);
+      F.box(x + 1, Y + 3, z + 1, x + 6, Y + 4, z + 3, fill);
+      F.box(x - 1, Y + 5, z, x - 1, Y + 5, z + 4, c); F.box(x + 8, Y + 5, z, x + 8, Y + 5, z + 4, c);
+      F.box(x + 1, Y, z - 1, x + 1, Y + 3, z - 1, C.darkGray); F.box(x + 6, Y, z - 1, x + 6, Y + 3, z - 1, C.darkGray);
+    };
+    skip(4, 4, C.roofGreen, C.indBlue); skip(14, 4, C.indBlue, C.white); skip(4, 12, C.indBase, C.indTank); skip(14, 12, C.roofGreen, C.yellow);
+    const bale = (x, y, z, c) => { F.box(x, y, z, x + 4, y + 3, z + 4, c); F.box(x, y + 1, z, x + 4, y + 1, z + 4, C.indShade); F.box(x + 2, y, z, x + 2, y + 3, z + 4, C.indShade); };
+    for (let i = 0; i < 3; i++) for (let k = 0; k < 2; k++) bale(4 + i * 6, Y + k * 4, 18, [C.indBlue, C.white, C.roofGreen][(i + k) % 3]);
+    bale(4, Y, 24, C.white); bale(10, Y, 24, C.indBlue);
+  });
+  fForklift(p.H, 9.5, p.y0, 11.5, 'x', 1);
+}
+function stockTools(p) {
+  const { y0, H } = p;
+  H.fine((F) => {
+    const Y = 2 * y0;
+    // pallet racking (two bays deep) along z 18..23 fine
+    for (const x of [4, 11, 18, 25]) for (const z of [18, 23]) F.box(x, Y, z, x, Y + 15, z, C.indBase);
+    for (const y of [Y + 5, Y + 10, Y + 15]) for (const z of [18, 23]) F.box(4, y, z, 25, y, z, C.orange);
+    for (const y of [Y, Y + 6, Y + 11]) for (const x of [5, 12, 19]) {
+      F.box(x, y, 19, x + 5, y, 22, C.woodDark);
+      F.box(x, y + 1, 19, x + 5, y + 3, 22, [C.wood, C.indBlue, C.plank, C.indTank][(x + y) % 4]);
+    }
+    // crate stacks on pallets
+    for (const [x, z, n] of [[4, 4, 2], [10, 4, 1], [4, 10, 1]]) for (let k = 0; k < n; k++) { F.box(x, Y + 4 * k, z, x + 4, Y + 4 * k, z + 4, C.woodDark); F.box(x, Y + 4 * k + 1, z, x + 4, Y + 4 * k + 3, z + 4, k ? C.plank : C.wood); }
+  });
+  // steel pipe stock on bearers
+  H.surf((M) => {
+    for (const x of [6.5, 11.5]) M.box(x - 0.3, y0, 2.4, x + 0.3, y0 + 0.4, 6.6, C.woodDark);
+    const r = 0.36;
+    [[3.4, 0], [4.2, 0], [5.0, 0], [5.8, 0], [3.8, 1], [4.6, 1], [5.4, 1], [4.2, 2], [5.0, 2]].forEach(([z, l]) => M.tube([5.6, y0 + 0.4 + r + l * 0.66, z], [12.4, y0 + 0.4 + r + l * 0.66, z], r, C.indBlue, { seg: 8, caps: true }));
+  });
+  fForklift(H, 8.5, y0, 7.5, 'x', -1);
+}
+function stockPop(p) {
+  const { g, y0, H } = p;
+  gasBottles(g, 2, y0, 9, 3, C.pink); gasBottles(g, 2, y0, 11, 3, C.skyBlue);
+  H.surf((M) => {
+    const cy = y0 + 2.2;
+    for (const x of [4.2, 9.8]) M.box(x - 0.45, y0, 2.6, x + 0.45, cy - 0.5, 5.4, C.indShade);
+    M.tube([3.0, cy, 4], [11.0, cy, 4], 1.35, C.white, { seg: 18, heads: 0.8 });
+    M.tube([6.4, cy, 4], [7.6, cy, 4], 1.37, C.pink, { seg: 18 });
+    const cols = [C.red, C.yellow, C.indBlue];
+    [[8.5, 12.5, 9.2], [10.3, 11.2, 10.4], [9.4, 14, 11.2]].forEach(([bx, by, bz], i) => {
+      const yc = y0 + by, R = 1.2, Ry = 1.45;
+      M.lathe(bx, bz, (y) => R * Math.sqrt(Math.max(0, 1 - Math.pow((y - yc) / Ry, 2))) * (y < yc ? 1 - 0.18 * (yc - y) / Ry : 1), yc - Ry, yc + Ry, 10, cols[i], { seg: 18 });
+      M.beam([bx, y0 + 2.5, bz], [bx, yc - Ry, bz], 0.1, C.signWhite);
+    });
+  });
+  crates(g, 8, y0, 9, 3, 3, 1, [C.pink]);
 }
 
 // ===========================================================================
@@ -1060,7 +1496,7 @@ export function industrial(level, rng) {
   const accent = pk(rng, [C.indBlue, C.orange, C.red, C.teal, C.roofGreen]);
   const kind = level === 2 ? pk(rng, ['dock', 'process']) : level >= 3 ? 'process' : 'dock';
   const p = works(rng, {
-    kind, accent, clad: pk(rng, ['steel', 'navy', 'corr', 'concrete', 'brick', 'cream']), roof: pk(rng, ['flat', 'saw', 'saw', 'vault', 'gable']),
+    kind, accent, clad: pk(rng, ['steel', 'white', 'corr', 'redbrick', 'brick', 'cream', 'tan', 'teal']), trim: pk(rng, [C.teal, C.orange, C.indBlue, C.indBase]), roof: pk(rng, ['flat', 'saw', 'saw', 'vault', 'gable']),
     stacks: level === 1 ? 0 : level === 2 ? 1 : 2, h: level === 1 ? 16 : undefined,
     trailers: [pk(rng, [C.orange, C.white]), pk(rng, [C.white, C.indBlue, C.orange])],
     truck: kind === 'process' ? { tanker: true, cab: accent, tank: C.indTank, band: accent } : { cab: C.white, box: pk(rng, [C.orange, C.indBlue, C.white]), stripe: accent },
@@ -1074,7 +1510,7 @@ export function industrial(level, rng) {
 // ===========================================================================
 function bToyFactory(rng) {
   const p = works(rng, {
-    kind: 'dock', accent: C.red, text: 'TOYS', clad: 'navy', stacks: 0, roof: 'vault',
+    kind: 'dock', accent: C.red, text: 'TOYS', clad: 'white', trim: C.teal, stacks: 0, roof: 'saw', h: 15,   // w4 r7: white / teal plant, full sawtooth
     trailers: [C.red, C.white], truck: { cab: C.white, box: C.yellow, stripe: C.red, logo: C.red },
     tank: { c: C.indTank, band: C.red, top: C.yellow },
     goods: (q) => {                                   // gift boxes on pallets
@@ -1086,49 +1522,39 @@ function bToyFactory(rng) {
 }
 
 function bChocolate(rng) {
-  const p = works(rng, {
-    kind: 'process', accent: C.indChoco, text: 'CHOCO', clad: 'brick', signFg: C.indChoco, stacks: 1, roof: 'gable',
-    stack: { body: C.brick, stripe: C.white, bands: 2, bandH: 2.5, gap: 5 },     // w4 r1: brick flue with two white bands (a plain red tube read as a pole)
-    tank: { c: C.indChocoLt, band: C.pink, top: C.indChoco }, tank2: { c: C.cream, band: C.indChoco, top: C.indChoco },
-    trailers: [C.cream], truck: { tanker: true, cab: C.indChoco, tank: C.indChocoLt, band: C.pink }, crates: [C.indChoco, C.pink],
+  // w4 r8: 'tanks' — a 2×2 farm of cream / pink-banded domed tanks, pipe rack, brick pump hall
+  const p = archWorks(rng, {
+    arch: 'tanks', accent: C.indChoco, text: 'CHOCO', clad: 'redbrick', trim: C.indChoco, signFg: C.indChoco, tankH: 11,
+    tank: { c: C.cream, band: C.indChoco }, tank2: { c: C.white, band: C.pink },
+    truck: { tanker: true, cab: C.indChoco, tank: C.indChocoLt, band: C.pink },
   });
   return p.H.done();
 }
 
 function bRobotFactory(rng) {
-  const p = works(rng, {
-    kind: 'dock', accent: C.orange, text: 'ROBOT', clad: 'steel', saw: true, stacks: 2,
-    trailers: [C.orange, C.white], truck: { cab: C.indBlue, box: C.white, stripe: C.indBlue, logo: C.orange },
-    goods: (q) => {                                   // orange robot arm lifting a crate
-      const { g, y0 } = q, ax = 16, az = 7;
-      g.box(ax - 1, y0, az - 1, ax + 2, y0, az + 2, C.darkGray);
-      g.box(ax, y0 + 1, az, ax + 1, y0 + 6, az + 1, C.orange);
-      for (let k = 0; k < 3; k++) g.box(ax + k, y0 + 6 + k, az, ax + k + 1, y0 + 7 + k, az + 1, C.orange);
-      g.box(ax + 3, y0 + 5, az - 1, ax + 4, y0 + 8, az + 2, C.darkGray);
-    },
+  // w4 r8: 'plant' — a tall steel process block, an open process frame, two banded stacks
+  const p = archWorks(rng, {
+    arch: 'plant', accent: C.orange, text: 'ROBOT', clad: 'steel', trim: C.orange, stacks: 2, h: 24,
+    truck: { cab: C.indBlue, box: C.white, stripe: C.indBlue, logo: C.orange },
   });
   return p.H.done();
 }
 
 function bRecycling(rng) {
-  const p = works(rng, {
-    kind: 'dock', accent: C.roofGreen, text: 'ECO', clad: 'sage', stacks: 0, hopper: { h: 12 },
-    trailers: [C.roofGreen, C.white], truck: { cab: C.roofGreen, box: C.roofGreen, stripe: C.white, logo: C.white },
-    tank: { c: C.indTank, band: C.roofGreen, top: C.roofGreen },
-    goods: (q) => {                                   // bales of paper, cans and bottles
-      const { g, y0 } = q;
-      const bale = (x, y, z, c) => { g.box(x, y, z, x + 2, y + 2, z + 2, c); g.box(x, y + 1, z, x + 2, y + 1, z + 2, C.indShade); };
-      bale(15, y0, 6, C.indBlue); bale(18, y0, 6, C.yellow); bale(16, y0 + 3, 6, C.roofGreen);
-    },
+  // w4 r8: 'yard' — a sage hall with a dock face and a big yard of skips and bales
+  const p = archWorks(rng, {
+    arch: 'yard', accent: C.roofGreen, text: 'ECO', clad: 'sage', trim: C.roofGreen, roof: 'flat', h: 12,
+    trailers: [C.roofGreen, C.white], truck: { cab: C.roofGreen, box: C.roofGreen, stripe: C.white, logo: C.white }, stock: stockEco,
   });
   return p.H.done();
 }
 
 function bCheese(rng) {
-  const p = works(rng, {
-    kind: 'process', accent: C.indBlue, text: 'MILK', clad: 'white', stacks: 0, tankH: 27,
-    tank: { c: C.white, stripes: [[4.2, 3, C.indBlue]], top: C.indBlue }, tank2: { c: C.white, stripes: [[4.2, 3, C.indBlue], [8, 7, C.indBlue]], top: C.indBlue },
-    trailers: [C.white], truck: { tanker: true, cab: C.indBlue, tank: C.indTank, band: C.indBlue }, crates: [C.gold, C.amber],
+  // w4 r8: 'tanks' — tall white milk tanks with blue bands (ref05's tank farm)
+  const p = archWorks(rng, {
+    arch: 'tanks', accent: C.indBlue, text: 'MILK', clad: 'white', trim: C.indBlue, tankH: 16,
+    tank: { c: C.white, band: C.indBlue }, tank2: { c: C.indTank, band: C.indBlue },
+    truck: { tanker: true, cab: C.indBlue, tank: C.indTank, band: C.indBlue },
   });
   return p.H.done();
 }
@@ -1136,82 +1562,62 @@ function bCheese(rng) {
 function bCrayon(rng) {
   const pal = [C.red, C.indBlue, C.roofGreen, C.yellow, C.purple, C.orange];
   const k = (rng() * 6) | 0;
-  // tanks dressed as giant crayons: paper wrapper with black rings, coloured tip
+  // silos dressed as giant crayons: paper wrapper with black rings, coloured tip
   const cray = (c) => ({ c: C.signWhite, stripes: [[3, 1.4, c], [10, 9, C.black], [5, 4, C.black]], top: c, coneH: 2.4, tip: 0.5, tipC: c, rail: false });
-  const p = works(rng, {
-    kind: 'process', accent: C.purple, text: 'ART', clad: 'navy', stacks: 0, tankH: 18,
+  // w4 r8: 'silo' — a row of crayon silos, a teal head tower, conveyor to the intake shed
+  const p = archWorks(rng, {
+    arch: 'silo', accent: C.purple, text: 'ART', clad: 'teal', trim: C.purple, tankH: 20, gallery: false,
     tank: cray(pal[k % 6]), tank2: cray(pal[(k + 1) % 6]),
-    trailers: [C.yellow], truck: { cab: C.white, box: C.signWhite, stripe: C.purple, logo: C.yellow }, crates: [C.red, C.indBlue, C.yellow],
+    truck: { cab: C.white, box: C.signWhite, stripe: C.purple, logo: C.yellow },
   });
   return p.H.done();
 }
 
 function bBalloonFactory(rng) {
-  const p = works(rng, {
-    kind: 'process', accent: C.pink, text: 'POP!', keepGoods: true, clad: 'steel', stacks: 0, tankH: 16,
-    tank: { c: C.indTank, band: C.pink, top: C.pink }, tank2: { c: C.indTank, band: C.skyBlue, top: C.skyBlue },
-    trailers: [C.pink], truck: { cab: C.white, box: C.pink, stripe: C.white, logo: C.yellow },
-    goods: (q) => {                                   // helium bottles + three balloons
-      const { g, y0 } = q;
-      gasBottles(g, 11, y0, 7, 3, C.pink); gasBottles(g, 11, y0, 9, 3, C.skyBlue);
-      // w4 r1: the coarse 3-layer balloons read as floating red / blue plus
-      // signs at gallery zoom; now smooth egg-shaped surf balloons with a knot,
-      // on thin strings tied to a crate of helium bottles
-      const cols = [C.red, C.yellow, C.indBlue];
-      q.H.surf((M) => {
-        [[16.5, 13.5, 7.5], [18.3, 12, 8.6], [17.4, 15, 9.6]].forEach(([bx, by, bz], i) => {
-          const yc = y0 + by, R = 1.25, Ry = 1.5;
-          M.lathe(bx, bz, (y) => R * Math.sqrt(Math.max(0, 1 - Math.pow((y - yc) / Ry, 2))) * (y < yc ? 1 - 0.18 * (yc - y) / Ry : 1), yc - Ry, yc + Ry, 10, cols[i], { seg: 18 });
-          M.lathe(bx, bz, (y) => 0.25 - 0.1 * (y - (yc - Ry - 0.3)) / 0.3, yc - Ry - 0.3, yc - Ry + 0.05, 1, cols[i], { seg: 8 });
-          M.beam([bx, y0 + 4, bz], [bx, yc - Ry - 0.3, bz], 0.1, C.signWhite);
-        });
-      });
-      crates(g, 16, y0, 7, 3, 3, 1, [C.pink]);
-    },
+  // w4 r8: 'yard' — a sawtooth hall, a gas bullet tank, bottle cages and a balloon bunch
+  const p = archWorks(rng, {
+    arch: 'yard', accent: C.pink, text: 'POP!', clad: 'white', trim: C.pink, roof: 'saw', h: 13,
+    trailers: [C.pink, C.white], truck: { cab: C.white, box: C.pink, stripe: C.white, logo: C.yellow }, stock: stockPop,
   });
   return p.H.done();
 }
 
 function bCarFactory(rng) {
-  const cc = [C.red, C.indBlue, C.yellow, C.teal, C.purple, C.orange, C.white, C.pink];
-  let k = (rng() * 8) | 0;
-  const p = works(rng, {
-    kind: 'dock', accent: C.red, text: 'CARS', clad: 'steel', stacks: 0, roof: 'gable',
-    trailers: [C.white, C.orange],
-    lot: (q) => {                                     // brand-new cars lined up by the office
-      for (let i = 0; i < 2; i++) car(q.g, 21, q.y0, 1 + i * 5, 'x', 1, cc[(k + i) % 8]);
-    },
+  // w4 r8: 'yard' — a red-brick hall under a roof monitor, new cars lined up in the yard
+  const p = archWorks(rng, {
+    arch: 'yard', accent: C.red, text: 'CARS', clad: 'redbrick', trim: C.indBase, roof: 'monitor', h: 14,
+    trailers: [C.white, C.orange], truck: { cab: C.red, box: C.white, stripe: C.red, logo: C.red }, stock: stockCars,
   });
   return p.H.done();
 }
 
 function bBakeryPlant(rng) {
-  const p = works(rng, {
-    kind: 'process', accent: C.pink, text: 'YUM', signFg: C.pink, stacks: 1, clad: 'cream', roof: 'vault',
-    stack: { body: C.brick, stripe: C.white, bands: 2, bandH: 2, gap: 4 }, stackH: 44,
-    tank: { c: C.cream, band: C.gold, top: C.plank }, tank2: { c: C.cream, band: C.pink, top: C.plank },   // flour silos
-    trailers: [C.pink], truck: { cab: C.white, box: C.pink, stripe: C.white, logo: C.gold }, crates: [C.plank, C.wood],
+  // w4 r8: 'silo' — cream flour silos under a conveyor gallery, a terracotta head tower
+  const p = archWorks(rng, {
+    arch: 'silo', accent: C.pink, text: 'YUM', signFg: C.pink, clad: 'brick', trim: C.pink, tankH: 24,
+    tank: { c: C.cream, band: C.gold, top: C.plank }, tank2: { c: C.cream, band: C.pink, top: C.plank },
+    truck: { cab: C.white, box: C.pink, stripe: C.white, logo: C.gold },
   });
   return p.H.done();
 }
 
 function bJuiceFactory(rng) {
   const juice = pk(rng, [C.orange, C.red, C.purple]);
-  const fruit = (c) => ({ c: C.indTank, stripes: [[4, 1.6, c]], top: c, tipC: C.roofGreen });
-  const p = works(rng, {
-    kind: 'process', accent: juice, text: 'JUICE', clad: 'corr', stacks: 0, tankH: 13, crane: { x0: 1, x1: 19, h: 16, load: C.orange },
-    tank: fruit(C.orange), tank2: fruit(C.red),
-    trailers: [C.orange], truck: { tanker: true, cab: juice, tank: C.indTank, band: juice }, crates: [C.orange, C.roofGreen],
+  // w4 r8: 'tanks' with horizontal bullet tanks on saddles and a crown catwalk
+  const p = archWorks(rng, {
+    arch: 'tanks', bullets: true, accent: juice, text: 'JUICE', clad: 'cream', trim: C.orange,
+    tank: { c: C.indTank, band: C.orange }, tank2: { c: C.white, band: C.roofGreen },
+    truck: { tanker: true, cab: juice, tank: C.indTank, band: juice },
   });
   return p.H.done();
 }
 
 function bCookieFactory(rng) {
-  const p = works(rng, {
-    kind: 'dock', accent: C.indChocoLt, text: 'NOM', signFg: C.indChoco, saw: true, stacks: 0, hopper: { h: 14 },
-    stack: { body: C.brick, stripe: C.brickDark, bands: 1, bandH: 2 }, stackH: 44, clad: 'cream',
-    trailers: [C.cream, C.orange], truck: { cab: C.indChocoLt, box: C.cream, stripe: C.indChocoLt, logo: C.indChoco },
-    tank: { c: C.amber, band: C.indChoco, top: C.indChocoLt }, crates: [C.plank, C.indChocoLt],
+  // w4 r8: 'plant' — a tan oven house, process frame, one brick oven flue
+  const p = archWorks(rng, {
+    arch: 'plant', accent: C.indChocoLt, text: 'NOM', signFg: C.indChoco, clad: 'tan', trim: C.indChocoLt, stacks: 1, h: 20,
+    stack: { body: C.brick, stripe: C.white, bands: 2, bandH: 2.5, gap: 5 }, stackH: 40,
+    truck: { cab: C.indChocoLt, box: C.cream, stripe: C.indChocoLt, logo: C.indChoco },
   });
   return p.H.done();
 }
@@ -1221,10 +1627,10 @@ function bCookieFactory(rng) {
 // ===========================================================================
 function bWorkshop(rng) {
   const accent = pk(rng, [C.orange, C.indBlue, C.red]);
-  const p = works(rng, {
-    kind: 'dock', accent, text: 'TOOLS', clad: 'corr', saw: true, stacks: 1, h: 17, stackH: 40, crane: { h: 18, load: C.indBlue },
-    trailers: [C.white, C.orange], truck: { cab: accent, box: C.white, stripe: accent, logo: accent },
-    goods: (q) => { const { g, y0 } = q; for (const [x, z, c] of [[18, 6, C.indBlue], [18, 8, C.red]]) barrel(g, x, y0, z, c); crates(g, 15, y0, 6, 3, 3, 2, [C.wood, C.plank]); },
+  // w4 r8: 'yard' — a corrugated sawtooth shop, pallet racking and pipe stock in the yard
+  const p = archWorks(rng, {
+    arch: 'yard', accent, text: 'TOOLS', clad: 'corr', trim: C.yellow, roof: 'saw', h: 14,
+    trailers: [C.white, C.orange], truck: { cab: accent, box: C.white, stripe: accent, logo: accent }, stock: stockTools,
   });
   return p.H.done();
 }
@@ -1236,20 +1642,21 @@ function bRocketLab(rng) {                                        // 2×2
   const y0 = lotPlinth(g, 0, 0, S - 1, S - 1, {});
   // --- mission control (front right) ---
   const x0 = 36, x1 = 59, z0 = 5, z1 = 24;
-  const top = hall(g, x0, z0, x1, z1, y0, 28, { wall: C.indNavy, trim: C.indShade, band: [23, C.white, 2] });
+  // w4 r4 (critic w4r3: the rocket lab read as tall office blocks in the pile): mission control 28 → 20, hangar 44 → 34
+  const top = hall(g, x0, z0, x1, z1, y0, 20, { wall: C.indNavy, trim: C.indShade });
   const F = facade(g, 'front', z0), L = facade(g, 'left', x0), Rt = facade(g, 'right', x1), B = facade(g, 'back', z1);
   ribbon(F, x0 + 3, x0 + 6, 7, 6); ribbon(F, x1 - 6, x1 - 3, 7, 6);
   door(F, 45, y0, 6, 11, { double: true, color: C.winCool, frame: C.white, glass: C.winCool, step: C.indShade, stepDepth: 3, canopy: accent });
   // w2 r1: a blue curtain band across mission control's front + back (ref05's
   // glazed office fronts) and a half-size SPACE tag (the coarse yellow-bordered
   // board read as a toy billboard)
-  for (const f of [F, B]) curtainBand(f, x0 + 2, x1 - 2, y0 + 16, y0 + 19);
+  for (const f of [F, B]) curtainBand(f, x0 + 2, x1 - 2, y0 + 12, y0 + 15);
   H.fine((Fg) => {
-    tag(facade(Fg, 'front', 2 * z0), 97, 2 * y0 + 24, 'SPACE', { fg: C.navy });
-    tag(facade(Fg, 'back', 2 * z1 + 1), 97, 2 * y0 + 24, 'SPACE', { fg: C.navy });
+    tag(facade(Fg, 'front', 2 * z0), 97, 2 * y0 + 24, 'SPACE', { fg: C.navy, plaque: true });
+    tag(facade(Fg, 'back', 2 * z1 + 1), 97, 2 * y0 + 24, 'SPACE', { fg: C.navy, plaque: true });
   });
   ribbon(B, x0 + 3, x0 + 6, 7, 5); ribbon(B, x1 - 6, x1 - 3, 7, 5);
-  for (const f of [L, Rt]) glazeBays(f, z0 + 1, z1, y0 + 4, y0 + 19, 5);
+  for (const f of [L, Rt]) glazeBays(f, z0 + 1, z1, y0 + 4, y0 + 14, 5);
   // radar dish + mast + condensers on the roof
   const dx = x0 + 7, dz = z0 + 10;
   g.box(dx, top, dz, dx + 1, top + 5, dz + 1, C.metalDark);
@@ -1259,30 +1666,30 @@ function bRocketLab(rng) {                                        // 2×2
   g.box(dx, top + 7, dz, dx, top + 12, dz, C.metalDark); g.set(dx, top + 13, dz, C.red);
   acBox(g, x1 - 8, top, z1 - 7, { w: 6, d: 5, h: 4 });
   solarPanel(g, x1 - 8, z0 + 2, x1 - 2, z0 + 8, top, { cell: 3 });
-  g.box(x0 + 15, top, z0 + 3, x0 + 15, top + 16, z0 + 3, C.metal); g.set(x0 + 15, top + 17, z0 + 3, C.lamp);
+  g.box(x0 + 15, top, z0 + 3, x0 + 15, top + 10, z0 + 3, C.metal); g.set(x0 + 15, top + 11, z0 + 3, C.lamp);
   // --- rocket assembly hangar (back right): tall hall, giant door toward the pad ---
   const ax0 = 44, ax1 = 59, az0 = 33, az1 = 58;
-  const atop = hall(g, ax0, az0, ax1, az1, y0, 44, { wall: C.indCorr, trim: C.indCorrDk, band: [38, accent, 2] });
+  const atop = hall(g, ax0, az0, ax1, az1, y0, 34, { wall: C.indCorr, trim: C.indCorrDk, band: [y0 + 29, accent, 2] });
   const AL = facade(g, 'left', ax0), AB = facade(g, 'back', az1), AF = facade(g, 'front', az0), AR = facade(g, 'right', ax1);
-  AL.clear(38, y0, 0, 53, y0 + 32, 0);
-  for (let z = 38; z <= 53; z++) for (let y = y0; y <= y0 + 32; y++) AL.set(z, y, -1, (z - 38) % 4 === 3 ? C.indBase : C.indShade);
-  AL.box(37, y0, 0, 37, y0 + 33, 0, C.indBase); AL.box(54, y0, 0, 54, y0 + 33, 0, C.indBase); AL.box(37, y0 + 33, 0, 54, y0 + 33, 0, C.indBase);
+  AL.clear(38, y0, 0, 53, y0 + 25, 0);
+  for (let z = 38; z <= 53; z++) for (let y = y0; y <= y0 + 25; y++) AL.set(z, y, -1, (z - 38) % 4 === 3 ? C.indBase : C.indShade);
+  AL.box(37, y0, 0, 37, y0 + 26, 0, C.indBase); AL.box(54, y0, 0, 54, y0 + 26, 0, C.indBase); AL.box(37, y0 + 26, 0, 54, y0 + 26, 0, C.indBase);
   for (let k = 0; k < 3; k++) AB.box(ax0 + 2, 6 + k * 3, 0, ax1 - 2, 7 + k * 3, 0, [C.red, C.white, C.indBlue][k]);
   // w4 r2 (critic w4r1: "facades are large plain grey blocks … break up the
   // big grey upper masses with ledges"): a blue curtain band + a proud light
   // ledge over it on the hangar's two long gable faces
   // (the wall-high BV board went to a half-size fine tag under the coping)
   for (const f of [AF, AB]) {
-    curtainBand(f, ax0 + 2, ax1 - 2, y0 + 14, y0 + 22); curtainBand(f, ax0 + 2, ax1 - 2, y0 + 27, y0 + 33);
-    for (const y of [y0 + 11, y0 + 25, y0 + 35]) f.box(ax0, y, 1, ax1, y, 1, C.indWall);
+    curtainBand(f, ax0 + 2, ax1 - 2, y0 + 11, y0 + 17); curtainBand(f, ax0 + 2, ax1 - 2, y0 + 21, y0 + 26);
+    for (const y of [y0 + 8, y0 + 19, y0 + 28]) f.box(ax0, y, 1, ax1, y, 1, C.indWall);
   }
   H.fine((Fg) => {
-    tag(facade(Fg, 'front', 2 * az0), 104, 2 * (y0 + 37) + 1, 'BV', { fg: accent });
-    tag(facade(Fg, 'back', 2 * az1 + 1), 104, 2 * (y0 + 37) + 1, 'BV', { fg: accent });
+    tag(facade(Fg, 'front', 2 * az0), 104, 2 * (y0 + 29) + 1, 'BV', { fg: accent, plaque: true });
+    tag(facade(Fg, 'back', 2 * az1 + 1), 104, 2 * (y0 + 29) + 1, 'BV', { fg: accent, plaque: true });
   });
-  glazeBays(AR, az0 + 1, az1, y0 + 5, y0 + 34, 5, [], C.indCorrDk);
-  panelSeams(g, ax0, az0, ax1, az1, y0 + 2, y0 + 36, C.indCorr, C.indCorrDk, 6);
-  panelSeams(g, x0, z0, x1, z1, y0 + 2, y0 + 22, C.indNavy, C.indShade, 6);
+  glazeBays(AR, az0 + 1, az1, y0 + 5, y0 + 26, 5, [], C.indCorrDk);
+  panelSeams(g, ax0, az0, ax1, az1, y0 + 2, y0 + 28, C.indCorr, C.indCorrDk, 6);
+  panelSeams(g, x0, z0, x1, z1, y0 + 2, y0 + 16, C.indNavy, C.indShade, 6);
   acBox(g, ax0 + 2, atop, az0 + 3, { w: 6, d: 5, h: 4 });
   H.fine((Fg) => {
     fineRoof(Fg, g, ax0 + 1, az0 + 1, ax1 - 1, az1 - 1, atop, { accent });
@@ -1299,20 +1706,13 @@ function bRocketLab(rng) {                                        // 2×2
   ring(g, rx, rz, 9, y0 + 1, y0 + 1, C.yellow);
   g.box(rx - 3, y0 + 1, rz - 3, rx + 3, y0 + 1, rz + 3, C.darkGray);
   g.box(rx + 13, y0 - 1, rz - 2, ax0 - 1, y0 - 1, rz + 2, C.lotPaveDark);   // crawlerway to the hangar
-  const pb = y0 + 2;
-  for (const [ex, ez] of [[-2, 0], [2, 0], [0, -2], [0, 2]]) g.box(rx + ex - 1, pb, rz + ez - 1, rx + ex + 1, pb + 1, rz + ez + 1, C.darkGray);
-  // r8 (critic r7: the rocket "is taller than everything else and pulls
-  // attention away from the industrial theme"): rocket 92 → 48, gantry 104 → 56
-  const rb = pb + 3, rt = rb + 48, GH = 56;
-  H.fine((F) => fineRocket(F, 2 * rx + 1, 2 * rz + 1, 2 * rb, 2 * rt, accent));
-  // service gantry on the hangar side (red lattice) + swing arms
-  const gx0 = rx + 7, gx1 = rx + 13, gz0 = rz - 3, gz1 = rz + 3;
-  for (const [px, pz] of [[gx0, gz0], [gx1, gz0], [gx0, gz1], [gx1, gz1]]) g.box(px, pb, pz, px, pb + GH, pz, C.indSteelDk);   // r12: steel lattice (critic r11: red rocket rig read as a theme-park piece)
-  for (let y = pb + 8; y <= pb + GH; y += 8) g.walls(gx0, y, gz0, gx1, y, gz1, C.indSteelDk);
-  for (let y = pb + 4; y <= pb + GH - 4; y += 8) for (let t = 0; t <= gz1 - gz0; t++) { g.set(gx0, y + (t >> 1) - 2, gz0 + t, C.indBase); g.set(gx1, y + (t >> 1) - 2, gz0 + t, C.indBase); }
-  for (const ay of [pb + 28, pb + 44]) g.box(rx + 5, ay, rz - 1, gx0 - 1, ay + 1, rz + 1, C.metalDark);
-  g.box(gx0, pb + GH + 1, gz0, gx1, pb + GH + 1, gz1, C.darkGray);
-  g.box(gx1, pb + GH + 2, rz, gx1, pb + GH + 8, rz, C.metalDark); g.set(gx1, pb + GH + 9, rz, C.lamp);
+  // w4 r8 (critics w4r6 + w4r7: "the rocket or launch tower in the middle of
+  // the industrial zone muddles what the piece is about … looks out of place
+  // against the reference's industrial language"): no upright rocket and no
+  // launch gantry — the finished stage lies on a multi-axle transporter on the
+  // test pad, rolled out of the assembly hangar (an aerospace WORKS, low and
+  // horizontal like the rest of the district)
+  H.surf((M) => surfRocketTransport(M, 5, 37, y0, rz + 0.5, 2.5, accent));
   // fuel farm (back left) + pipe to the pad
   H.surf((M) => {                                // r6: ribbed domed fuel tanks (were lumpy voxel domes)
     surfDomeTank(M, 7.5, 56.5, y0, 4, 11, { band: accent, bands: [[2.5, 3.5], [7, 8]], seg: 24, legs: 2 });
@@ -1330,7 +1730,7 @@ function bRocketLab(rng) {                                        // 2×2
   for (const [tx, tz] of [[4, 19], [11, 19], [30, 19], [36, 29], [4, 29]]) tree(g, tx, y0, tz, 5);
   bush(g, 15, y0, 18, 28, 19);
   crates(g, 31, y0, 56, 3, 3, 2, [C.indShade, C.indBlue]);
-  yardFill(g, y0, rng, { keep: [[rx + 0.5, rz + 0.5, 13.5], [7.5, 56.5, 6], [18.5, 56.5, 6]], skip: [[rx + 13, rz - 3, ax0 - 1, rz + 3]] });
+  // w4 r4: no yardFill clutter (critic w4r3: cut the props per lot by half)
   return H.done();
 }
 
@@ -1349,14 +1749,18 @@ function bSawmill(rng) {
   g.walls(x0, y0, z0, x1, y0 + 1, z1, C.indBase);
   for (let z = z0; z <= z1; z += 4) { g.box(x0, y0, z, x0, y0 + bh - 1, z, C.dtLimeShade); g.box(x1, y0, z, x1, y0 + bh - 1, z, C.dtLimeShade); }
   for (let x = x0; x <= x1; x += 4) { g.box(x, y0, z0, x, y0 + bh - 1, z0, C.dtLimeShade); g.box(x, y0, z1, x, y0 + bh - 1, z1, C.dtLimeShade); }
-  for (let q = 0; q <= 9; q++) {
-    const y = y0 + bh + q, a = x0 - 1 + q, b = x1 + 1 - q;
-    if (a > b) break;
-    g.box(a, y, z0 - 1, a, y, z1 + 1, roofC); g.box(b, y, z0 - 1, b, y, z1 + 1, roofC);
-    if (a + 1 <= b - 1) { g.box(a + 1, y, z0, b - 1, y, z0, C.dtLime); g.box(a + 1, y, z1, b - 1, y, z1, C.dtLime); }
-  }
-  const ridge = y0 + bh + 8;
-  g.box(x0 + 7, ridge, z0 - 1, x0 + 7, ridge, z1 + 1, C.indChoco);
+  // w4 r4 (critic w4r2 "staircase", w4r3 "piles"): the 45° voxel gable read as a
+  // stepped pyramid; a smooth shallow surf gable (two planes + gable ends)
+  g.box(x0 + 1, y0 + bh - 1, z0 + 1, x1 - 1, y0 + bh - 1, z1 - 1, C.dtLime);
+  H.surf((M) => {
+    const ye = y0 + bh, yr = ye + 5, xa = x0 - 0.8, xb = x1 + 1.8, xm = (x0 + x1 + 1) / 2, za = z0 - 0.8, zb = z1 + 1.8;
+    M.poly([[xa, ye, za], [xm, yr, za], [xm, yr, zb], [xa, ye, zb]], [-(yr - ye), xm - xa, 0], roofC);
+    M.poly([[xm, yr, za], [xb, ye, za], [xb, ye, zb], [xm, yr, zb]], [yr - ye, xb - xm, 0], roofC);
+    for (const [z, nz] of [[z0, -1], [z1 + 1, 1]]) M.poly([[x0, ye, z], [xm, yr - 0.2, z], [x1 + 1, ye, z]], [0, 0, nz], C.dtLime);
+    M.box(xm - 0.35, yr - 0.1, za, xm + 0.35, yr + 0.35, zb, C.indChoco);          // ridge cap
+    for (const z of [za, zb]) M.box(xa, ye - 0.3, z - (z === za ? 0 : 0.3), xb, ye, z + (z === za ? 0.3 : 0), C.white);
+    for (let z = z0 + 3; z <= z1 - 2; z += 5) M.box(xm - 1.2, yr - 0.6, z, xm + 1.2, yr + 1.4, z + 1.6, C.indShade);   // ridge vents
+  });
   const L = facade(g, 'left', x0), F = facade(g, 'front', z0), B = facade(g, 'back', z1);
   for (const f of [L]) { ribbon(f, 14, 17, 6, 4, { glass: C.dtGlass, frame: C.indBase, sill: C.white }); ribbon(f, 21, 24, 6, 4, { glass: C.dtGlass, frame: C.indBase, sill: C.white }); }
   F.clear(x0 + 3, y0, 0, x1 - 3, y0 + 9, 0);
@@ -1364,8 +1768,8 @@ function bSawmill(rng) {
   // w2 r1: the coarse WOOD board read as a big orange frame with stray cream
   // strokes; a half-size tag like every other works (fine part)
   H.fine((Fg) => {
-    tag(facade(Fg, 'front', 2 * z0), 41, 2 * (y0 + bh) - 9, 'WOOD', { fg: C.indChoco });
-    tag(facade(Fg, 'back', 2 * z1 + 1), 41, 2 * (y0 + bh) - 9, 'WOOD', { fg: C.indChoco });
+    tag(facade(Fg, 'front', 2 * z0), 41, 2 * (y0 + bh) - 9, 'WOOD', { fg: C.indChoco, plaque: true, inv: false, edge: C.indChoco });
+    tag(facade(Fg, 'back', 2 * z1 + 1), 41, 2 * (y0 + bh) - 9, 'WOOD', { fg: C.indChoco, plaque: true, inv: false, edge: C.indChoco });
   });
   door(B, 18, y0, 5, 10, { color: C.woodDark, frame: C.plank, step: null });
   // giant saw blade in the bay (disc in X/Y facing front)
@@ -1380,25 +1784,16 @@ function bSawmill(rng) {
     g.box(lx, ly, lz1, lx + 2, ly + 2, lz1, C.plank); g.set(lx + 1, ly + 1, lz1, C.wood);
   };
   for (let r = 0; r < 3; r++) for (let i = 0; i < 3 - r; i++) log(2 + i * 3 + r, y0 + r * 3, 13, 28);
-  for (let r = 0; r < 2; r++) for (let i = 0; i < 2 - r; i++) log(2 + i * 3 + r, y0 + r * 3, 2, 10);
   // conveyor from the pile into the barn
   for (let x = 11; x <= 12; x++) g.box(x, y0 + 5, 18, x, y0 + 5, 21, C.darkGray);
   g.box(11, y0, 18, 11, y0 + 4, 18, C.metalDark);
   // plank stacks + forklift in front of the bay; flatbed with logs at the back
   for (const [px, pz] of [[8, 2]]) for (let q = 0; q < 4; q++) g.box(px, y0 + q, pz, px + 3, y0 + q, pz + 6, q & 1 ? C.plank : C.wood);
-  forklift(g, 13, y0, 3, 'z', 1);
-  for (let q = 0; q < 2; q++) g.box(19 + q * 3, y0, 2, 20 + q * 3, y0 + 2 - (q & 1), 8, q & 1 ? C.plank : C.wood);
-  // sawdust cyclone on legs + duct up to the barn roof (a working mill)
-  const cx = 26, cz = 5, cy = y0 + 8;
-  for (const [lx, lz] of [[24, 3], [28, 3], [24, 7], [28, 7]]) g.box(lx, y0, lz, lx, cy + 1, lz, C.metalDark);
-  for (let i = 0; i < 4; i++) disc(g, cx, cz, 0.8 + i * 0.6, cy + i, C.indShade);
-  cylinder(g, cx, cz, 2.5, cy + 4, cy + 11, C.roofGreen, C.indShade);
-  ring(g, cx, cz, 2.5, cy + 8, cy + 8, C.yellow);
-  g.box(cx, cy + 12, cz, cx, cy + 14, cz, C.metal);
-  g.box(cx - 5, cy + 14, cz, cx, cy + 15, cz + 1, C.metal);
-  g.box(cx - 5, cy + 14, cz, cx - 4, cy + 15, z0 + 3, C.metal);
-  g.box(27, y0, 9, 28, y0 + 3, 10, C.woodDark);                   // sawdust bin
-  g.box(27, y0 + 4, 9, 28, y0 + 4, 10, C.sandDark);
+  // w4 r4 (critic w4r3: cut the props by half): no forklift / cyclone / loose
+  // planks — a striped apron with one timber truck backed into the saw bay
+  g.box(13, y0 - 1, 1, 29, y0 - 1, 10, C.lotAsphalt);
+  for (const x of [15, 25]) for (let z = 3; z <= 10; z++) g.set(x, y0 - 1, z, C.lotLine);
+  fTruck(H, 18, y0, 2.5, 'z', 1, { len: 16, cab: C.roofGreen, box: C.woodDark, stripe: C.plank, logo: C.plank });
   return H.done();
 }
 
@@ -1408,7 +1803,7 @@ function bSawmill(rng) {
 function bWarehouse(rng) {
   const accent = pk(rng, [C.indBlue, C.orange, C.roofGreen]);
   const p = works(rng, {
-    kind: 'dock', full: true, accent, text: 'DEPOT', clad: 'navy', stacks: 0,
+    kind: 'dock', full: true, accent, text: 'DEPOT', clad: 'white', trim: C.indBlue, stacks: 0,
     trailers: [C.orange, C.white, pk(rng, [C.orange, C.indBlue])],
   });
   return p.H.done();
@@ -1447,30 +1842,150 @@ function rot180(g) {
 // geometry cache hits on every rebuild of the base (ghost hover, placement).
 // It is stored pre-flipped because catalogModel only flipZ()s the base.
 // ===========================================================================
+// ===========================================================================
+// FINE FACADES — wave 4 round 6. Critic w4r5: "the walls … are large flat grey
+// panels, and the windows are coarse blue bands of blobs. In ref05 every wall
+// face is broken up by fine window grids and mullions … facade subdivision
+// about 3x finer (a real window grid with frames instead of glass strips)".
+// A pass over the finished res-4 base, drawn into the res-8 FINE part before
+// every other fine op (so pipes / ladders / signs still sit on top):
+//  - every exposed glass face gets a light frame grid one fine voxel in front
+//    of it (a mullion every 4 fine, a transom every 6: panes 3×5 fine, i.e.
+//    ~3× finer than the res-4 glass strips), and the glass itself is redrawn
+//    per PANE (a lit top row, a reflection pane on a diagonal) so the old
+//    per-voxel streak "blobs" are covered;
+//  - bare light wall runs get rows of small framed windows (glass 4×4 fine
+//    in a proud frame, a sill ledge under each row) wherever a whole window
+//    fits on plain wall — pilasters, doors, signs and glass are left alone.
+// Dev: --pre "globalThis.__IND_NOFACADE=1" turns it off for A/B shots.
+// ===========================================================================
+function fineFacades(F, g) {
+  if (globalThis.__IND_NOFACADE) return;
+  const GL = new Set([C.civGlass, C.dtGlass, C.dtGlassHi, C.dtGlassDeep, C.winCool]);
+  const WL = new Set([C.indWall, C.indSteel, C.indNavy, C.indCorr, C.dtLime, C.resTerracotta, C.resSage, C.brick, C.sand, C.civHall]);
+  const raw = F.rot180 ? (x, y, z, c) => F.set(F.sx - 1 - x, y, F.sz - 1 - z, c) : (x, y, z, c) => F.set(x, y, z, c);
+  const D = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  // faces[d] : Map plane -> Map 'u,y' -> colour   (base stored coords)
+  const faces = D.map(() => new Map());
+  for (const [k, c] of g.map) {
+    const isG = GL.has(c), isW = !isG && WL.has(c);
+    if (!isG && !isW) continue;
+    const [x, y, z] = k.split(',').map(Number);
+    D.forEach(([dx, dz], d) => {
+      const nx = x + dx, nz = z + dz;
+      if (nx < 0 || nz < 0 || nx >= g.sx || nz >= g.sz) return;
+      if (g.map.has(nx + ',' + y + ',' + nz)) return;
+      const plane = dx ? x : z, u = dx ? z : x;
+      let m = faces[d].get(plane);
+      if (!m) faces[d].set(plane, (m = new Map()));
+      m.set(u + ',' + y, c);
+    });
+  }
+  // fine voxel just in front of face (plane, d) at fine along-coord U, fine Y;
+  // out = 0 → touching the base face, 1 → one further out
+  const put = (d, plane, U, Y, c, out = 0) => {
+    const [dx, dz] = D[d];
+    const n = dx || dz, p = n > 0 ? 2 * plane + 2 + out : 2 * plane - 1 - out;
+    if (dx) raw(p, Y, U, c); else raw(U, Y, p, c);
+  };
+  const paneC = (pu, py, top) => {
+    const k = (((pu - py) % 7) + 7) % 7;
+    if (k === 0) return C.dtGlassHi;
+    if (top) return C.civGlass;
+    return ((pu * 5 + py * 3) % 11) === 4 ? C.civGlass : C.dtGlass;
+  };
+  D.forEach((_, d) => {
+    for (const [plane, m] of faces[d]) {
+      // --- glass: pane grid ---
+      for (const [key, c] of m) {
+        if (!GL.has(c)) continue;
+        const [u, y] = key.split(',').map(Number);
+        const topCell = !GL.has(m.get(u + ',' + (y + 1)));
+        for (let a = 0; a < 2; a++) for (let b = 0; b < 2; b++) {
+          const U = 2 * u + a, Y = 2 * y + b;
+          if (U % 4 === 0 || Y % 6 === 0) { put(d, plane, U, Y, C.indWall); continue; }
+          const pu = U >> 2, py = Math.floor(Y / 6);
+          put(d, plane, U, Y, paneC(pu, py, topCell && Y % 6 === 5));
+        }
+      }
+      // --- bare wall: rows of small framed windows ---
+      const wall = (U, Y) => WL.has(m.get((U >> 1) + ',' + (Y >> 1)));
+      const ys = [], us = [], used = new Set();
+      for (const key of m.keys()) { const [u, y] = key.split(',').map(Number); ys.push(y); us.push(u); }
+      if (!ys.length) continue;
+      const uMin = 2 * Math.min(...us), uMax = 2 * Math.max(...us) + 1;
+      const yMin = 2 * Math.min(...ys), yMax = 2 * Math.max(...ys) + 1;
+      for (let Y0 = yMin - (yMin % 12) + 5; Y0 + 7 <= yMax; Y0 += 12) {
+        for (let U0 = uMin - (uMin % 8); U0 + 5 <= uMax; U0 += 8) {
+          // window footprint (frame 6 wide × 7 tall incl. sill) + a 1-voxel
+          // margin of wall so it never touches a pilaster / glass / door
+          let ok = true;
+          for (let U = U0 - 1; ok && U <= U0 + 6; U++) for (let Y = Y0 - 2; Y <= Y0 + 7; Y++) if (!wall(U, Y)) { ok = false; break; }
+          if (!ok) continue;
+          for (let U = U0; U <= U0 + 5; U++) for (let Y = Y0; Y <= Y0 + 5; Y++) {
+            const edge = U === U0 || U === U0 + 5 || Y === Y0 || Y === Y0 + 5;
+            put(d, plane, U, Y, edge ? C.indShade : Y === Y0 + 4 ? C.civGlass : (U === U0 + 1 && Y === Y0 + 3) ? C.dtGlassHi : C.dtGlass);
+          }
+          for (let U = U0; U <= U0 + 5; U++) put(d, plane, U, Y0 - 1, C.white), put(d, plane, U, Y0 - 1, C.white, 1);
+          for (let U = U0 - 1; U <= U0 + 6; U++) for (let Y = Y0 - 2; Y <= Y0 + 7; Y++) used.add(U + ',' + Y);
+        }
+      }
+      // --- remaining bare wall: square cladding panels (ref05's parapets
+      // and blank walls are tiled with framed recessed squares): a proud
+      // 1-fine frame ring per 7×7 tile, one fine voxel of wall between tiles
+      for (let Y0 = yMin - (yMin % 8) + 1; Y0 + 6 <= yMax; Y0 += 8) {
+        for (let U0 = uMin - (uMin % 8) + 1; U0 + 6 <= uMax; U0 += 8) {
+          let ok = true;
+          for (let U = U0; ok && U <= U0 + 6; U++) for (let Y = Y0; Y <= Y0 + 6; Y++) if (!wall(U, Y) || used.has(U + ',' + Y)) { ok = false; break; }
+          if (!ok) continue;
+          for (let U = U0; U <= U0 + 6; U++) for (let Y = Y0; Y <= Y0 + 6; Y++) {
+            if (U === U0 || U === U0 + 6 || Y === Y0 || Y === Y0 + 6) put(d, plane, U, Y, C.indShade);
+          }
+        }
+      }
+    }
+  });
+}
+
 const _partCache = new Map();
 function hiRes(S, SY, key, rot = true) {
   if (globalThis.__IND_FLIP && S > 64) { rot = !rot; key += '~flip'; }   // dev: view a mega lot's other side in shots
   const T = rot ? rot180 : (q) => q;
   const g = T(grid(S, SY, S, R));
-  const ops = [], sops = [];
+  const ops = [], sops = [], ops2 = [];
+  let fac = true;
   return {
     g,
+    noFacades() { fac = false; },                // w4 r6: skip the fineFacades pass (glasshouses)
     fine(fn) { ops.push(fn); },
     surf(fn) { sops.push(fn); },                 // smooth part: fn(M), M = surfKit (coarse design coords)
+    fine2(fn) { ops2.push(fn); },                // w4 r7: res-16 part (4x design coords) for small plaque lettering
     done() {
       const base = fin(g);
       if (globalThis.__IND_NOFINE) return base;
       const parts = [];
-      if (ops.length) {
+      {
         let part = _partCache.get(key);
         if (!part) {
           const F = T(grid(2 * S, 2 * SY, 2 * S, 2 * R));
+          if (fac) fineFacades(F, g);            // w4 r6: window grids first, other fine ops on top
           for (const fn of ops) fn(F);
           part = fin(F);
           flipZ(part);
           _partCache.set(key, part);
         }
         if (part.blocks.length) parts.push(part);
+      }
+      if (ops2.length) {
+        let p2 = _partCache.get(key + '~f2');
+        if (!p2) {
+          const F2 = T(grid(4 * S, 4 * SY, 4 * S, 4 * R));
+          for (const fn of ops2) fn(F2);
+          p2 = fin(F2);
+          flipZ(p2);
+          _partCache.set(key + '~f2', p2);
+        }
+        if (p2.blocks.length) parts.push(p2);
       }
       if (sops.length) {
         let sp = _partCache.get(key + '~surf');
@@ -1593,6 +2108,11 @@ function surfKit(S, SY, rot) {
       ];
       for (const [n, vs] of F) { const ids = vs.map(([x, y, z]) => vtx(x, y, z, n[0], n[1], n[2], c)); quad(ids[0], ids[1], ids[2], ids[3]); }
     },
+    // w4 r4: one flat polygon (3 or 4 points, design coords) facing normal n
+    poly(pts, n, c) {
+      const l = Math.hypot(n[0], n[1], n[2]) || 1, ids = pts.map(([x, y, z]) => vtx(x, y, z, n[0] / l, n[1] / l, n[2] / l, c));
+      quad(ids[0], ids[1], ids[2], ids[3] != null ? ids[3] : ids[2]);
+    },
     // square-section beam of width w from p0 to p1 (legs, braces, ladders)
     beam(p0, p1, w, c) {
       const d = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
@@ -1609,6 +2129,38 @@ function surfKit(S, SY, rot) {
           ids.push(vtx(p[0] + h * (a[0] * sa + b[0] * sb), p[1] + h * (a[1] * sa + b[1] * sb), p[2] + h * (a[2] * sa + b[2] * sb), n[0], n[1], n[2], c));
         }
         quad(ids[0], ids[1], ids[2], ids[3]);
+      }
+    },
+    // w4 r8: round tube of radius r from p0 to p1 (horizontal bullet tanks,
+    // round pipes), smooth-shaded, optional flat end caps (o.caps) or
+    // hemispherical-ish domed heads (o.heads = head depth)
+    tube(p0, p1, r, c, o = {}) {
+      const seg = o.seg || 16;
+      const d = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]], dl = Math.hypot(d[0], d[1], d[2]) || 1;
+      const t = d.map((q) => q / dl), ref = Math.abs(t[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+      let u = [t[1] * ref[2] - t[2] * ref[1], t[2] * ref[0] - t[0] * ref[2], t[0] * ref[1] - t[1] * ref[0]];
+      const ul = Math.hypot(u[0], u[1], u[2]); u = u.map((q) => q / ul);
+      const v = [t[1] * u[2] - t[2] * u[1], t[2] * u[0] - t[0] * u[2], t[0] * u[1] - t[1] * u[0]];
+      const dir = (a) => [Math.cos(a) * u[0] + Math.sin(a) * v[0], Math.cos(a) * u[1] + Math.sin(a) * v[1], Math.cos(a) * u[2] + Math.sin(a) * v[2]];
+      const ring = (p, rr, nrm) => { const ids = []; for (let q = 0; q < seg; q++) { const n = dir(q / seg * 2 * Math.PI); const nn = nrm ? nrm(n) : n; ids.push(vtx(p[0] + n[0] * rr, p[1] + n[1] * rr, p[2] + n[2] * rr, nn[0], nn[1], nn[2], c)); } return ids; };
+      const A = ring(p0, r), B = ring(p1, o.r1 != null ? o.r1 : r);
+      for (let q = 0; q < seg; q++) quad(A[q], A[(q + 1) % seg], B[(q + 1) % seg], B[q]);
+      for (const [p, s, rim, hd, rE] of [[p0, -1, A, o.h0 != null ? o.h0 : o.heads, r], [p1, 1, B, o.h1 != null ? o.h1 : o.heads, o.r1 != null ? o.r1 : r]]) {
+        if (hd) {
+          // 3-ring elliptical head
+          let prev = rim;
+          for (let k = 1; k <= 3; k++) {
+            const th = k / 3 * Math.PI / 2, rr = rE * Math.cos(th), off = hd * Math.sin(th);
+            const pc = [p[0] + t[0] * s * off, p[1] + t[1] * s * off, p[2] + t[2] * s * off];
+            if (k === 3) { const m = vtx(pc[0], pc[1], pc[2], t[0] * s, t[1] * s, t[2] * s, c); for (let q = 0; q < seg; q++) I.push(m, prev[q], prev[(q + 1) % seg]); break; }
+            const row = ring(pc, rr, (n) => { const a = Math.cos(th), b = Math.sin(th); return [n[0] * a + t[0] * s * b, n[1] * a + t[1] * s * b, n[2] * a + t[2] * s * b]; });
+            for (let q = 0; q < seg; q++) quad(prev[q], prev[(q + 1) % seg], row[(q + 1) % seg], row[q]);
+            prev = row;
+          }
+        } else if (o.caps || (o.c0 && s < 0) || (o.c1 && s > 0)) {
+          const cap = ring(p, rE, () => [t[0] * s, t[1] * s, t[2] * s]), m = vtx(p[0], p[1], p[2], t[0] * s, t[1] * s, t[2] * s, c);
+          for (let q = 0; q < seg; q++) I.push(m, cap[q], cap[(q + 1) % seg]);
+        }
       }
     },
     done() {
@@ -1993,6 +2545,35 @@ function surfStack(M, cx, cz, g, r, top, o = {}) {
   return top;
 }
 
+// w4 r8: a rocket stage lying along x on a multi-axle transporter (surf):
+// engine bell at x0, white hull with accent / black rings, tapered nose at x1,
+// three fins, yellow cradles, a low deck on black wheel sets, a tractor unit.
+function surfRocketTransport(M, x0, x1, y0, cz, r, accent) {
+  const cy = y0 + 2.4 + r, seg = 24, P = (x) => [x, cy, cz];
+  M.box(x0 + 0.5, y0 + 1.3, cz - 2.1, x1 - 5, y0 + 1.9, cz + 2.1, C.indBase);            // deck
+  for (let x = x0 + 1.2; x < x1 - 5.5; x += 1.6) for (const s of [-1, 1]) M.box(x - 0.55, y0, cz + s * 2.0 - 0.45, x + 0.55, y0 + 1.3, cz + s * 2.0 + 0.45, C.black);
+  for (const x of [x0 + 5, (x0 + x1) / 2 - 1, x1 - 9]) M.box(x - 0.6, y0 + 1.9, cz - 1.9, x + 0.6, cy - r * 0.55, cz + 1.9, C.yellow);   // cradles
+  M.tube([x0 - 1.4, cy, cz], [x0, cy, cz], 1.9, C.darkGray, { seg: 18, c0: true, r1: 1.2 });   // engine bell
+  let x = x0;
+  const segs = [[1.2, C.darkGray], [4.5, C.white], [0.8, accent], [7, C.white], [1.2, C.darkGray], [6, C.white], [0.8, accent]];
+  for (const [L, c] of segs) { M.tube(P(x), P(x + L), r, c, { seg, c0: x === x0 }); x += L; }
+  const xn = x, nl = x1 - xn;                                                            // ogive nose
+  for (let k = 0; k < 6; k++) {
+    const a = xn + nl * k / 6, b = xn + nl * (k + 1) / 6, ra = r * Math.cos(Math.PI / 2 * k / 6), rb = Math.max(0.12, r * Math.cos(Math.PI / 2 * (k + 1) / 6));
+    M.tube(P(a), P(b), ra, k >= 4 ? accent : C.white, { seg, r1: rb, c1: k === 5 });
+  }
+  for (const [dy, dz] of [[1, 0], [0, 1], [0, -1]]) {                                    // fins
+    const w = 0.16;
+    M.box(x0 + 0.4, cy + (dy ? r - 0.2 : -w), cz + (dz > 0 ? r - 0.2 : dz < 0 ? -r - 1.8 : -w), x0 + 4.2, cy + (dy ? r + 1.8 : w), cz + (dz > 0 ? r + 1.8 : dz < 0 ? -r + 0.2 : w), accent);
+  }
+  for (let k = 0; k < 4; k++) M.box(x0 + 9 + k * 1.6, cy + r * 0.55, cz - r - 0.02, x0 + 9.8 + k * 1.6, cy + r * 0.8, cz + r + 0.02, C.dtGlassDeep);   // porthole band
+  // tractor unit
+  M.box(x1 + 0.6, y0 + 0.3, cz - 1.5, x1 + 4.4, y0 + 1.5, cz + 1.5, C.darkGray);
+  M.box(x1 + 2.4, y0 + 1.5, cz - 1.5, x1 + 4.4, y0 + 3.9, cz + 1.5, C.yellow);
+  M.box(x1 + 4.35, y0 + 2.6, cz - 1.2, x1 + 4.45, y0 + 3.6, cz + 1.2, C.vehGlass);
+  M.beam([x1 - 5, y0 + 1.6, cz], [x1 + 1.2, y0 + 1.0, cz], 0.35, C.indBase);            // drawbar
+}
+
 // Smooth rocket in fine voxels (res 8): white body r 8 with crisp red rings,
 // a porthole band, "BV" wrapped round the hull on all four sides, a nested
 // nose cone, four red fins and two side boosters with red noses.
@@ -2076,7 +2657,7 @@ function yardFill(g, y0, rng, o = {}) {
   const [bx0, bz0, bx1, bz1] = o.box || [2, 2, S - 3, S - 3];
   const busy = new Uint8Array(S * S);
   const keep = o.keep || [];
-  const laneC = new Set([C.indLine, C.lotAsphalt, C.lotLine, C.yellow, C.black, C.indYard, C.lotGrass, C.lotRim]);   // r9: + planted strips / kerbs
+  const laneC = new Set([C.indLine, C.lotAsphalt, W_YARD, C.lotLine, C.yellow, C.black, C.indYard, C.lotGrass, C.lotRim]);   // r9: + planted strips / kerbs
   const col = new Uint8Array(S * S);            // any voxel in the column above the lot (halls are hollow!)
   for (const k of g.map.keys()) {
     const i1 = k.indexOf(','), i2 = k.indexOf(',', i1 + 1);
@@ -2355,6 +2936,146 @@ function fineItem(F, x, z, w, d, Y, kind, rnd, o = {}) {
 }
 const FINE_KINDS = ['cond', 'cond', 'fan', 'vents', 'tank', 'duct', 'cab', 'glass', 'wtank'];
 
+// w4 r5 (critic w4r4: "dozens of tiny grey rooftop boxes … ref05's factories
+// use large calm roof planes with a few chunky vents"; w4r3: "no single mass
+// reads as a building"): the default roof is CALM, as on ref05's warehouse —
+// one repeated chunky AC pod set in a regular ring just inside the parapet,
+// and, on a big deck, one large glazed roof-light grid in the middle; the rest
+// is bare dark deck. (The old greedy dense packing is `fineRoof(..., {busy})`.)
+function roofPod(F, x, z, P, Y, body) {
+  const x1 = x + P - 1, z1 = z + P - 1, y = Y + 1, h = 4;
+  F.box(x, Y, z, x1, Y, z1, C.indRoofLt);                                   // curb
+  F.box(x + 1, y, z + 1, x1 - 1, y + h - 1, z1 - 1, body);                  // housing
+  F.box(x + 1, y + h - 1, z + 1, x1 - 1, y + h - 1, z1 - 1, C.indShade);    // light framed top
+  F.box(x + 3, y + h - 1, z + 3, x1 - 3, y + h - 1, z1 - 3, C.vehCharcoal); // dark recessed grille
+  const c = (x + x1) >> 1, d = (z + z1) >> 1;
+  F.box(c, y + h - 1, z + 3, c, y + h - 1, z1 - 3, C.indBase); F.box(x + 3, y + h - 1, d, x1 - 3, y + h - 1, d, C.indBase);
+  F.box(x + 2, y + 1, z + 1, x1 - 2, y + 1, z + 1, C.indRoof);              // one louvre line per side
+  F.box(x + 2, y + 1, z1 - 1, x1 - 2, y + 1, z1 - 1, C.indRoof);
+}
+function calmRoof(F, X0, Z0, X1, Z1, W, D, Y, occ, rnd, o) {
+  const free = (x, z, w, d) => {
+    if (x < X0 || z < Z0 || x + w - 1 > X1 || z + d - 1 > Z1) return false;
+    for (let b = z; b < z + d; b++) for (let a = x; a < x + w; a++) if (occ[(b - Z0) * W + (a - X0)]) return false;
+    return true;
+  };
+  const take = (x, z, w, d) => { for (let b = z; b < z + d; b++) for (let a = x; a < x + w; a++) if (a >= X0 && b >= Z0 && a <= X1 && b <= Z1) occ[(b - Z0) * W + (a - X0)] = 1; };
+  const mn = Math.min(W, D), P = mn >= 40 ? 14 : mn >= 26 ? 12 : Math.max(7, Math.min(10, mn - 6)), gap = P + 6, m = 2;
+  const body = o.podBody != null ? o.podBody : rnd() < 0.5 ? C.indBase : C.vehCharcoal;
+  const pods = [];
+  const along = (a0, a1, fixed, axis) => {                   // an evenly spaced row of pods
+    const n = Math.max(1, Math.floor((a1 - a0 + 1 + gap - P) / gap));
+    const span = n * P + (n - 1) * (gap - P), s0 = a0 + (((a1 - a0 + 1) - span) >> 1);
+    for (let i = 0; i < n; i++) { const a = s0 + i * gap; pods.push(axis === 'x' ? [a, fixed] : [fixed, a]); }
+  };
+  if (D >= 2 * P + 12 && W >= 2 * P + 12) {                  // a ring just inside the parapet
+    along(X0 + m, X1 - m, Z0 + m, 'x'); along(X0 + m, X1 - m, Z1 - m - P + 1, 'x');
+    if (D >= 3 * P + 20) { along(Z0 + m + gap, Z1 - m - gap, X0 + m, 'z'); along(Z0 + m + gap, Z1 - m - gap, X1 - m - P + 1, 'z'); }
+  } else if (D >= P + 2 * m) along(X0 + m, X1 - m, Z0 + ((D - P) >> 1), 'x');   // one centred row
+  else if (W >= P + 2 * m) along(Z0 + m, Z1 - m, X0 + ((W - P) >> 1), 'z');
+  // o.pods: cap the count (small office roofs get 1-2)
+  let placed = 0;
+  const cap = o.pods != null ? o.pods : 99;
+  for (const [x, z] of pods) {
+    if (placed >= cap) break;
+    let ok = free(x, z, P, P);
+    if (!ok) continue;
+    roofPod(F, x, z, P, Y, body); take(x - 2, z - 2, P + 4, P + 4); placed++;
+  }
+  // big glazed roof light in the middle of a large deck (ref05's warehouse)
+  if (o.glass !== false) {
+    const gx0 = X0 + m + P + 4, gx1 = X1 - m - P - 4, gz0 = Z0 + m + P + 4, gz1 = Z1 - m - P - 4;
+    if (gx1 - gx0 >= 14 && gz1 - gz0 >= 10) {
+      // shrink to the largest free centred rectangle
+      let a0 = gx0, a1 = gx1, b0 = gz0, b1 = gz1;
+      for (let t = 0; t < 12 && !free(a0, b0, a1 - a0 + 1, b1 - b0 + 1); t++) { a0 += 2; a1 -= 2; b0 += 1; b1 -= 1; }
+      if (a1 - a0 >= 12 && b1 - b0 >= 8 && free(a0, b0, a1 - a0 + 1, b1 - b0 + 1)) {
+        F.box(a0, Y, b0, a1, Y + 1, b1, C.white);                              // upstand frame
+        for (let a = a0 + 1; a < a1; a++) for (let b = b0 + 1; b < b1; b++) {
+          const bar = (a - a0) % 6 === 0 || (b - b0) % 5 === 0;
+          F.set(a, Y + 1, b, bar ? C.indShade : ((a + b) % 9 === 0 ? C.dtGlassHi : C.civGlass));
+        }
+        take(a0, b0, a1 - a0 + 1, b1 - b0 + 1);
+      }
+    }
+  }
+}
+
+// w4 r7 — STRUCTURED roofs (coordinator 01:05: "linear, repeated structure …
+// glazing strips … vents in neat ROWS, not scattered singles"). Bands run
+// along x: a glazed roof-light strip (white upstand, glass panes, a ridge bar)
+// then a row of identical units at a fixed pitch, repeated down the deck.
+// Only runs where the whole band depth is free (stacks, huts, monitors).
+function miniUnit(F, x, z, Y, k, P = 6) {
+  const x1 = x + P - 1, z1 = z + P - 1, y = Y + 1, cx = (x + x1) / 2, cz = (z + z1) / 2;
+  F.box(x, Y, z, x1, Y, z1, C.indRoofLt);                                     // curb
+  if (k === 1) {                                                              // round fan
+    F.box(x + 1, y, z + 1, x1 - 1, y + 1, z1 - 1, C.indBase);
+    disc(F, cx, cz, P / 2 - 1.4, y + 2, C.indShade);
+    disc(F, cx, cz, Math.max(0.8, P / 2 - 2.4), y + 2, C.black);
+    F.set(Math.floor(cx), y + 2, Math.floor(cz), C.indBase);
+  } else {                                                                    // condenser, dark grille
+    const hh = P >= 9 ? 3 : 2;
+    F.box(x + 1, y, z + 1, x1 - 1, y + hh, z1 - 1, C.vehCharcoal);
+    F.box(x + 1, y + hh + 1, z + 1, x1 - 1, y + hh + 1, z1 - 1, C.indShade);
+    F.box(x + 2, y + hh + 1, z + 2, x1 - 2, y + hh + 1, z1 - 2, C.black);
+    if (P >= 9) { F.box(Math.floor(cx), y + hh + 1, z + 2, Math.floor(cx), y + hh + 1, z1 - 2, C.indBase); }
+    F.box(x + 2, y + 1, z + 1, x1 - 2, y + 1, z + 1, C.indRoof);
+  }
+}
+function rowRoof(F, X0, Z0, X1, Z1, W, D, Y, occ, o) {
+  const isFree = (x, z) => x >= X0 && z >= Z0 && x <= X1 && z <= Z1 && !occ[(z - Z0) * W + (x - X0)];
+  const runs = (za, zb) => {                                     // free x-runs over the whole band depth
+    const out = []; let a = -1;
+    for (let x = X0 + 1; x <= X1; x++) {
+      let ok = x < X1;
+      for (let z = za; ok && z <= zb; z++) if (!isFree(x, z)) ok = false;
+      if (ok && a < 0) a = x;
+      if (!ok && a >= 0) { if (x - a >= 10) out.push([a, x - 1]); a = -1; }
+    }
+    return out;
+  };
+  // unit size / band depth grow with the deck, so a big roof gets a few
+  // chunky units per row, not dozens of crumbs (critic w4r4)
+  const P = W >= 70 && D >= 40 ? 10 : W >= 40 ? 8 : 6, BD = P, pitch = P + (P >= 10 ? 8 : 4);
+  let band = 0;
+  for (let z = Z0 + 2; z + BD - 1 <= Z1 - 1; z += BD + 3, band++) {
+    const za = z, zb = z + BD - 1;
+    const strip = (band & 1) === 0 && D >= 22;
+    for (const [a, b] of runs(za, zb)) {
+      if (strip) {
+        F.box(a, Y, za, b, Y, zb, C.white);                                   // upstand
+        for (let x = a + 1; x < b; x++) for (let zz = za + 1; zz < zb; zz++)
+          F.set(x, Y + 1, zz, (x - a) % 4 === 0 ? C.white : ((x + zz) % 7 === 0 ? C.dtGlassHi : C.civGlass));
+        F.box(a, Y + 2, (za + zb) >> 1, b, Y + 2, (za + zb) >> 1, C.white);   // ridge bar
+      } else {
+        const n = Math.floor((b - a + 1 + pitch - P) / pitch), s0 = a + (((b - a + 1) - (n * pitch - (pitch - P))) >> 1);
+        for (let i = 0; i < n; i++) miniUnit(F, s0 + i * pitch, za, Y, band % 4 === 1 ? 0 : 1, P);
+      }
+    }
+  }
+}
+// Guard rail on the coping round a hall (coarse rect, yc = coping layer).
+function roofRail(F, x0, z0, x1, z1, yc) {
+  const Y = 2 * (yc + 1), X0 = 2 * x0 + 1, X1 = 2 * x1, Z0 = 2 * z0 + 1, Z1 = 2 * z1, c = C.indShade;
+  F.box(X0, Y + 2, Z0, X1, Y + 2, Z0, c); F.box(X0, Y + 2, Z1, X1, Y + 2, Z1, c);
+  F.box(X0, Y + 2, Z0, X0, Y + 2, Z1, c); F.box(X1, Y + 2, Z0, X1, Y + 2, Z1, c);
+  for (let x = X0; x <= X1; x += 6) { F.box(x, Y, Z0, x, Y + 1, Z0, c); F.box(x, Y, Z1, x, Y + 1, Z1, c); }
+  for (let z = Z0; z <= Z1; z += 6) { F.box(X0, Y, z, X0, Y + 1, z, c); F.box(X1, Y, z, X1, Y + 1, z, c); }
+}
+// Ridge ventilators in a neat row along every sawtooth crest (fine part).
+function sawVents(F, x0, x1, z0, z1, top, D, H, spots) {
+  const Y = 2 * (top + H);
+  for (let zs = z0; zs + D - 1 <= z1; zs += D) {
+    const zc = 2 * zs + 1;
+    for (let x = 2 * x0 + 3; x + 2 <= 2 * x1; x += 7) {
+      if (spots.some(([sx, sz]) => Math.hypot((x + 1) / 2 - sx - 0.5, (zc + 0.5) / 2 - sz - 0.5) < 3.4)) continue;
+      F.box(x, Y, zc - 1, x + 2, Y + 1, zc + 1, C.indBase);
+      F.box(x, Y + 2, zc - 1, x + 2, Y + 2, zc + 1, C.vehCharcoal);
+    }
+  }
+}
+
 // Dense rooftop plant in the FINE part over a hall's roof deck: rows of
 // module pads each carrying a unit, with pipe pairs laid along the aisles.
 // Coarse rect (x0..x1, z0..z1) = the deck cells items may stand on; top =
@@ -2382,6 +3103,11 @@ function fineRoof(F, g, x0, z0, x1, z1, top, o = {}) {
   const take = (x, z, w, d) => { for (let b = z; b < z + d; b++) for (let a = x; a < x + w; a++) if (a >= X0 && b >= Z0 && a <= X1 && b <= Z1) occ[(b - Z0) * W + (a - X0)] = 1; };
   const kinds = o.kinds || FINE_KINDS;
   if (globalThis.__IND_DBG) { let rows = []; for (let fz = Z0; fz <= Z1; fz += 2) { let r = ''; for (let fx = X0; fx <= X1; fx += 2) r += occ[(fz - Z0) * W + (fx - X0)] ? '#' : '.'; rows.push(r); } console.log('fineRoof', x0, z0, x1, z1, top, '\n' + rows.join('\n')); }
+  // w4 r7: STRUCTURED rows are the default on any deck big enough for them
+  // (critic w4r6: "flat dark-grey slabs with a few scattered AC cubes");
+  // small decks and `calm: true` keep the r5 pod ring
+  if (!o.busy && !o.calm && W >= 18 && D >= 14) { rowRoof(F, X0, Z0, X1, Z1, W, D, Y, occ, o); return; }
+  if (!o.busy) { calmRoof(F, X0, Z0, X1, Z1, W, D, Y, occ, rnd, o); return; }
   const base = occ.slice();
   // pipe pairs along reserved aisles (every ~16 fine voxels), laid after the units
   const pipes = [];
@@ -2442,8 +3168,13 @@ function fineWall(F, side, plane, u0, u1, y0, y1, o = {}) {
   const skip = (o.skip || []).map(([a, b]) => [2 * a - 1, 2 * b + 2]);
   const clear = (u) => !skip.some(([a, b]) => u >= a && u <= b);
   const dp = o.down != null ? o.down : C.indShade;
+  // w4 r5 (critic w4r4: facades "busy with thin blue-grey stripes"): calm by
+  // default — a downpipe at each end of the wall and the ladder, no pipe pair
+  // and no AC boxes along it (`busy: true` restores the r8 dressing)
+  const calm = !o.busy;
+  if (calm) { o = { ...o, pipe: false, ac: 0 }; }
   // downpipes every ~14-20 fine voxels
-  for (let u = U0 + 3 + ((rnd() * 4) | 0); u <= U1 - 2; u += 14 + ((rnd() * 7) | 0)) {
+  for (let u = U0 + 3 + ((rnd() * 4) | 0); u <= U1 - 2; u += calm ? Math.max(14, U1 - U0 - 8) : 14 + ((rnd() * 7) | 0)) {
     if (!clear(u)) continue;
     f.box(u, Y0 + 1, 2, u, Y1 - 1, 2, dp);
     f.box(u - 1, Y1 - 2, 1, u + 1, Y1, 3, dp);                                // hopper head
@@ -2728,7 +3459,7 @@ function megaWorks(rng, variant) {
     const pl = { left: sx0, right: sx1, back: sz1, front: sz0 }[side];
     const f = facade(g, side, pl), a = side === 'left' || side === 'right' ? sz0 : sx0, b = side === 'left' || side === 'right' ? sz1 : sx1;
     glazeBays(f, a + 1, b, y0 + 33, y0 + 43, 5, side === 'back' || side === 'front' ? [[40, 56]] : [], C.white);
-    f.box(a, y0 + 45, 0, b, y0 + 46, 0, C.indNavyDk);                                 // blue band under the cornice
+    f.box(a, y0 + 45, 0, b, y0 + 46, 0, C.dtNavyPanel);                               // blue band under the cornice
     f.box(a, y0 + 47, 1, b, y0 + 47, 1, C.indShade);                                  // light cornice under the coping
   }
   // signs in the res-8 part: half-size 1× letters (r4 critic: "shrink the signs")
@@ -2777,7 +3508,7 @@ function megaWorks(rng, variant) {
     DB.box(u, y0 + 8, -RD, u + 3, y0 + 8, -1, C.indYard);                     // soffit
     DB.box(u, y0, -RD, u + 3, y0 + 3, -RD, C.darkGray);                       // open lower half: dark interior
     for (let y = y0 + 4; y <= y0 + 7; y++) DB.box(u, y, -RD, u + 3, y, -RD, (y - y0) & 1 ? C.indShade : C.indWall);   // rolled-up shutter
-    DB.box(u, yl, -(RD - 1), u + 3, yl, 3, C.lotAsphalt);                     // drive well
+    DB.box(u, yl, -(RD - 1), u + 3, yl, 3, W_YARD);                     // drive well
     DB.box(u - 1, y0, 1, u - 1, y0 + 7, 1, C.black); DB.box(u + 4, y0, 1, u + 4, y0 + 7, 1, C.black);   // dock seals
     DB.box(u - 1, y0 + 1, 2, u - 1, y0 + 1, 2, C.yellow); DB.box(u + 4, y0 + 1, 2, u + 4, y0 + 1, 2, C.yellow);   // bumpers
     DB.set(u + 1, y0 + 9, 1, C.lamp);                                          // dock light
@@ -2788,11 +3519,8 @@ function megaWorks(rng, variant) {
   curtainBand(DB, dx0 + 2, 54, y0 + 14, y0 + 19);                             // glazed band over the canopy (ref05)
   glazeBays(DL, dz0 + 1, dz1, y0 + 4, y0 + 15, 5);
   // r8: small lean-to annexes against the long side walls (ref05's outbuildings)
-  leanTo(g, 'left', dx0, 62, 69, y0, 7, 3, { wall: C.indSteel, door: C.orange });
-  leanTo(g, 'left', wx0, 30, 37, y0, 6, 3, { wall: C.indShade, door: C.indBlue });
-  leanTo(g, 'left', wx0, 45, 50, y0, 8, 3, { wall: C.indNavy, door: C.yellow });
+  // w4 r5 (critics w4r3/w4r4: one readable mass, no small scattered boxes): lean-tos gone
   panelSeams(g, dx0, dz0, dx1, dz1, y0 + 2, y0 + 15, C.indNavy, C.indShade, 5);
-  for (let x = dx0 + 12; x + 5 <= dx1 - 2; x += 24) hvacPad(g, x, dtop, dz1 - 5, 6, 4);
   H.fine((Fg) => {
     fineRoof(Fg, g, dx0 + 1, dz0 + 1, dx1 - 1, dz1 - 1, dtop, { accent, seed: 11, keep: pipeKeep(PQX, dx1, PPZ, PPZ) });
     fineWall(Fg, 'left', dx0, dz0, dz1, y0, dtop - 1, { pipeY: y0 + 16, ac: 1 });
@@ -2811,9 +3539,15 @@ function megaWorks(rng, variant) {
     surfPipeBridge(M, [[mx1 + 0.9, 55.5], [69, 55.5], [69, 65.5], [74.2, 65.5]], y0, y0 + 9, { cols: [C.indShade, C.orange], noStart: true, noEnd: true });
   });
   // ---- truck apron: shallow, bay lines, half-size semis backed in ----
-  const AZ1 = 85;                                                             // apron back edge
-  g.box(2, yl, 75, 66, yl, AZ1, C.lotAsphalt);
-  for (const u of bays) for (let z = 75; z <= AZ1 - 2; z++) { g.set(u - 1, yl, z, C.lotLine); g.set(u + 4, yl, z, C.lotLine); }
+  // w4 r5 (critic w4r4: "open up loading yards so each lot shows asphalt,
+  // markings and parked trucks"): the apron runs 15 deep (was 11) with an open
+  // marked lane behind the backed-in semis; the planted strip is a thin kerb
+  const AZ1 = 89;                                                             // apron back edge
+  g.box(2, yl, 75, 66, yl, AZ1, W_YARD);
+  g.box(67, yl, 86, 92, yl, AZ1, W_YARD);
+  for (const u of bays) for (let z = 75; z <= 80; z++) { g.set(u - 1, yl, z, C.lotLine); g.set(u + 4, yl, z, C.lotLine); }
+  for (let x = 3; x <= 91; x++) { if (x % 4 < 2) g.set(x, yl, 85, C.lotLine); }
+  for (let x = 3; x <= 91; x++) g.set(x, yl, 81, C.lotLine);
   for (let x = 2; x <= 66; x++) if (!bays.some((u) => x >= u && x <= u + 3)) { g.set(x, yl, 72, C.yellow); g.set(x, yl, 73, x & 1 ? C.black : C.yellow); }
   // w4 r2 (critic w4r1: "neat rows of trailers backed onto one long
   // loading-dock facade"): one unbroken run of semis in ref05's orange /
@@ -2832,16 +3566,8 @@ function megaWorks(rng, variant) {
   // ---- planted strip + walkway between the apron and the lot rim ----
   g.box(2, yl, AZ1 + 1, 92, yl, 93, C.lotGrass);
   g.box(2, yl, AZ1 + 1, 92, yl, AZ1 + 1, C.lotRim);                            // kerb
-  g.box(2, yl, 91, 92, yl, 91, C.lotPave);                                     // footpath along it
-  for (const x of [22, 23, 46, 47]) g.box(x, yl, AZ1 + 1, x, yl, 93, C.lotPave); // crossing walkways
-  // low clipped hedges (1 wide, 1-2 high) along both kerbs + a few small trees
-  const walk = (x) => x >= 21 && x <= 24 || x >= 45 && x <= 48;
-  for (let x = 3; x <= 91; x++) if (!walk(x)) {
-    g.set(x, y0, AZ1 + 2, C.leafDark); if (x % 3) g.set(x, y0 + 1, AZ1 + 2, C.leafMid);
-    g.set(x, y0, 93, C.leafDark);
-  }
-  for (const x of [9, 33, 57, 78]) tree(g, x, y0, 88, 3);
-  for (const x of [15, 28, 39, 53, 63, 70, 86]) { g.box(x, y0, 88, x + 2, y0, 89, C.leafMid); g.box(x, y0 + 1, 88, x + 2, y0 + 1, 89, C.bush); }
+  for (let x = 3; x <= 91; x++) if (x % 12 < 10) { g.set(x, y0, 92, C.leafDark); if (x % 3) g.set(x, y0 + 1, 92, C.leafMid); }
+  for (const x of [14, 38, 62, 86]) tree(g, x, y0, 91, 3);
   // ---- tank + pipe corner (was a trailer park) ----
   g.box(68, yl, 75, 92, yl, AZ1, C.lotPaveDark);
   g.walls(68, y0, 75, 92, y0, AZ1, C.indBase);                                 // bund wall
@@ -2899,7 +3625,11 @@ function megaWorks(rng, variant) {
   fsign('back', 16, 16.5, otop - 6, 'WORKS', accent);
   // r10 (critic r9: "fill the lot with yards, containers and cranes instead of
   // plain paving"): the old car park is a container yard under a portal crane
-  containerYard(H, g, 29, 2, 67, 17, y0, variant);
+  // w4 r5 (critic w4r4: ref05 shows "open truck yards with white-lined
+  // parking and a few big trucks"): the container yard + crane became a
+  // marked truck park — seven stalls, four semis nosed in, a dashed lane
+  if (globalThis.__IND_CONTAINERS) containerYard(H, g, 29, 2, 67, 17, y0, variant);
+  else truckPark(H, g, 29, 2, 67, 17, y0, variant, accent);
   // tank farm → dock roof → works → stack house: one visible pipe main
   // (critic r9: "run visible pipes between the tanks and the stacks")
   H.surf((M) => {
@@ -2922,13 +3652,11 @@ function megaWorks(rng, variant) {
     for (const y of [yB + 2, yB + 6, stop - 2]) M.box(qx - 1.45, y, sz1 + 0.9, qx + 1.45, y + 0.5, sz1 + 2.85, C.indBase);
   });
   // yards packed with pallets and crates
-  palletYard(g, 27, 55, 30, 59, y0, [C.wood, C.plank, C.indBlue], rng);
-  palletYard(g, 70, 62, 73, 70, y0, [C.orange, C.indShade, C.wood], rng);
-  fForklift(H, 68, y0, 70, 'z', 1);
-  gasBottles(g, 3, y0, 24, 5, C.indBlue); gasBottles(g, 3, y0, 44, 5, C.orange);
+  // w4 r5 (critics w4r3 "cut the props by about half, leave clear paved
+  // yards"; w4r4 "the space between buildings disappears"): no pallet heaps,
+  // forklift, gas bottles or yardFill clusters — open paving between masses
   for (const [tx, tz] of [[4, 5], [4, 60], [92, 72]]) tree(g, tx, y0, tz, 5);
-  fenceZ(g, 20, 76, y0, 1);
-  yardFill(g, y0, rng, { keep: [[76.75, 8.75, 6.4], [87.75, 8.75, 6.4], [76.75, 19.75, 6.4], [87.75, 19.75, 6.4], [78.5, 66.5, 5.4], [88.5, 66.5, 4.4], [72, 80, 3.4], [77.5, 80, 3.4], [83, 80, 3.4], [88.5, 80, 3.4]], skip: [[67, 54, 71, 67], [67, 64, 75, 67], [2, 86, 92, 93], [68, 83, 92, 85], [28, 1, 68, 18], [66, 62, 71, 86]] });
+  if (globalThis.__IND_MEGAFILL) yardFill(g, y0, rng, { keep: [[76.75, 8.75, 6.4], [87.75, 8.75, 6.4], [76.75, 19.75, 6.4], [87.75, 19.75, 6.4], [78.5, 66.5, 5.4], [88.5, 66.5, 4.4], [72, 80, 3.4], [77.5, 80, 3.4], [83, 80, 3.4], [88.5, 80, 3.4]], skip: [[67, 54, 71, 67], [67, 64, 75, 67], [2, 86, 92, 93], [68, 83, 92, 85], [28, 1, 68, 18], [66, 62, 71, 86]] });
   return H.done();
 }
 
@@ -2943,6 +3671,22 @@ function container(F, x, y, z, len, c, axis = 'x') {
   L.box(0, 0, 0, 0, 4, 4, C.indShade); L.box(len - 1, 0, 0, len - 1, 4, 4, C.indShade);   // corner frames
   L.box(len - 1, 1, 1, len - 1, 3, 1, C.indBase); L.box(len - 1, 1, 3, len - 1, 3, 3, C.indBase);   // door bars
   if (len >= 16) { L.box(3, 2, -1, 5, 2, -1, C.white); L.box(3, 2, 5, 5, 2, 5, C.white); }       // logo patch
+}
+function truckPark(H, g, x0, z0, x1, z1, y0, variant, accent) {
+  const yl = y0 - 1;
+  g.box(x0, yl, z0, x1, yl, z1, W_YARD);
+  const sz1 = z0 + 11;                                             // stall row z0+1 .. sz1, lane behind
+  const n = Math.floor((x1 - x0 - 1) / 5);
+  const sx = x0 + 1 + (((x1 - x0 - 1) - n * 5) >> 1);
+  for (let i = 0; i <= n; i++) for (let z = z0 + 1; z <= sz1; z++) g.set(sx + i * 5, yl, z, C.lotLine);
+  for (let x = x0 + 1; x < x1; x++) { g.set(x, yl, z0 + 1, C.lotLine); if (x % 4 < 2) g.set(x, yl, sz1 + 3, C.lotLine); }
+  const liv = [[C.orange, C.white], [C.white, accent], [C.orange, C.white], [C.white, C.orange]];
+  const pick = variant ? [0, 2, 3, 5] : [1, 2, 4, 6];
+  pick.forEach((i, k) => {
+    if (i >= n) return;
+    const [box, cab] = liv[k];
+    fTruck(H, sx + i * 5 + 1, y0, z0 + 1.5, 'z', -1, { len: 20, cab, box, stripe: box === C.white ? C.orange : C.white, logo: box === C.white ? accent : C.white });
+  });
 }
 function containerYard(H, g, x0, z0, x1, z1, y0, variant) {
   const yl = y0 - 1, cols = CONT_COLS();
@@ -2995,6 +3739,7 @@ function containerYard(H, g, x0, z0, x1, z1, y0, variant) {
 
 function bGreenhouse(rng) {
   const H = hiRes(31, 50, 'greenhouse', false), g = H.g;
+  H.noFacades();
   const y0 = lotPlinth(g, 0, 0, 30, 30, { fill: 'grass' });
   const house = (x0, x1, z0, z1) => {
     g.box(x0 - 1, y0 - 1, z0 - 1, x1 + 1, y0 - 1, z1 + 1, C.lotPave);
@@ -3024,9 +3769,11 @@ function bGreenhouse(rng) {
   house(16, 26, 11, 27);
   // farm stand + veg crates, tractor, water tank, hay
   const veg = [C.red, C.orange, C.roofGreen, C.yellow];
-  for (let i = 0; i < 4; i++) { g.box(2 + i * 4, y0, 3, 4 + i * 4, y0 + 2, 5, C.wood); g.box(2 + i * 4, y0 + 3, 3, 4 + i * 4, y0 + 3, 5, veg[(i + ((rng() * 4) | 0)) % 4]); }
-  sign(facade(g, 'front', 8), 8, y0 + 5, 'FARM', { bg: C.roofGreen, fg: C.signWhite, border: C.white, pad: 1 });
-  g.box(2, y0, 7, 2, y0 + 4, 7, C.woodDark); g.box(16, y0, 7, 16, y0 + 4, 7, C.woodDark);
+  // w4 r4 (critic w4r3: fewer props, small plaques): two veg crates (was four),
+  // a half-size FARM plaque on the greenhouse gable instead of a posted board
+  const vk = (rng() * 4) | 0;
+  for (let i = 0; i < 2; i++) { g.box(3 + i * 4, y0, 4, 5 + i * 4, y0 + 1, 6, C.wood); g.box(3 + i * 4, y0 + 2, 4, 5 + i * 4, y0 + 2, 6, veg[(i + vk) % 4]); }
+  H.fine((Fg) => tag(facade(Fg, 'front', 2 * 11), 14, 2 * y0 + 16, 'FARM', { fg: C.roofGreen, plaque: true, inv: false, edge: C.roofGreen }));
   // r9: the tractor is drawn in the res-8 fine part (half size — it stood as tall as the greenhouse eaves)
   H.fine((F) => {
     const T = lf(F, 44, 2 * y0, 6, 'x', 1, 9);
@@ -3036,7 +3783,6 @@ function bGreenhouse(rng) {
     T.box(7, 5, 2, 7, 7, 2, C.darkGray);
   });
   tank(g, 28, 7, 2, y0, 12, { c: C.indBlue, bands: [8], band: C.white, ladder: false });
-  for (const [hx, hz] of [[27, 28], [27, 25]]) { g.box(hx, y0, hz, hx + 2, y0 + 2, hz + 2, C.gold); g.box(hx, y0 + 1, hz, hx + 2, y0 + 1, hz + 2, C.amber); }
   tree(g, 13, y0, 3, 5);
   return H.done();
 }
@@ -3134,6 +3880,9 @@ export const BUILDERS = {
 // stacks instead of hanging mid-air over every tile. [] = a clean building.
 const _vent = (S, x, y, z) => [(x - (S - 1) / 2) / R, (y + 1) / R, ((S - 1) / 2 - z) / R];
 const _wv = (kind, n, H) => () => WSTACK[kind].slice(0, n).map(([x, z]) => _vent(31, x, H || W_STACK_H, z));
+const _megaPlumes = (variant) => ((variant | 0) % 2 === 1
+    ? [_vent(95, 94 - 41, 104, 94 - 29), _vent(95, 94 - 68.25, 74, 94 - 26.25)]
+    : [[41, 31, 96], [57, 31, 92]].map(([x, z, y]) => _vent(95, 94 - x, y, 94 - z)));   // kept for re-enabling
 export const VENTS = {
   // w2 r1: one puff source per works, two on the mega (life's puffs read as
   // floating white cubes when every stack in a packed district smokes)
@@ -3148,9 +3897,10 @@ export const VENTS = {
   'sawmill': () => [], 'warehouse': () => [], 'greenhouse-farm': () => [],
   'rocket-lab': () => [], 'wind-power': () => [],
   // mega: design coords turned 180° (rot180) → stored x' = 94 - x, z' = 94 - z
-  'mega-factory': (variant) => ((variant | 0) % 2 === 1
-    ? [_vent(95, 94 - 41, 104, 94 - 29), _vent(95, 94 - 68.25, 74, 94 - 26.25)]
-    : [[41, 31, 96], [57, 31, 92]].map(([x, z, y]) => _vent(95, 94 - x, y, 94 - z))),
+  // w4 r4: the mega's plumes rose as big white slabs over the neighbouring lots
+  // in the district gallery; ref05 has no smoke — no puffs anywhere now
+  'mega-factory': () => [],
+
 };
 
 export const ANIMS = {

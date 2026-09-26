@@ -126,8 +126,9 @@ const _colors = {
   // so these are authored muted: they render as ref04's terracotta / cream)
   resTerracotta: 0xcf9e80, resTerraTrim: 0xb47755, resTileOrangeDk: 0xbb5f2b,
   resSlate: 0x9aa3ad, resSlateDk: 0x78808e, resTileGreenDk: 0x4d7a5e,
-  resTile: 0xbf8062, resTileDk: 0x8a5646, resQuoin: 0xeedfc4, resButter: 0xeedaa8, resSage: 0xb5c6a4,
-  resRoofRed: 0xa0605a, resLawn: 0x95b368,   // coherence 09-25: was 0x9cc77e (rendered mint #b6f888 once the field went back to lime)
+  resTile: 0xcc8c68, resTileDk: 0x8a5646, resQuoin: 0xeedfc4, resButter: 0xeedaa8, resSage: 0xb5c6a4,
+  resRoofRed: 0xb86e60, resLawn: 0x95b368,   // coherence 09-25: was 0x9cc77e (rendered mint #b6f888 once the field went back to lime)
+  // (w4r8) resTile was 0xbf8062, resRoofRed 0xa0605a: the w4r7 critic read the stepped roofs as 'heavy ... busy and a little dark'
   // [commercial]  shops & food (ref05 diner / supermarket, ref02 shop)
   comRoof: 0x87919b, comFrame: 0x3b4047, comDough: 0xe2a458, comIcing: 0xff8cc6,
   comChoco: 0x6e3b22, comCone: 0xebb86a, comConeDk: 0xc48845, comPatty: 0x5c3420,
@@ -145,9 +146,9 @@ const _colors = {
   // walls with strong grey-teal pilasters and a dark teal slate (ref05)
   civBrick: 0xc23d25, civCornice: 0x4f806a, civApron: 0x243a35, civPool: 0x2ea3ee,
   civPoolLt: 0x86d4f7, civPlaza: 0xdcad7a, civMarble: 0xefece5, civRubber: 0xe4644c,
-  civFireRoof: 0x5f8a74,
+  civFireRoof: 0x44674f,
   civHall: 0xb3cfbf, civHallDk: 0x5f8f8e, civConcourse: 0x4b535f, civConcourseLt: 0x6d7682,
-  civSign: 0x2c3e66, civBronze: 0x6f8f86, civSlate: 0x3f6269, civStone: 0xd9d3c3,
+  civLawn: 0x6f8a3c, civBronze: 0x6f8f86, civSlate: 0x3f6269, civStone: 0xd9d3c3,
   // [industrial]
   // r12 (critic r11: "almost all of our industrial district is pale white or
   // light grey … no sense of heavy material"; ref05: dark charcoal + steel
@@ -170,7 +171,7 @@ const _colors = {
   // roof equipment): steel / navy are LIGHT bodies again (cool grey / pale
   // blue) whose Dk tones are real blues for pilasters + bands; indYard (every
   // roof deck) is a mid grey so the charcoal plant reads off it
-  indSteel: 0xbfcad8, indSteelDk: 0x7f95ad, indNavy: 0xc8d6e6, indNavyDk: 0x5f86b5,
+  indSteel: 0xbfcad8, indSteelDk: 0x7f95ad, indNavy: 0xc8d6e6, indTarmac: 0x0b1c24,   // w4 r8: ex indNavyDk slot → blue-slate truck-yard asphalt (ref05 yard renders ~#3f5d6c)
   // w4 r1b (ref05 district crop measured again: roof decks render #50555c–
   // #8a9096 under charcoal / navy plant; 0x8a929c rendered a pale #c8ccd4 and
   // the light walls + light roofs read as one white mass): a blue slate deck

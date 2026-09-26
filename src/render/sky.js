@@ -1018,7 +1018,7 @@ export class Sky {
     // Night w4r3: moon key colour (linear) and the night ground bounce (linear).
     // Critics w4r1+w4r2 agreed the night city sat in one purple/mauve band; the
     // lavender key (0.70,0.70,1.0) and violet bounce are pulled to blue-teal.
-    this._nightKeyCol = opts.nightKeyColor || [0.60, 0.80, 1.0];   // w4r5: 0.66 -> 0.60 red (keeps the brighter key blue-teal, not grey)
+    this._nightKeyCol = opts.nightKeyColor || [0.78, 0.80, 1.0];   // w4r8: 0.70/0.82 -> 0.78/0.80 (critic w4r7: tan/gold towers went olive under the green-cyan key)   // w4r7: 0.60 -> 0.70 red (critic w4r6: faces keep their own colour under a cooler, less cyan moon). w4r5: 0.66 -> 0.60 red (keeps the brighter key blue-teal, not grey)
     this._nightBounce = opts.nightBounce || [0.040, 0.078, 0.160];
 
     this._sunDir = new THREE.Vector3(0, 1, 0);

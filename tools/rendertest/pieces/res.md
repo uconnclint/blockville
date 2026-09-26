@@ -570,3 +570,189 @@ Critics have swung on both axes: r5 (wave 1) called spaced rows "sparse, toy-lik
 
 ### Coordinator note (2026-09-26 21:30) — gallery done as you asked
 tools/demo-city.js now puts a 1-tile garden plot (flower bed / hedge, alternating) between neighbouring houses on gal-homes-* pages (rows still back to back). With your grooved plinths each house now reads as its own lot. Focus on the facades and oversized lot-tree canopies hiding them (w4r4).
+
+## 2026-09-26 — wave 4, round 5 (builder)
+
+**Critic (w4r4):** reference won. gal-homes-1 "crammed onto one shared lot", roofs merging, "huge lime tree cubes cover the facades", "chaotic tiny props"; sparse window detail and few rooftop props on the lone small house.
+**Consensus w4r2-w4r4:** crowding (3 critics). By the time this round started, the coordinator had already put a 1-tile garden plot (flower-bed / hedge deco) between neighbouring homes in `tools/demo-city.js`, so the houses now stand apart. I left that layout alone and fixed my share: trees and clutter.
+
+**Changed** (residential.js only; no palette, engine or layout change):
+1. `gardenTree` / `streetTree` / `tree` take a scale `sc`. The lot's front-corner street tree, the small house's front tree, the townhouse's front column tree and the cabin's front pine are now drawn at 0.65. Offsets scale, but 1-voxel details stay 1 voxel.
+2. `lawnPatch` puts a full-size tree only in the back half of the lot. Front-yard trees used to hide the facades.
+3. `dressYard` allows at most two filler `pots` per lot. Every leftover scrap of lawn used to get pots; that space is now plain paving.
+4. Small house: v0 (tile gable) gets back-slope solar panels and a front vent. v2 (red hip, the one in gal-homes-1) gets back-slope panels and a vent. v3 already had panels, and v1 is the roof deck.
+5. Coherence #7 (the grow stretches the lot): `_growLot` / `_lotInfo` are still in engine.js and the groove is unchanged (GI = 2, ≥ 90% cover), so no action was needed.
+
+**Measured.** All modules parse, and all four shots had 0 console errors.
+- Tris: gal-homes-1 418k, gal-homes-2 584k, one-small-house 298k, one-apartment 376k (all within 1% of the start).
+- FPS: one-small-house 61. The gallery readings of 10-50 were taken under load from other Chromes, so they are noise.
+- Shots are in `rounds/res/w4r5-builder`. `w4r5-cur` is the start state (with the coordinator's gardens already in) and `w4r5-a` is the first iteration. The start file is `rounds/res/w4r5-start.js`.
+
+**Seen, not mine:**
+- The `hedge` deco tile used as a garden plot is a large flat-emerald hedge on bare lawn. It is the loudest thing in gal-homes-1 now; see coherence veg/hedge.
+- The grey scatter rock still sits behind the one-small-house lot (ground/veg).
+- In gal-homes-2 the farmhouse and beach house are still hidden behind the towers.
+
+**Next.**
+1. If the gardens still read as clutter, the `GARDEN` list in demo-city could use calmer tiles (e.g. `stone-path` + `flower-bed`). The hedge colour belongs to the veg owner.
+2. The cabin lot (fence, woodpile, chopping block, crates, wheelbarrow, dressYard) is still the busiest lot. Drop crates and the wheelbarrow if a critic says "busy" again.
+3. The small house's side lawns are plain. A kerbed bed or a bench would dress them without adding confetti.
+
+### Coordinator note (2026-09-26 22:05) — after w4r5
+w4r5 read my hedge garden plots as "oversized flat-green hedge walls / empty lawn". The gaps between houses are now planted flower-bed lots only (every tile filled, each house still its own lot) — see scratchpad homesfix3. Your remaining levers per w4r5: fill each house's OWN lot to the edges (fences, yard clutter, patio furniture, bins, bikes) rather than open lawn around a small house, plus awnings and rooftop gardens.
+
+## 2026-09-26 — wave 4, round 6 (builder)
+
+**Critic (w4r5):** reference won. The biggest gap: in gal-homes-1 the houses covered about a third of their lot. The 1-tile garden plots between them (hedge walls, a red-bordered bed, bare lawn) read as part of the house lots.
+**Consensus w4r3-w4r5:** every critic wanted each house to read clearly, with more building and less lawn per lot. w4r5 asked for 60-80% cover. ref04's house covers ~70% of its grass.
+
+**Changed:**
+1. **Low houses publish at res 8, up from 10.** This covers the cottage, big house, townhouse, duplex, cabin, farmhouse and beach house.
+   - The `lowRes()` wrapper swaps `R`/`G` while one of them builds (`R` is now `let`). The res-8 canvas fills the whole tile, so every house is 1.25x bigger on its lot, trims included.
+   - `lot()` skips the margin ring when `oz < 6`.
+   - Apartments, towers and the mansion stay at res 10.
+2. **Small house moved to a res-10 tile (was res 12).**
+   - Body x12..67 × z13..60 on a 79 tile. The path, topiaries, patio, back tree and side borders were refitted to it.
+   - It now fills its lot like ref04.
+3. **Height cover (> 2.5 units), before → after:**
+   - small house 37 → 54%, cottage 19 → 36%, big house 27 → 51%, townhouse 35 → 55%
+   - duplex 37 → 59%, cabin 33 → 52%, farmhouse 23 → 44%, beach house 33 → 55%
+   - Lot plinth cover is still ≥ 90.7%, so `_lotInfo`/`_growLot` still hold the lot flat during construction (coherence #7). No engine change was needed.
+4. **Roof variety.** Big house v1 is now sage (was tile) and duplex v1 slate (was red). A row of four terracotta roofs read as one mass.
+5. **`tools/demo-city.js`, homes pages only:**
+   - The garden plots between neighbours are off (`gardens = false`).
+   - The taller row goes to the back, away from the lens, measured by real block height.
+   - I tried a 1-tile back-garden band of flower-bed / pond / stone-path deco between the rows (`band = 0` now). It read as bare lawn plus an odd red path, so I rejected it.
+
+**Measured.** All modules parse, and all four shots had 0 console errors.
+- Tris: gal-homes-1 429k, gal-homes-2 638k, one-small-house 301k, one-apartment 377k (start: 417k / 590k / 81k* / 383k; *that start run was load-broken).
+- FPS: 49 / 47 / 61 / 22. The last reading was load noise.
+- Shots are in `rounds/res/w4r6-builder`. Iterations are `w4r6-a` (no gardens), `w4r6-c` (band) and `w4r6-e` (row swap). The start file is `rounds/res/w4r6-start.js`.
+
+**Next.**
+1. Apartments are still at 44% cover with 3 window pairs a side. A wider body with 4 pairs would give them the finer rhythm critics asked for.
+2. The cottage is still the smallest body, at 36% cover. Widen it.
+3. The grey scatter rock behind one-small-house is still there (ground/veg).
+
+### Coordinator note (2026-09-26 23:35) — w4r6: shade chroma + wall albedo
+The muddy-maroon shade side is mostly a shared shading issue (routed to surface with ref04 numbers). Your half: the small house's brick albedo is darker/redder than ref04's terracotta. Measured lit wall: ours (162,71,46) vs ref04 (204,131,74). Lift the main wall colour toward ref04's warm orange terracotta (keep brick coursing as a subtle darker line), and simplify the roof per w4r6: one clean rooftop box with a parapet rail, no grey penthouse + red canopy clutter on the small house.
+
+## 2026-09-26 — wave 4, round 7 (builder)
+
+**Critic (w4r6):** reference won. The biggest gap was the small house's shade face: "muddy dark maroon with near-black window recesses" (ref04's dark side stays a saturated orange). The roof was "a grey penthouse block, a red canopy and two planters jammed together". In gal-homes-1 the "grey-blue roofs look flat" and "the greens on the facades are drab".
+**Consensus w4r4-w4r6:** the house should be calm and clean like ref04, with warm colourful faces and more rooftop gear than plain slopes. The lot-crowding complaints (w4r4, w4r5) are layout, which the coordinator handled.
+
+**Changed** (residential.js only; no palette, engine or layout change):
+1. **Small house v1 (the ref04 homage, the one-small-house shot): recoloured by measurement.** ref04 measures, by the mode of each face: lit wall #cc7e46, shade wall #a2572d, frames #ae4818 lit / #8a3012 shade, quoins #c6ae7e.
+   - Old: resTerracotta walls rendered lit #cc5d38 / shade #8c4a33, roofBrown frames #604139 on the shade face. That was the maroon.
+   - I tried swatches on the stair house (rounds/res/w4r7-a..c):
+     - `peach` walls render lit ~#d88a54 / shade ~#a55231, which matches ref04 (the old note that peach "renders grey" no longer holds on today's grade).
+     - `resTileOrangeDk` frames stay a saturated #ae3c2a on the shade face. `trunk` and `indChocoLt` went brown-grey (#846040 / #904230).
+     - `sand` quoins render #e4c67e, ref04's warm quoin; `resQuoin` rendered #e4cca2.
+     - `comCone` walls rendered too yellow and saturated, and `civPlaza` too light.
+   - The deck is now `cream`.
+2. **The v1 roof is calm, like ref04.** It keeps the stair house with its door and ONE AC unit, plus a single potted topiary under the AC. I removed the umbrella (the "red canopy"), the lounger, the second topiary and the stair-house side window. v1 no longer has front flower boxes.
+3. **No more drab greens or flat slate in gal-homes-1:**
+   - small house v0: sage walls with resTileGreenDk frames → cream walls with brighter `roofGreen` frames. `civPlaza` walls rendered orange next to the orange roofs, so I rejected them.
+   - duplex v1: sage walls, slate roof and a stoneDark base → cream walls, ROOF.orange, roofGreen trim and a resTerraTrim base.
+   - cabin v1: slate → ROOF.red, with a roofGreen door.
+   - townhouse v1: sage → peach walls, with roofGreen frames and rails.
+4. **Coherence #7 (the grow stretches the lot):** re-verified in the game. I set all 6 gallery homes to scale 0.35 with `BV.engine.updateBuildingScale` via `--post`. The lots stay flat at full height and the houses squash above them (`rounds/res/w4r7-grow`). `_growLot`/`_lotInfo` in engine.js still hold, so no change was needed.
+
+**Measured.** All modules parse, and there were 0 console errors on every shot that ran.
+- Tris: gal-homes-1 430k, gal-homes-2 603k, one-small-house 298k, one-apartment 371k.
+- FPS: one-small-house 61 on a quiet run and 42 on the final one. The other readings (45/30/39) were load noise.
+- Every home variant (12 ids × 4) builds in node.
+- The dev server was down for about 15 minutes mid-run (connection refused). The one-* shots were re-run once it was back.
+- Shots are in `rounds/res/w4r7-builder`, iterations in `w4r7-a..f`. The start file is `rounds/res/w4r7-start.js`.
+
+**Not mine, still hurting the res shots:**
+- The "grey penthouse block" the critic saw behind the stair house is the ground/veg scatter ROCK on the diagonal tile behind the one-small-house lot (reported since w4r2).
+- The "harsh near-black strip" under the plinth is terrain's LOT_Y footing side, which renders #1e2a2a. The voxel plinth side above it is #52452f. See the coherence surface w4r3 note: lighting `wallFillAway` plus worldAO.
+
+**Next.**
+1. If a critic calls gal-homes-1 "all orange/red", swap one red/tile roof (the cottage or townhouse) to ROOF.sage or ROOF.green.
+2. The frames on v1 are brighter than ref04's when lit (#f65a24 against #ae4818). A darker saturated orange would need a new palette slot, and the palette is full (0..199).
+3. Tall apartment v1 and apartment v2 are still sage with dark-green frames. Warm them the same way if a critic calls them drab.
+
+### Coordinator note (2026-09-27 00:45) — after w4r7
+(1) Trims: one smooth wall colour per face + ONE crisp darker frame per window (ref04), not stacked red-on-red frame/trim layers. (2) Roof deck: ref04's deck is warm cream (214,188,145); make yours a clean warm cream too. Part of the "muddy grey-beige, smeared" deck may be surface's new wide roof-deck AO (aoBroadTop) — flagged to surface; judge your albedo on a lit, open part of the deck.
+
+## 2026-09-26 — wave 4, round 8 (builder)
+
+**Critic (w4r7):** reference won. Biggest gap: the small house's deck read "muddy grey-beige with soft, smeared edges", and the walls stacked "window surrounds, belt courses and cornice strips all in similar reds". ref04 has a clean cream deck, one smooth wall colour per face, and one crisp darker-orange frame per window. Also: gal-homes-1 roofs "heavy stepped red-brown ... busy and a little dark", plus the near-black lot side band (again).
+
+**Changed:**
+1. **Frames (the red-on-red).** Swatches on the lit face (`rounds/res/w4r8-a`) showed our frame `resTileOrangeDk` rendered #f85c27, BRIGHTER than the #d58c59 wall. `shingle`/`hairAuburn` went pink-red (#e25642/#dd5040). `indChocoLt` renders burnt orange #d25b30, one step darker than the wall, the same relation as ref04 (#ae4b18 frame on a #cc834a wall). v1 frame and trim → `indChocoLt`.
+2. **One frame per window.** New `refWin`: a 2-wide frame 1 proud that steps down to a 1-voxel reveal in the same colour, glass 1 behind, and one sash bar. It replaces `fatWin` (a 1-proud lip round a 2-proud frame, which read as two rings) on every small-house variant. v1 also drops the string course.
+3. **Deck (the muddy grey).** It was NOT the deck colour: lit cream renders #e0cb99 (ref04 #d6bc90). A shot with the stair house removed (`w4r8-d`) gave a clean cream deck. It is world AO (aoRadius 1 unit, aoBroadRadius 4) plus the box's shadow from a 2.2-unit stair house. The shaded cream goes olive under the cool fill.
+   - The box is now LOW (1.3 units over the deck), 24×16, in the back-right corner.
+   - Short 2+1 stepped quoin caps replace refDeck's 9-tall caps. There is no rail on the box.
+   - Door 5×8, one AC; the potted topiary moved beside the AC, not in front of it.
+   - The main rail is `thin` (1 deep), because the 2-deep rail laid a grey sawtooth strip along the lit edges.
+   - `sand` for the deck rendered browner and blotchier, so I rejected it (`w4r8-e`). The deck stays `cream`.
+4. **Roofs:** `resTile` bf8062→cc8c68 and `resRoofRed` a0605a→b86e60 (core.js, res block, used only in residential.js). This is a mild lift. The per-step dark lines are vertex AO in each inner corner, not colour.
+5. **Apartment v2** (the one-apartment shot): sage walls and dark-green frames → `peach` walls with `roofGreen` frames and rails. Every apartment roof deck is `cream` instead of grey `stone`.
+6. **Coherence #7:** re-verified. All 6 gal-homes-1 buildings at scale 0.35 (`rounds/res/w4r8-grow`): the lots stay full height. `_growLot` is still in engine.js.
+
+**Measured.** All modules parse. 0 console errors on every shot.
+- Tris: gal-homes-1 431k, gal-homes-2 604k, one-small-house 299k, one-apartment 373k. All are within 1% of the start.
+- FPS: 51 / 50 / 61 / 61.
+- Shots are in `rounds/res/w4r8-builder` (`pair.png` = ours next to ref04). Iterations are in `w4r8-a..h`. The start file is `rounds/res/w4r8-start.js`.
+
+**Not mine, still hurting the one-small-house pair:**
+- The grey scatter rock behind the lot now shows fully, because the stair house no longer hides it. See ground/veg; reported since w4r2.
+- The near-black lot side band is terrain's LOT_Y footing lit by `wallFillAway` + worldAO. See the surface w4r3 note in coherence.md.
+- Shaded cream/cream-ish tops go olive-grey where ref04's go warm brown. This is the fill colour in AO (light).
+
+**Next:**
+1. If a critic still calls the deck muddy, drop the stair house for a flat hatch plus AC.
+2. ref04's quoins are flatter long/short blocks; ours (`refQuoins`) are chunkier, with dark necks. If a critic calls the corners busy, try `bigQuoins` [8,5] p 2 at bh 5.
+3. Stepped-roof busyness: a `run 2` course would halve the AO lines but flattens the pitch.
+
+### Coordinator note (2026-09-27 01:50) — w4r8
+The blotchy deck and the hazy wall patches are surface/post artefacts (routed to surface with your render). Yours: the penthouse — make it one legible rooftop room (a simple box with a door and one AC unit, like ref04), no quoin stacks on it, and keep the deck clear around it. Your terracotta wall change reads well — keep it.
+
+## 2026-09-26 — wave 4, round 9 (builder)
+
+**Critic (w4r8):** the reference won. The biggest gap was on the small house:
+- the roof deck read as a "muddy, smudged cream with dark blotches and streaks"
+- the penthouse was "a jumble of stacked quoin blocks with no legible door or walls"
+- "hazy light-glow patches" showed on the front and right facades
+
+**Consensus w4r6-w4r8:** all three wanted ref04's calm roof: a clean cream deck, one clearly shaped rooftop room with a door and an AC unit, and clean single-colour walls.
+
+**Changed** (residential.js only; no palette, engine or layout change):
+1. **The glow patches were mesher AO spread, not light.** voxel.js `aoSpread` (0.4 world units) dilates each crease's darkness across the face. At res 4 that is 1.6 voxels; at res 10 it is 4 voxels. Our frames stand only 6-7 voxels apart, so the dilated pools met and left bright blurry crosses in the wall between them.
+   - How I found it: A/B shots through a temporary `voxOpts` getter (`rounds/res/w4r9-x0..x12`).
+     - `ao:false` removes the patches.
+     - aoDist 1.0 / 0.5 / 0.3, aoRayFall 3-5 and aoSkyShadow 0 do NOT remove them.
+     - `aoSpread:0` removes them (x10), with the creases, quoin necks, cornice and ground contact unchanged.
+   - Fix: `rawGrid().done()` now sets `m.voxOpts = RES_VOX = {aoSpread: 0}` on every res ≥ 8 home (engine `_getGeometry` merges it). It also calmed the dark per-step lines on the gallery's stepped roofs (`w4r9-builder/roofcmp.png`).
+2. **v1 roof (the ref04 homage):**
+   - **Rooftop room.** It is now a real room: 36×22 voxels, walls 21 tall (~40% of the body, as in ref04). It sits in the back-RIGHT corner. At the back-left (`w4r9-a`) its cast shadow laid a grey-green patch across the deck, because the key light comes from the front-left.
+     - It has its own smaller `refQuoins` (ba 6, per 5), the cornice band, a wall-tone roof inside a 2-wide frame rim, and stepped cream caps.
+     - On its lit front wall: a new `refAC` (a white box with a louvred left half and a fan grille), one potted topiary under it, and a 6×13 `bigDoor` with a red mat.
+     - The room also hides most of the ground/veg scatter rock behind the lot.
+   - **Deck.** `refDeck` has a new `curb` option: a flush 2-wide frame-tone border under the rail, so the rail's crease and shadow fall on orange, not on cream. I tried a raised curb first; it read as a second rail.
+   - **Rail.** The rail is 1 deep. The main corner post (`skip: 3`) and the rail runs behind and beside the room are removed; they had stacked into a jumble against the room's quoins.
+3. **Coherence #7:** re-verified. `one-small-house` with every building at scale 0.35 (`rounds/res/w4r9-grow`): the lot stays full height and the house squashes above it.
+
+**Measured.** All modules parse. All 48 home variants build in node. 0 console errors on every shot.
+- Tris: gal-homes-1 432k, gal-homes-2 656k, one-small-house 300k, one-apartment 382k. All are within about 1-3% of the start.
+- FPS: 49 / 48 / 61 / 61.
+- ref04 pair: `rounds/res/w4r9-builder/pair.png`. Other shots:
+  - iterations `w4r9-a..c`
+  - AO A/B `w4r9-x*`
+  - the start state `w4r9-cur`
+  - the start file `rounds/res/w4r9-start.js`
+
+**Still off (not mine):** our shade face renders (146,68,52) where ref04's renders (173,96,51): redder and darker (light/surface). The near-black plinth side band is terrain's footing.
+
+**Next:**
+1. If a critic calls the corners busy, try flatter long/short quoins (`bigQuoins` [8,5] p 2).
+2. Gallery roofs are still stepped stripes. A `run 2` course would halve the step lines but make the pitch shallower.
+3. The door lanterns (`bigLamp`) barely read at this zoom; ref04's are chunky amber boxes.
+
+### Coordinator note (2026-09-27 03:20)
+w4r9's "smudgy AO blotches, dark smear at the door step and lot rim" came from lighting's screen-space worldAO, now switched off globally. Re-render before changing anything for that point.

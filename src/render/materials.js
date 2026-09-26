@@ -227,6 +227,7 @@ varying vec3  vVoxGrid;      // object space, snapped so voxel cells are unit-al
 varying vec3  vVoxNormalO;   // object-space normal — picks the two in-face axes
 varying vec2  vVoxSeed;      // two per-instance seeds (see voxInstSeed)
 varying float vVoxRes;       // voxels per world unit (1 = legacy res-1 model)
+varying vec2  vVoxHalf;      // night w4r7: model half extents x/z (res > 1; 0 = unknown) for facade-facing office glass
 varying vec4  vVoxAOQ;      // the quad's four corner AO factors (constant over the quad)
 varying vec4  vVoxAOUV;     // xy: position inside the quad, 0..1 (bilinear weights)
                             // zw: paneUV (raw unorm; 0 = none) — packed into one row
@@ -290,7 +291,9 @@ vVoxEmi     = ${ATTR.emissiveT};
   // carry their lattice explicitly: cells stay 1 world unit (res x res fine
   // voxels) anchored at the model's min corner. Absent attribute reads as
   // (0,0,0,1) (or a stale <= 1 default), so res-1 geometry takes the line above.
+  vVoxHalf    = vec2(0.0);
   if (${ATTR.voxLat}.x > 1.5) vVoxGrid = transformed - ${ATTR.voxLat}.yzw;
+  if (${ATTR.voxLat}.x > 1.5) vVoxHalf = -${ATTR.voxLat}.yw;
   vVoxRes = max(${ATTR.voxLat}.x, 1.0);
 
   vec3 voxOrigin = vec3(modelMatrix[3][0], modelMatrix[3][1], modelMatrix[3][2]);
@@ -341,13 +344,15 @@ uniform float uWinTemp;       // per-window colour-temperature jitter
 uniform float uWinOffVary;    // per-building spread of uWinOff (night r1)
 uniform vec3  uWinShop;       // night w4r3: ground-floor panes (unlit-share scale, below height [u], level scale)
 uniform vec4  uWinFloor;      // night w4r5: whole floors (dark share, busy share, busy unlit scale, floor band height u)
+uniform vec4  uWinRoom;       // night w4r8: rooms (width u; 0 = one pane each, frame glow share, pane level jitter, big-pane room height u)
 uniform float uWinBimodal;    // night w4r5: 0..1 push each building's occupancy toward sleepy / busy
 uniform vec4  uGlassLobby;    // night w4r5: street-level office glass lobby (from u, to u, unlit share, level)
 uniform vec3  uWinWarm;       // (building warm skew pow, per-window jitter, cool-pane pull)
 uniform vec3  uWinCoolTo;     // linear colour cool panes are pulled toward at night
 uniform vec4  uGlassNight;    // (amount, extra unlit share, level, min height) night r1 plain glass
 uniform vec3  uNightGlassCol[6]; // linear palette colours treated as office glass at night
-uniform vec2  uGlassStrip;    // night w4: lit band of each floor on plain office glass (from, to) in cell height
+uniform vec2  uGlassStrip;    // night w4: lit band of each floor on plain office glass (from, to) in floor height
+uniform vec4  uGlassRoom;     // night w4r7: office glass (room width u, floor height u, facade margin, cool-office share)
 uniform vec4  uNightSign;     // night w4 lit sign letters: (amount, unlit share of buildings, saturation, warm-white pull)
 uniform vec3  uSignBoost;     // night w4: HDR level of a lit sign (dim building, bright building, neon share)
 uniform vec2  uSignNeon;      // night w4: pale letters on a hot sign turn neon (amount, pink vs cyan share)
@@ -378,6 +383,8 @@ uniform float uGlassTintAmt;  // how far (emissive panes; plain glass gets 60%)
 uniform float uGlassSheen;    // diagonal reflection stripe strength
 uniform vec3  uGlassHi;       // wave-4 r1: pane head highlight colour (linear)
 uniform vec4  uGlassHiP;      // (amount, band lo, band hi, thin-stripe weight)
+uniform float uGlassGlintFrac; // share of panes that carry the "/" glint (surface w4r4)
+uniform float uGlassHiSoft;    // w4r6: pull authored light highlight-glass voxels toward the pane tint
 uniform vec3  uPaneGrade;     // (head, sill, jamb) albedo factors across a glass pane (r7)
 uniform vec3  uWinFrame;      // legacy res-1 window frame colour (linear)
 uniform float uMetalMax;      // metalness ceiling for the conductor class
@@ -395,10 +402,13 @@ uniform vec3  uNightTop;      // night w4r3: up faces' floor ramp (from, to [u a
 uniform vec2  uNightTopLift;  // night w4r6: moonlit-top albedo lift (exponent < 1, amount)
 uniform vec2  uNightFace;     // night w4r6: vertical faces' key scale, shade-side fill scale
 uniform vec4  uShadeSide;     // x depth, y hue carry, z away ramp: key-away faces' fill (params.shadeSide)
+uniform vec4  uShadeWarm;     // rgb luma-normalised warm tint (linear), w amount: key-away faces' total indirect (params.shadeWarm, w4r4)
 uniform vec2  uGlassDiffuse;
 uniform float uGlassReflTint; // how much the glass body hue colours its sky/env reflection (surface w2 r1)  // (direct, indirect) diffuse scale on glass by day (surface w2 r1)
 uniform float uWallKey;        // direct-diffuse scale on vertical faces by day (params.wallKey)
+uniform vec2  uAOTop;          // (indirect, direct) AO exponents on UP-facing voxel faces (w4r7; 0 = use ao/aoDirect)
 uniform vec2  uAOWallCap;      // (max darkness, knee) on vertical voxel faces (wave-4 r1)
+uniform vec2  uAOToe;          // (from, to) baked-darkness toe cut on res>1 voxel faces (w4r8; 0,0 = off)
 uniform vec4  uAOHue;          // x hue carry into AO darkening, y extra depth (params.aoHue)
 ${COMMON_PARS}
 ${GLSL_DECODE}
@@ -426,6 +436,8 @@ float voxSheenV = 0.0;             // glass reflection-streak mask (FRAG_COLOR -
 float voxPaneUp = 0.5;             // height inside the glass pane, 0 sill .. 1 head (r7)
 vec3  voxPaneCell = vec3(0.0);     // night w4: hash cell of the whole res>1 pane (see FRAG_COLOR)
 float voxPaneY = 0.0;              // night w4r5: height of the pane's CENTRE in vVoxGrid units (whole-floor switching)
+float voxBigPane = 0.0;            // night w4r8: 1 on the dark spandrel line of a big-pane room
+vec3  voxRoomCell = vec3(0.0);     // night w4r8: hash cell of the ROOM (neighbouring panes of one row, uWinRoom.x u wide)
 
 float voxHash13(vec3 p) {
   p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -593,6 +605,17 @@ const FRAG_COLOR = /* glsl */`
     // baked DARKNESS of wall faces: shallow pooling (d < cap - knee) passes
     // untouched, deeper creases roll off exponentially toward cap, so the
     // pooled gradient keeps its full width and only the crease bottom lifts.
+    // w4r8 CONTACT TOE (critic w4r7: 'blotchy, smeared light-dark gradient on
+    // the grey roof slab ... make the AO tighter and crisper so it gathers at
+    // concave edges'; coordinator 01:35: open faces exactly 1.0). The faint
+    // tails of the ray + broad terms (baked 0.9-0.97 over whole roof decks and
+    // paving) were amplified by the AO exponents into low-frequency mottling.
+    // darkness *= smoothstep(from, to, darkness): monotonic, leaves creases
+    // (d > to) untouched and zeroes the faint far-field. Building-scale (res>1).
+    if (uAOToe.y > 0.0 && vVoxRes > 1.5) {
+      float dt = 1.0 - voxAOv;
+      voxAOv = 1.0 - dt * smoothstep(uAOToe.x, uAOToe.y, dt);
+    }
     if (uAOWallCap.x > 0.0) {
       float dk = 1.0 - voxAOv;
       float k0 = uAOWallCap.x - uAOWallCap.y;
@@ -623,6 +646,14 @@ const FRAG_COLOR = /* glsl */`
   // entries (skyBlue on cars, kiosks) a lighter one.
   {
     float gAmt = voxGlass * mix(uGlassTintAmt * 0.6, uGlassTintAmt, voxWin);
+    // w4r6 (critics w4r3 + w4r5: 'busy blue shards with white specks',
+    // 'jagged diagonal highlight pixels'): the models draw 1-voxel diagonal
+    // streaks of light plain glass (dtGlassHi) across the panes; at 60% tint
+    // they kept ~2x the pane's value and read as stair-stepped shards. Light
+    // plain glass is pulled most of the way to the pane tint, so a streak is
+    // a soft lighter sheen on a calm pane.
+    float hiG = smoothstep(0.30, 0.55, dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722))) * (1.0 - voxWin);
+    gAmt = mix(gAmt, voxGlass * uGlassTintAmt, hiG * uGlassHiSoft);
     diffuseColor.rgb = mix(diffuseColor.rgb, uGlassTint * mix(vec3(1.0), diffuseColor.rgb, 0.18) * 1.1, gAmt);
   }
 
@@ -689,6 +720,30 @@ const FRAG_COLOR = /* glsl */`
       float szG = clamp(length(gGy) / max(length(gPy), 1e-6), 0.0, 64.0);
       float sgG = dot(gPy, gGy) >= 0.0 ? 1.0 : -1.0;
       voxPaneY = mix(floor(vVoxGrid.y) + 0.5, vVoxGrid.y - sgG * (pnS.y - 0.5) * szG, hasP);
+      // NIGHT w4r8 (critic w4r7: "tiny pinprick windows ... windows should
+      // read as a glow, not noise"): neighbouring panes of one row share a
+      // ROOM (uWinRoom.x u wide), so a lit flat is a run of 2-3 lit panes
+      // and a dark one a run of dark ones, instead of a per-pane speckle.
+      // pcell.x is the pane centre in 1/8 u (an exact integer); +0.5 keeps a
+      // centre that lands on a room edge from flipping between triangles.
+      vec3 rcell = vec3(floor((pcell.x + 0.5) / (8.0 * max(uWinRoom.x, 0.05))), pcell.y, pcell.z + 97.0);
+      voxRoomCell = mix(voxPaneCell, rcell, hasP * step(0.01, uWinRoom.x));
+      // NIGHT w4r8: BIG panes (curtain walls, where the whole glazed face is
+      // one connected glass component): the derivative pane centre carries the
+      // pane-UV's 8-bit quantisation error times the pane size, so on a 10 u
+      // pane it moved by ~0.4 u from one triangle to the next and each quad
+      // lit or went dark on its own — jagged diagonal staircases of light, the
+      // "noise, not glow" the critics saw. There, rooms come straight from the
+      // exact lattice position instead: uWinRoom.x wide x uWinRoom.w tall.
+      if (uWinRoom.w > 0.0) {
+        float bigP = hasP * max(step(1.6, szA), step(1.6, szU));
+        vec2 rq = floor(vec2(voxPlane.x / max(uWinRoom.x, 0.05), vVoxGrid.y / uWinRoom.w));
+        vec3 bcell = vec3(rq, pcell.z + 53.0);
+        voxPaneCell = mix(voxPaneCell, bcell, bigP);
+        voxRoomCell = mix(voxRoomCell, bcell, bigP);
+        voxPaneY = mix(voxPaneY, (rq.y + 0.5) * uWinRoom.w, bigP);
+        voxBigPane = bigP * step(fract(vVoxGrid.y / uWinRoom.w), 0.14);
+      }
     }
     // across coordinate increasing to SCREEN RIGHT, so glints are parallel on
     // both wall orientations
@@ -709,6 +764,17 @@ const FRAG_COLOR = /* glsl */`
     float glint = b1 * b1 * (3.0 - 2.0 * b1) + uGlassHiP.w * b2;
     float panePx = 1.0 / max(length(gPy), 1e-6);
     float sheen = glint * smoothstep(6.0, 16.0, panePx) * (1.0 - smoothstep(0.35, 0.8, pw));
+    // wave-4 r4 (critics w4r1..w4r3 all: glass reads as "busy shards with
+    // white streaks", ref04 = calm panes with one clean highlight): on a
+    // mullioned res-4 window EVERY small pane carried its own streak. Now
+    // only a slow soft diagonal band across the face (the reflected bright
+    // sky, ~4.3 tiles per cycle, uGlassGlintFrac of it lit) keeps the glint;
+    // the other panes stay calm graded blue with the head gloss. (A per-pane
+    // hash of voxPaneCell speckled: the derivative pane centre jitters.)
+    if (uGlassGlintFrac < 1.0) {
+      float gm = fract(dot(voxPlane, vec2(0.23, 0.09)) + voxFaceSalt * 0.37);
+      sheen *= smoothstep(0.0, 0.1, gm) * (1.0 - smoothstep(max(uGlassGlintFrac - 0.1, 0.0), uGlassGlintFrac, gm));
+    }
     float onPane = voxGlass * (1.0 - voxFrame) * (1.0 - voxSill);
     // A reflection is view-dependent LIGHT, not paint: most of the streak is
     // added as indirect specular in FRAG_AO (so it survives on the shaded
@@ -866,12 +932,28 @@ const FRAG_AO = /* glsl */`
   // greying the top third of every window into a matte blue. Glass keeps
   // half of it, so the reveal still reads, and the reflection stays clear.
   float voxAO = mix(voxAOv, 1.0, 0.5 * voxGlass);
-  float aoIndirect = mix(1.0, voxAO, uAOStrength);
+  // w4r6: ao > 1 is an EXPONENT on the indirect light too. Shaded creases get
+  // only indirect light, and post's shade-floor lift + the tone shoulder
+  // squash a linear 0.5 baked crease to ~0.8 on screen (rendered A/N ratio).
+  // w4r7 (critics w4r4-w4r6 all: 'no broad soft falloff on the roof decks by
+  // the parapet, around the rooftop AC boxes, where walls meet the lot
+  // paving'): UP-facing faces take their own, stronger exponents (params.aoTop).
+  // ref04's deck contact is ~0.2-0.25 of open in display, its walls under the
+  // cornice ~0.65-0.7, so tops need far more than walls; one global exponent
+  // strong enough for the decks turned dense downtown facades brown (w4r7 P2).
+  // Near-white tops (awning stripes, white trim, cream caps: linear albedo
+  // luma > ~0.75) keep the wall exponents: their creases are tiny stair-step
+  // treads, and at the top exponent the white awning stripes went grey.
+  float aoUpK = smoothstep(0.5, 0.9, vVoxNormalW.y) * step(0.001, uAOTop.x)
+              * (1.0 - smoothstep(0.72, 0.86, dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722))));
+  float aoSI = mix(uAOStrength, max(uAOTop.x, uAOStrength), aoUpK);
+  float aoSD = mix(uAODirect, max(uAOTop.y, uAODirect), aoUpK);
+  float aoIndirect = aoSI > 1.0 ? pow(voxAO, aoSI) : mix(1.0, voxAO, aoSI);
   // r12: aoDirect > 1 is an EXPONENT on sunlit faces (pow(ao, aoDirect)):
   // a lit wall sits on the display shoulder (PBR Neutral + knee), where a
   // linear 0.8 AO dip came out as a few percent on screen, so the corner and
   // ledge gradients vanished on exactly the faces the critic looks at.
-  float aoDirect   = uAODirect > 1.0 ? pow(voxAO, uAODirect) : mix(1.0, voxAO, uAODirect);
+  float aoDirect   = aoSD > 1.0 ? pow(voxAO, aoSD) : mix(1.0, voxAO, aoSD);
   reflectedLight.indirectDiffuse  *= aoIndirect;
   reflectedLight.directDiffuse    *= aoDirect;
   reflectedLight.directSpecular   *= mix(1.0, voxAO, min(uAODirect, 1.0) * 0.6);
@@ -1134,6 +1216,27 @@ const FRAG_AO = /* glsl */`
   }
   #endif
 
+  // --- SHADE WARMTH (params.shadeWarm, surface w4r4) ---------------------
+  // Critics w4r1/w4r3: "darken the right face ... while keeping it WARM and
+  // saturated". Measured: ref04's shade/lit per channel is R 0.81 G 0.71
+  // B 0.68 (the dark side shifts warm); ours was R 0.66 G 0.69 B 0.70 on
+  // cream (it shifted COOL, toward the blue sky fill), so the shaded cream
+  // read as a washed grey-olive. Re-tint the whole indirect diffuse of faces
+  // turned away from the key by a luma-normalised warm colour (value kept,
+  // hue warmed). Tops, lit walls, glass and night untouched.
+  #if NUM_DIR_LIGHTS > 0
+  if (uShadeWarm.w > 0.0) {
+    float nlW = dot(geometryNormal, directionalLights[0].direction);
+    float awW = smoothstep(0.0, max(uShadeSide.z, 0.05), -nlW) * (1.0 - uNight) * (1.0 - voxGlass);
+    // Only warm-ish albedos: a warm bounce on a blue wall greys it toward
+    // slate (probe: roofBlue shade (52,81,165) -> (56,82,148)), and ref05's
+    // blue blocks keep a deep BLUE shade side. Whites take ~half.
+    float pkW = max(max(diffuseColor.r, diffuseColor.g), max(diffuseColor.b, 0.02));
+    float wkW = smoothstep(-0.10, 0.25, (diffuseColor.r - diffuseColor.b) / pkW);
+    reflectedLight.indirectDiffuse *= mix(vec3(1.0), uShadeWarm.rgb, uShadeWarm.w * awW * wkW);
+  }
+  #endif
+
   // --- NIGHT w4r2: moonlight catches the tops ------------------------------
   // Critic w4r1: lots, road edges, walls and roofs all sat in one mid-violet
   // band. At night the lower part of every model (its lot plinth, paving,
@@ -1211,7 +1314,7 @@ const FRAG_OUT = /* glsl */`
   // PERF: every result below enters through mix(..., voxWin), so non-window
   // fragments (voxWin == 0) skip the four cell hashes with identical output.
   if (voxWin > 0.0) {
-    float onR = voxCellRand(voxPaneCell, vVoxSeed.y, 1.73);
+    float onR = voxCellRand(voxRoomCell, vVoxSeed.y, 1.73);
     // NIGHT r1: every building has its own night PERSONALITY — how busy it is
     // (share of rooms lit) and what bulbs it burns (amber flats, warm-white
     // shops, the odd cool office). One city-wide uWinOff made every block the
@@ -1226,13 +1329,17 @@ const FRAG_OUT = /* glsl */`
     bOcc = mix(bOcc, bOcc * bOcc * (3.0 - 2.0 * bOcc), uWinBimodal);
     bOcc = mix(bOcc, bOcc * bOcc * (3.0 - 2.0 * bOcc), uWinBimodal);
     float offB  = clamp(uWinOff + (bOcc - 0.5) * uWinOffVary, 0.03, 0.92);
-    float flR   = voxCellRand(vec3(floor(voxPaneY / uWinFloor.w), 17.0, 3.0), vVoxSeed.y, 6.73);
+    // NIGHT w4r8: pane centres sit on exact 1/8 u steps, so a centre that
+    // lands ON a floor-band edge (e.g. y = 6.0 with 2 u bands) flipped between
+    // bands on derivative noise — per TRIANGLE, which lit big panes in jagged
+    // diagonal staircases. Snap to the 1/8 grid, then offset by half a step.
+    float flR   = voxCellRand(vec3(floor((floor(voxPaneY * 8.0 + 0.5) + 0.5) / (8.0 * uWinFloor.w)), 17.0, 3.0), vVoxSeed.y, 6.73);
     offB = flR < uWinFloor.x ? 1.01 : (flR > 1.0 - uWinFloor.y ? offB * uWinFloor.z : offB);
     // NIGHT w4r3 (critic w4r2: "more lit ground-floor shopfronts"): panes on
     // the ground storey (below uWinShop.y above the model base) are open late:
     // their unlit share is scaled by uWinShop.x and their level by uWinShop.z.
     // Mirrored in computeWindowGlows() on the owning cell's height.
-    float shopF = 1.0 - step(uWinShop.y, vVoxGrid.y);
+    float shopF = 1.0 - step(uWinShop.y, voxPaneY);   // w4r8: pane centre (a pane straddling the line no longer splits)
     offB = mix(offB, min(offB, 0.92) * uWinShop.x, shopF);
     // Hard step, exactly like the CPU mirror in computeWindowGlows(): a half-lit
     // window is not a thing, and the soft version disagreed with the lights.
@@ -1247,19 +1354,19 @@ const FRAG_OUT = /* glsl */`
     // The window is dark below uWinDusk.x by construction, and that floor is
     // deliberately lighting.js's own pool fade-in (smoothstep 0.42 -> 0.68), so
     // the emissive pixels and the light they spill switch on together.
-    float dr   = voxCellRand(voxPaneCell, vVoxSeed.y, 2.91);
+    float dr   = voxCellRand(voxRoomCell, vVoxSeed.y, 2.91);
     float t0   = uWinDusk.x + uWinDusk.y * sqrt(dr);
     float dusk = smoothstep(t0, t0 + uWinDusk.z, uNight);
 
     // Brightness: a skewed spread, not a symmetric jitter — most rooms are a
     // single lamp and a few are a lit ceiling, which is what makes a real tower
     // look occupied rather than switched on at the mains.
-    float ir = voxCellRand(voxPaneCell, vVoxSeed.y, 5.11);
+    float ir = mix(voxCellRand(voxRoomCell, vVoxSeed.y, 5.11), voxCellRand(voxPaneCell, vVoxSeed.y, 5.11), uWinRoom.z);
     float inten = mix(uWinLevel.x, uWinLevel.y, pow(ir, uWinLevel.z)) * mix(1.0, uWinShop.z, shopF);
 
     // Bulb colour: roughly 2400K (tungsten) -> 4200K (cheap LED). Wide enough
     // to read as different apartments at 1:1.
-    float tr = voxCellRand(voxPaneCell, vVoxSeed.y, 9.43);
+    float tr = voxCellRand(voxRoomCell, vVoxSeed.y, 9.43);
     vec3 warm = vec3(1.0 + 0.20 * uWinTemp, 1.0 - 0.02 * uWinTemp, 1.0 - 0.34 * uWinTemp);
     vec3 cool = vec3(1.0 - 0.18 * uWinTemp, 1.0 + 0.02 * uWinTemp, 1.0 + 0.30 * uWinTemp);
     // Building temperature skewed WARM (pow), each window jittered around it.
@@ -1271,7 +1378,7 @@ const FRAG_OUT = /* glsl */`
     // window from merging into the next once bloom gets hold of the frame.
     // The legacy frame/sill is painted trim: it never glows, it stays lit
     // as an ordinary surface next to the bright pane.
-    float trim = max(voxFrame, voxSill);
+    float trim = max(max(voxFrame, voxSill), voxBigPane);
     // Cool-glass panes (palette 201, a pale blue) read as a cold blue city at
     // night; pull them most of the way to a warm white so the glass towers
     // join the cheerful amber town, keeping only a hint of office cool.
@@ -1279,7 +1386,9 @@ const FRAG_OUT = /* glsl */`
     vec3 paneCol = mix(vVoxGlow, uWinCoolTo, coolPane * uWinWarm.z);
     vec3 winGlow = paneCol * tint * inten;
     glow   = mix(glow, winGlow, voxWin);
-    emiAmt = mix(emiAmt, on * dusk * (1.0 - trim), voxWin);
+    // NIGHT w4r8: the frame of a LIT window takes uWinRoom.y of its glow
+    // (light on the reveal), so a lit window reads larger than its pane.
+    emiAmt = mix(emiAmt, on * dusk * (1.0 - trim * (1.0 - uWinRoom.y)), voxWin);
   }
 
   // --- NIGHT r1: plain building glass lights up too ------------------------
@@ -1312,9 +1421,24 @@ const FRAG_OUT = /* glsl */`
     // full cell height, and where a curtain wall steps (fins, set-backs) the
     // lit cells stair-stepped into jagged gold chevrons under bloom; floor
     // strips give the towers the crisp horizontal office rhythm instead.
-    vec3 room = vec3(floor(voxCell.x / 3.0), voxCell.y, floor(voxCell.z / 3.0));
-    float fy = fract(vVoxGrid.y);
-    float fwy = max(fwidth(vVoxGrid.y), 1e-4);
+    // NIGHT w4r7 (critics w4r4..r6: "same repetitive cream zigzag bands"):
+    // rooms are uGlassRoom.x wide x one FLOOR (uGlassRoom.y u) tall, not one
+    // lattice cell: 1-u strips on 2-u storeys drew two lines per floor. And
+    // only FACADE-facing glass lights: a horizontal strip that wraps round a
+    // fin or a set-back step draws a V in iso (left and right faces slope
+    // opposite ways) — that was the zigzag. A face is facade-facing when its
+    // own axis dominates the model-normalised position (vVoxHalf = the
+    // model's half extents; margin uGlassRoom.z keeps corners lit).
+    float flH = max(uGlassRoom.y, 0.5);
+    float flI = floor(vVoxGrid.y / flH);
+    vec3 room = vec3(floor(voxCell.x / uGlassRoom.x), flI, floor(voxCell.z / uGlassRoom.x));
+    float fy = fract(vVoxGrid.y / flH);
+    if (vVoxHalf.x > 0.0) {
+      vec2 un = abs(vVoxGrid.xz - vVoxHalf) / max(vVoxHalf, vec2(0.5));
+      float facade = abs(vVoxNormalO.x) > 0.5 ? step(un.y, un.x + uGlassRoom.z) : step(un.x, un.y + uGlassRoom.z);
+      plainG *= mix(facade, 1.0, lobbyK);
+    }
+    float fwy = max(fwidth(vVoxGrid.y / flH), 1e-4);
     float strip = smoothstep(uGlassStrip.x - fwy, uGlassStrip.x + fwy, fy)
                 * (1.0 - smoothstep(uGlassStrip.y - fwy, uGlassStrip.y + fwy, fy));
     strip = mix(strip, 1.0, lobbyK);
@@ -1323,7 +1447,7 @@ const FRAG_OUT = /* glsl */`
     gOcc = mix(gOcc, gOcc * gOcc * (3.0 - 2.0 * gOcc), uWinBimodal);
     float offG = clamp(uWinOff + uGlassNight.y + (gOcc - 0.5) * uWinOffVary, 0.05, 0.97);
     // NIGHT w4r5: whole office floors dark / busy, as for windows
-    float flG = voxCellRand(vec3(floor(vVoxGrid.y), 23.0, 5.0), vVoxSeed.y, 6.73);
+    float flG = voxCellRand(vec3(flI, 23.0, 5.0), vVoxSeed.y, 6.73);
     offG = flG < uWinFloor.x ? 1.01 : (flG > 1.0 - uWinFloor.y ? offG * uWinFloor.z : offG);
     offG = mix(offG, uGlassLobby.z, lobbyK);
     float onG  = step(offG, voxCellRand(room, vVoxSeed.y, 4.41));
@@ -1334,7 +1458,12 @@ const FRAG_OUT = /* glsl */`
                + (voxCellRand(room, vVoxSeed.y, 9.43) - 0.5) * uWinWarm.y, 0.0, 1.0);
     vec3 wmG = vec3(1.0 + 0.20 * uWinTemp, 1.0 - 0.02 * uWinTemp, 1.0 - 0.34 * uWinTemp);
     vec3 clG = vec3(1.0 - 0.18 * uWinTemp, 1.0 + 0.02 * uWinTemp, 1.0 + 0.30 * uWinTemp);
-    vec3 gG  = uWinCoolTo * mix(wmG, clG, trG)
+    // NIGHT w4r7 (critic w4r6: "a mix of warm and cool tones"): a share of
+    // office towers burn cool-white fluorescent, and ~1 room in 6 of any tower
+    // burns the other temperature.
+    float coolG = abs(step(voxBldRand(vVoxSeed, 12.3), uGlassRoom.w)
+                    - step(voxCellRand(room, vVoxSeed.y, 13.7), 0.17));
+    vec3 gG  = mix(uWinCoolTo, vec3(0.74, 0.90, 1.0), coolG) * mix(wmG, clG, trG)
              * mix(uWinLevel.x, uWinLevel.y, pow(irG, uWinLevel.z)) * mix(uGlassNight.z, uGlassLobby.w, lobbyK);
     float aG = onG * dkG * plainG * uGlassNight.x * strip;
     glow   = mix(glow, gG, aG);
@@ -1523,6 +1652,14 @@ function _nightShadeVec(v, out) {
   const a = Array.isArray(v) ? v : [0xfff1e0, 1];
   _nsTmp.setHex(a[0], THREE.SRGBColorSpace);
   return out.set(_nsTmp.r, _nsTmp.g, _nsTmp.b, a[1] != null ? a[1] : 1);
+}
+
+/** shadeWarm [amount, sRGB hex] -> (luma-normalised linear tint, amount). */
+function _shadeWarmVec(v, out) {
+  const a = Array.isArray(v) ? v : [0, 0xffffff];
+  _nsTmp.setHex(a[1] != null ? a[1] : 0xffffff, THREE.SRGBColorSpace);
+  const l = Math.max(0.2126 * _nsTmp.r + 0.7152 * _nsTmp.g + 0.0722 * _nsTmp.b, 1e-3);
+  return out.set(_nsTmp.r / l, _nsTmp.g / l, _nsTmp.b / l, a[0] || 0);
 }
 
 /** Mirror of voxBldRand() (night r1). */
@@ -1715,7 +1852,7 @@ export function computeWindowGlows(objects, opts) {
 // ===========================================================================
 
 const DEFAULT_PARAMS = {
-  ao: 1.0,             // indirect AO strength
+  ao: 2.3,             // w4r9 FROZEN: 2.6 -> 2.3 with aoDirect 2.8 -> 2.5 (coordinator 02:30: midpoint of r7/r8; the bake reaches wider now, voxel aoDist 2.25 / aoBroad 0.4). one-bakery vs no-AO: bldg p5 0.56 -> 0.51, share<0.9 0.31 -> 0.39, open median 1.00.  w4r8: 2.0 -> 2.6 with aoDirect 2.2 -> 2.8 and aoToe [0.03,0.2]: the contained bake (voxel aoDist 1.5, aoBroad 0) leaves open faces at 1.0, so the creases can go deeper without greying whole walls. one-bakery rendered/no-AO right wall p5 0.61 -> 0.53, building median 1.00, iso-mid towers not brown.  w4r7: 1.8 -> 2.0 (walls; tops take aoTop). indirect AO strength; > 1 = EXPONENT pow(ao, x) on the indirect light. w4r6: 1.0 -> 1.8 (critics w4r1-w4r5 ALL: AO far too weak). Rendered one-bakery AO/no-AO ratio (sRGB luma): p5 0.75 -> 0.61, p25 0.86 -> 0.78, roof deck at the parapet 0.83 -> 0.74; shaded creases get only indirect light, which post's shade-floor lift + tone shoulder squashed (a baked 0.5 showed as ~0.83).
   // r12: 1.0 -> 1.5. Values > 1 are an EXPONENT, pow(ao, aoDirect), on the
   // key's direct light (see FRAG_AO): sunlit faces sit on the display
   // shoulder and a linear AO dip barely showed there (critic r11: "almost no
@@ -1723,8 +1860,10 @@ const DEFAULT_PARAMS = {
   // wave-4 r1: soft cap on wall AO darkness [max darkness, knee] (0 = off).
   // 0.34 / 0.12 -> a crease that baked to 0.55 renders ~0.68 (x aoDirect
   // 1.25 on the direct term ~0.62): the coordinator's ~0.65 midpoint.
-  aoWallCap: [0.50, 0.14],   // wave-4 r2: [0.34,0.12] -> [0.50,0.14] (critic w4r1: no soft AO under cornice/sills; the 0.66 cap rendered the crease at only 0.82 of no-AO in sRGB, the post floor lifts it further)
-  aoDirect: 1.4,       // wave-4 r3: 1.25 -> 1.4 (the ledge pools survive the lit face's display shoulder; walls keep the 0.48 baked floor, so no crush). r13: 1.5 -> 1.25 (critic r12: shopfront AO near-black; the voxel AO itself is gentler and floored now).
+  aoTop: [3.0, 3.2],   // w4r7: [indirect, direct] AO exponents on up-facing faces (roof decks, lot paving, ledges), see FRAG uAOTop. Rendered deck-at-parapet / paving-at-wall-foot ratio vs no-AO: ~0.7 -> ~0.45. 0 = same as ao / aoDirect.
+  aoToe: [0.03, 0.2],  // w4r8: [from, to] contact toe on baked darkness (see FRAG_COLOR); [0,0] = off. Zeroes the faint far tails (baked > ~0.95) that the exponents turned into roof-deck mottling.
+  aoWallCap: [0.57, 0.14],   // w4r7: 0.55 -> 0.57.  wave-4 r4: 0.50 -> 0.55 with the ray-only voxel AO (open panels stay 1.0, so the crease can go a little deeper).    // wave-4 r2: [0.34,0.12] -> [0.50,0.14] (critic w4r1: no soft AO under cornice/sills; the 0.66 cap rendered the crease at only 0.82 of no-AO in sRGB, the post floor lifts it further)
+  aoDirect: 2.5,       // w4r9 FROZEN (see ao).  w4r8: 2.2 -> 2.8 (see ao).  w4r7: 2.0 -> 2.2 (walls; tops take aoTop; 3.0 everywhere turned dense downtown towers brown).  wave-4 r5: 1.4 -> 2.0 with voxel aoBroad back on (critics w4r1-r4: AO too weak on the LIT faces; baked 0.7 showed as ~0.9 on screen).  wave-4 r3: 1.25 -> 1.4 (the ledge pools survive the lit face's display shoulder; walls keep the 0.48 baked floor, so no crush). r13: 1.5 -> 1.25 (critic r12: shopfront AO near-black; the voxel AO itself is gentler and floored now).
                        // how much AO also bites direct light (r8 0.8 -> 1.0: critic r7 'AO reads flat'). Raised from 0.38
                        // in surface r2 when the voxel AO became the ONLY AO on
                        // voxel pixels (ssaoKeep 0): ref04's soft corner bands
@@ -1854,7 +1993,7 @@ const DEFAULT_PARAMS = {
   winSill: 1.00,
   winMullion: 0.0,     // legacy centre mullion strength
   winFrame: 0xf2efe6,  // legacy frame/sill colour (sRGB) — painted white trim
-  glassTint: 0x1872b0, // wave-4 r1: 0x2272c8 -> slightly deeper, greener azure (lit panes measured (82,126,220) = pale electric blue; ref05 panes (28-42,84-104,104-132)). wave-2 r1: 0x4f8fe0 -> deeper azure (coordinator: panes ~#2a5aa8-#3a78c8; ref05 hospital/mall glass is a saturated azure with low R). // r8 0x3d74d0 -> lighter (panes measured navy 18,60,120). day glass albedo (sRGB): clear mid blue, ref04/ref05
+  glassTint: 0x1f80d8, // w4r9: 0x1872b0 -> brighter azure (coordinator 02:30: glass is the next lever; critic w4r8 'small dark navy panes vs ref04 crisp bright blue'). one-bakery pane p50 (42,85,134) -> (39,93,159), p75 (65,101,158) -> (80,115,193).  was: wave-4 r1: 0x2272c8 -> slightly deeper, greener azure (lit panes measured (82,126,220) = pale electric blue; ref05 panes (28-42,84-104,104-132)). wave-2 r1: 0x4f8fe0 -> deeper azure (coordinator: panes ~#2a5aa8-#3a78c8; ref05 hospital/mall glass is a saturated azure with low R). // r8 0x3d74d0 -> lighter (panes measured navy 18,60,120). day glass albedo (sRGB): clear mid blue, ref04/ref05
   glassTintAmt: 0.95,  // wave-2 r1: 0.88 -> 0.95
   glassSheen: 0.30,    // wave-4 r2: 0.42 -> 0.30 + no thin second stripe + a soft head highlight (glassHiP) (critic w4r1: 'flat blue with drawn-on white streaks; the reference glass is a clean, slightly glossy blue'). wave-2 r1: 0.45 -> 0.42, band narrowed + cyan-tinted in the shader. r13: 0.60 -> 0.45 (critic r12: "streaky diagonal white slashes ... ref04 uses flat, calm blue panes"). r8: 0.40 -> 0.60 with the PANE-LOCAL soft glint (critic r7: 'no reflection highlight'). diagonal reflection stripe on glass (mostly specular since r2; 0.40 -> 0.55 r3: critic "flat blue, little reflection"; 0.55 -> 0.40 r6: critic "white diagonal stripes read as a cartoon hack")
   // r7: per-pane glass grade (head, sill, jamb) — needs voxel.js paneUV
@@ -1864,8 +2003,10 @@ const DEFAULT_PARAMS = {
   // band start, band end (fraction of pane/row height), weight of the thin
   // second glint stripe (was a fixed 0.40: the 'white slashes')].
   glassHi: 0x8fd0f0,
-  glassHiP: [0.20, 0.55, 1.0, 0.0],   // wave-4 r2: [0,.55,1,.40] -> a gentle head gloss (0.2; w4r1's 0.3-0.45 paled the panes) and no thin stripe (the 'drawn-on white streaks'). one-bakery glass p50 (49,96,146) -> (47,90,140), p97 (157,187,251) -> (150,181,251)
-  paneGrade: [1.16, 0.86, 0.10],   // r10 (critic r9: 'one flat mid-blue, no sky gradient'): stronger head-light/sill-deep grade.   // r8: head a touch LIGHTER (sky) — the baked AO now shades the reveal head (r7 [0.74, 1.12, 0.14])
+  glassHiP: [0.55, 0.68, 0.74, 0.0],   // w4r9: a CRISP light top row on every pane (band from 0.68-0.74 of the pane height; coordinator 02:30) instead of a soft ramp.  was [0.30,0.55,1.0,0]: wave-4 r5: 0.20 -> 0.30 (with paneGrade head 1.32).  // wave-4 r2: [0,.55,1,.40] -> a gentle head gloss (0.2; w4r1's 0.3-0.45 paled the panes) and no thin stripe (the 'drawn-on white streaks'). one-bakery glass p50 (49,96,146) -> (47,90,140), p97 (157,187,251) -> (150,181,251)
+  glassHiSoft: 0.85,     // w4r6: see FRAG glass tint (light plain-glass streak voxels pulled toward the pane tint)
+  glassGlintFrac: 0.7,   // w4r9: 0.4 -> 0.7 (coordinator 00:10 + 02:30: most panes carry one soft sky streak).  was: wave-4 r4: share of panes with the "/" glint (1 = every pane, pre-w4r4). Critics w4r1-r3: 'busy shards / drawn-on streaks'.
+  paneGrade: [1.0, 1.0, 0.0],   // w4r9: flat pane body (the smooth head-to-sill ramp + jamb darkening read as 'blurry navy'); the crisp head band (glassHiP) carries the sky read.  was [1.32,0.86,0.10]: wave-4 r5: head 1.16 -> 1.32 (critic w4r4: 'flat mid-blue, needs a stronger sky-reflection gradient'; coordinator 16:40: lighter head only, base unchanged).  // r10 (critic r9: 'one flat mid-blue, no sky gradient'): stronger head-light/sill-deep grade.   // r8: head a touch LIGHTER (sky) — the baked AO now shades the reveal head (r7 [0.74, 1.12, 0.14])
   metalMax: 0.35,      // conductor metalness ceiling (toy metal keeps its grey)
   ssaoKeep: 0.0,       // fraction of post.js SSAO voxel pixels keep (written to
                        // scene alpha; see FRAG_OUT). 0: voxel AO is exact, SSAO
@@ -1895,8 +2036,13 @@ const DEFAULT_PARAMS = {
   // less grey"): hue carry 0.55 -> 0.85.
   bounce: [0.22, 0.85, 1.0],   // wave-4 r2: [2] = peak-normalised hue carry (see SHADE SIDE). r8 0.30 -> 0.22: critic r7 'left/right faces too close in value' (right/left luma 0.79 -> ~0.77; ref04 0.76)
   bounceTint: 0xfff1e0,  // warm-white: bounce off sunlit paving / grass / brick
+  // shadeWarm (surface w4r4): [amount, sRGB hex tint]. The key-away faces'
+  // total indirect diffuse is multiplied by mix(1, tint / luma(tint), amount),
+  // so the dark side shifts warm at the same value (ref04 shade/lit per
+  // channel R 0.81 G 0.71 B 0.68; ours was cool, R 0.66 B 0.70). 0 = off.
+  shadeWarm: [0.7, 0xffd6a8],   // w4r4: probe (with post floor.peakKey 0.5) cream shade (158,148,113) -> (171,140,93): per-channel shade/lit R .74 G .67 B .59, ref04 .81/.71/.68
   // night w4r2: shade-side fill at night (sRGB hex, strength scale on bounce) — see FRAG
-  nightShade: [0x4a8cff, 1.3],    // w4r5: 2.8 -> 1.3 (right faces a clear dark third tone; the stronger moon key carries the lift). w4r4: 1.25 -> 2.8 (right faces coloured deep blue, not near-black). w4r3: 0x5a78ff (violet-blue) -> blue-teal
+  nightShade: [0x7090e0, 1.15],    // w4r7: 0x4a8cff/1.3 -> 0x7090e0/1.15 (critics w4r5/r6: right faces darker but still their own colour, not one blue-grey). w4r5: 2.8 -> 1.3 (right faces a clear dark third tone; the stronger moon key carries the lift). w4r4: 1.25 -> 2.8 (right faces coloured deep blue, not near-black). w4r3: 0x5a78ff (violet-blue) -> blue-teal
   // night w4r2: lower storeys / lots take less moon than roofs
   // (light scale at the base, ramp from, ramp to [u above model base], amount)
   nightFloor: [0.7, 0.4, 4.5, 1.0],   // w4r4: 0.62 -> 0.7 (low-rise / lots were flat and dim)
@@ -1904,9 +2050,14 @@ const DEFAULT_PARAMS = {
   // base instead of nightFloor's, and take x(1+boost) key (roofs > walls > lots)
   // night w4r6: moonlit tops (above nightTop's ramp) take albedo^x mixed by y — dark slate
   // tower roofs lift to a light moonlit slate, hue kept (see the shader note).
-  nightTopLift: [1.0, 0.0],
+  // Tower probe (white / comRoof / navy): comRoof top 155 -> 191, navy 90 -> 145.
+  nightTopLift: [0.45, 1.0],
   // night w4r6: [vertical-face key scale, shade-side (away) fill scale] at full night.
-  nightFace: [1.0, 1.0],
+  // The 60 deg moon key hands a wall ~half of a roof's N.L, so the LIT wall sat
+  // almost on the shade side's navy bounce: white probe 1 : 0.53 : 0.43 (target
+  // 1 : 0.70 : 0.45). x2.8 key on walls, x0.8 away fill -> 1 : 0.70 : 0.36;
+  // comRoof 1 : 0.44 : 0.32 -> 1 : 0.56 : 0.21.
+  nightFace: [2.8, 0.65],   // w4r8: away fill 0.8 -> 0.65 (critic w4r7: right faces a clearly darker, still coloured third tone)
   nightTop: [0.6, 1.6, 2.2],   // w4r5: 0.7 -> 2.2 (critic w4r4: moonlit tops must be clearly the brightest). w4r4: key boost 0.35 -> 0.7 (moonlit roofs a clear step above walls)
   // night w4r2: sky env at full night = base * envNight (was base * 1.22: the
   // violet IBL lifted every face ~8/255 and flattened the masses)
@@ -1929,7 +2080,7 @@ const DEFAULT_PARAMS = {
   wallKey: 0.60,
   // glassDiffuse (surface wave-2 r1): [direct, indirect] diffuse kept on glass
   // by day. See the GLASS BODY note in FRAG_AO. 1,1 = pre-wave-2.
-  glassDiffuse: [0.45, 0.5],   // wave-4 r1: [0.7,0.7] -> darker pane body (coordinator: glass pale everywhere). one-bakery lit pane median (82,126,220) -> (73,116,177), shaded (51,83,148) -> (45,76,114); ref05 shaded (37,84,114).
+  glassDiffuse: [0.62, 0.62],   // w4r9: [0.45,0.5] -> brighter pane body on both faces (see glassTint).  was: wave-4 r1: [0.7,0.7] -> darker pane body (coordinator: glass pale everywhere). one-bakery lit pane median (82,126,220) -> (73,116,177), shaded (51,83,148) -> (45,76,114); ref05 shaded (37,84,114).
   glassReflTint: 1.0,   // wave-4 r1: 0.85 -> 1.0 (a grey sky mirror is what lifted R and paled the panes). // pane hue carried into its env/mirror reflection (0 = grey mirror)
   // aoHue (surface r12): colour bleed into the baked AO. [hue carry per unit
   // of AO darkening (clamped to 1), extra neutral depth per unit of
@@ -1970,11 +2121,15 @@ const DEFAULT_PARAMS = {
   // busy, busy floors' unlit-share scale, floor band height in u] — and
   // winBimodal (0..1) pushes each building's occupancy toward sleepy / busy.
   winFloor: [0.28, 0.22, 0.20, 2.0],
+  // night w4r8: rooms [width u (0 = per pane), lit-frame glow share, per-pane
+  // level jitter 0..1, big-pane room height] — neighbouring panes switch
+  // together (see FRAG_COLOR).
+  winRoom: [1.3, 0.35, 0.3, 1.0],   // [3] = room height on BIG panes (u; 0 = off)
   winBimodal: 1.0,
   // night w4r5: street-level office-glass lobby [from u, to u, unlit share,
   // level] above the model's lattice base (lit, warm, full height).
   glassLobby: [0.0, 2.4, 0.12, 1.1],
-  nightSat: 0.60,      // w4r5 0.35 -> 0.6 (critic w4r4: brown/maroon towers muddy; each tower keeps its own colour). w4r3 0.22 -> 0.35 (brick stays red under the blue-teal key). night r1: extra palette saturation at full night (see update())
+  nightSat: 0.85,      // w4r7 0.6 -> 0.85 (critic w4r6: keep building faces colourful). w4r5 0.35 -> 0.6 (critic w4r4: brown/maroon towers muddy; each tower keeps its own colour). w4r3 0.22 -> 0.35 (brick stays red under the blue-teal key). night r1: extra palette saturation at full night (see update())
   // night r1: plain res>1 wall glass lit as offices at night (FRAG_OUT):
   // [amount, extra unlit share over winOff, brightness scale, min height above
   // the model base in world units].
@@ -1986,6 +2141,10 @@ const DEFAULT_PARAMS = {
   // letter colour, how far white letters are pulled to a warm-white bulb].
   nightSign: [1.0, 0.22, 1.35, 0.55],
   glassStrip: [0.16, 0.80],
+  // night w4r7: office glass rooms [width u, floor height u, facade margin
+  // (model-normalised; big = every face lights, the old zigzag), share of
+  // office towers that burn cool-white]
+  glassRoom: [3.0, 2.0, 0.12, 0.35],
   // [HDR level of an ordinary lit sign, of a hot neon one, share of lit
   // buildings that get the hot one]. 0.8 threshold bloom: the ordinary level
   // sits just over it (soft halo), neon clearly past it.
@@ -1996,6 +2155,15 @@ const DEFAULT_PARAMS = {
   // voxel.js's material classes go (models/core.js dtGlass, dtGlassHi,
   // dtGlassDeep, dtGlassTeal, dtGlassDark, civGlass). Exactly 6 (uniform
   // array size); pad with -1 for unused slots.
+  // w4r7: dtGlassDeep (0x2c5a78) dropped — it is the fin / mullion / spandrel
+  // colour on the curtain-wall towers, so lighting it lit the frame instead of
+  // the panes (blotchy gold chunks across the fins). Slot 3 repeats dtGlassHi.
+  // w4r8: dtGlassDeep back in. downtown.js paintPane() paints every pane as
+  // foot (Dark) / BODY (Deep) / upper (Teal) + a rising streak (Hi), so with
+  // Deep dark a lit room showed only foot + upper + streak: jagged diagonal
+  // staircases instead of a lit rectangle (critics w4r6/r7 "zigzag bands",
+  // "pinprick windows, noise not glow"). With the w4r7 facade-only + room
+  // rules the fins no longer light (checked at close-night and iso-night).
   nightGlassColors: [0x4f86bd, 0x9ad2f2, 0x2c5a78, 0x35a0b0, 0x2a4a66, 0x5cb3ea],
   neonSat: 1.65,       // saturation applied to neon before the HDR push
   envIntensity: 1.0,
@@ -2209,7 +2377,9 @@ export class MaterialLib {
       uSkyFill: { value: p.skyFill },
       uAOStrength: { value: p.ao },
       uAODirect: { value: p.aoDirect },
+      uAOTop: { value: new THREE.Vector2(p.aoTop ? p.aoTop[0] : 0, p.aoTop ? p.aoTop[1] : 0) },
       uAOWallCap: { value: new THREE.Vector2(p.aoWallCap[0], p.aoWallCap[1]) },
+      uAOToe: { value: new THREE.Vector2(p.aoToe ? p.aoToe[0] : 0, p.aoToe ? p.aoToe[1] : 0) },
       uSat: { value: p.saturation },
       uWindowBoost: { value: p.windowBoost },
       uNeonBoost: { value: p.neonBoost },
@@ -2243,6 +2413,7 @@ export class MaterialLib {
       uWinOffVary: { value: p.winOffVary },
       uWinShop: { value: new THREE.Vector3().fromArray(p.winShop || [1, 0, 1]) },
       uWinFloor: { value: new THREE.Vector4().fromArray(p.winFloor || [0, 0, 1, 2]) },
+      uWinRoom: { value: new THREE.Vector4().fromArray(p.winRoom || [0, 0, 1, 0]) },
       uWinBimodal: { value: p.winBimodal || 0 },
       uGlassLobby: { value: new THREE.Vector4().fromArray(p.glassLobby || [0, 0, 1, 0]) },
       uWinWarm: { value: new THREE.Vector3().fromArray(p.winWarm) },
@@ -2250,6 +2421,7 @@ export class MaterialLib {
       uGlassNight: { value: new THREE.Vector4().fromArray(p.glassNight) },
       uNightSign: { value: new THREE.Vector4().fromArray(p.nightSign) },
       uGlassStrip: { value: new THREE.Vector2().fromArray(p.glassStrip) },
+      uGlassRoom: { value: new THREE.Vector4().fromArray(p.glassRoom || [3, 1, 1e3, 0]) },
       uSignBoost: { value: new THREE.Vector3().fromArray(p.signBoost) },
       uSignNeon: { value: new THREE.Vector2().fromArray(p.signNeon) },
       uNightGlassCol: { value: _nightGlassCols(p.nightGlassColors) },
@@ -2279,6 +2451,8 @@ export class MaterialLib {
       uPaneGrade: { value: new THREE.Vector3(p.paneGrade[0], p.paneGrade[1], p.paneGrade[2]) },
       uGlassHi: { value: new THREE.Color().setHex(p.glassHi, THREE.SRGBColorSpace) },
       uGlassHiP: { value: new THREE.Vector4(p.glassHiP[0], p.glassHiP[1], p.glassHiP[2], p.glassHiP[3]) },
+      uGlassGlintFrac: { value: p.glassGlintFrac != null ? p.glassGlintFrac : 1 },
+      uGlassHiSoft: { value: p.glassHiSoft != null ? p.glassHiSoft : 0 },
       uWinFrame: { value: new THREE.Color().setHex(p.winFrame, THREE.SRGBColorSpace) },
       uMetalMax: { value: p.metalMax },
       uSsaoKeep: { value: p.ssaoKeep },
@@ -2295,6 +2469,7 @@ export class MaterialLib {
       uNightTopLift: { value: new THREE.Vector2().fromArray(p.nightTopLift || [1, 0]) },
       uNightFace: { value: new THREE.Vector2().fromArray(p.nightFace || [1, 1]) },
       uShadeSide: { value: new THREE.Vector4(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], p.shadeSide[3] || 0) },
+      uShadeWarm: { value: _shadeWarmVec(p.shadeWarm, new THREE.Vector4()) },
       uWallKey: { value: p.wallKey },
       uGlassDiffuse: { value: new THREE.Vector2(p.glassDiffuse[0], p.glassDiffuse[1]) },
       uGlassReflTint: { value: p.glassReflTint },
@@ -2567,6 +2742,8 @@ export class MaterialLib {
     U.uAOStrength.value = p.ao;
     U.uAODirect.value = p.aoDirect;
     if (U.uAOWallCap) U.uAOWallCap.value.set(p.aoWallCap[0], p.aoWallCap[1]);
+    if (U.uAOToe && p.aoToe) U.uAOToe.value.set(p.aoToe[0], p.aoToe[1]);
+    if (U.uAOTop && p.aoTop) U.uAOTop.value.set(p.aoTop[0], p.aoTop[1]);
     U.uSat.value = p.saturation;
     U.uSkyFill.value = p.skyFill;
     U.uWindowBoost.value = p.windowBoost;
@@ -2596,6 +2773,7 @@ export class MaterialLib {
     U.uWinOffVary.value = p.winOffVary;
     if (p.winShop) U.uWinShop.value.fromArray(p.winShop);
     if (p.winFloor) U.uWinFloor.value.fromArray(p.winFloor);
+    if (p.winRoom) U.uWinRoom.value.fromArray(p.winRoom);
     if (p.winBimodal !== undefined) U.uWinBimodal.value = p.winBimodal;
     if (p.glassLobby) U.uGlassLobby.value.fromArray(p.glassLobby);
     U.uWinWarm.value.fromArray(p.winWarm);
@@ -2603,6 +2781,7 @@ export class MaterialLib {
     U.uGlassNight.value.fromArray(p.glassNight);
     if (p.nightSign) U.uNightSign.value.fromArray(p.nightSign);
     if (p.glassStrip) U.uGlassStrip.value.fromArray(p.glassStrip);
+    if (p.glassRoom) U.uGlassRoom.value.fromArray(p.glassRoom);
     if (p.signBoost) U.uSignBoost.value.fromArray(p.signBoost);
     if (p.signNeon) U.uSignNeon.value.fromArray(p.signNeon);
     U.uNightGlassCol.value = _nightGlassCols(p.nightGlassColors);
@@ -2630,6 +2809,8 @@ export class MaterialLib {
     U.uPaneGrade.value.set(p.paneGrade[0], p.paneGrade[1], p.paneGrade[2]);
     U.uGlassHi.value.setHex(p.glassHi, THREE.SRGBColorSpace);
     U.uGlassHiP.value.set(p.glassHiP[0], p.glassHiP[1], p.glassHiP[2], p.glassHiP[3]);
+    if (U.uGlassGlintFrac) U.uGlassGlintFrac.value = p.glassGlintFrac != null ? p.glassGlintFrac : 1;
+    if (U.uGlassHiSoft) U.uGlassHiSoft.value = p.glassHiSoft != null ? p.glassHiSoft : 0;
     U.uWinFrame.value.setHex(p.winFrame, THREE.SRGBColorSpace);
     U.uMetalMax.value = p.metalMax;
     U.uSsaoKeep.value = p.ssaoKeep;
@@ -2646,6 +2827,7 @@ export class MaterialLib {
     if (p.nightTopLift) U.uNightTopLift.value.fromArray(p.nightTopLift);
     if (p.nightFace) U.uNightFace.value.fromArray(p.nightFace);
     U.uShadeSide.value.set(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], p.shadeSide[3] || 0);
+    if (U.uShadeWarm) _shadeWarmVec(p.shadeWarm, U.uShadeWarm.value);
     U.uWallKey.value = p.wallKey;
     U.uGlassDiffuse.value.set(p.glassDiffuse[0], p.glassDiffuse[1]);
     U.uGlassReflTint.value = p.glassReflTint;

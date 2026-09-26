@@ -726,3 +726,6 @@ Next (only on a real critic gap)
 - Lot/road "plinth seam" (w4r3 note): the seam lands on near-black asphalt, so the
   lighting AO can't show it there. If it is still wanted, it belongs to the lot-side band
   colour (models/core.js lotSide) or to a darker kerb foot.
+
+### Coordinator note (2026-09-27 03:05) — FYI (piece is won)
+worldAO (lighting.js default true) is the source of the mottled roof/plinth blotches four surface/res critics named (A/B: scratchpad rounds/surface/worldAO-on-vs-off.png). The surface builder is authorised to switch it off / cut it to the tight contact line and will re-verify faceratio and iso-mid percentiles.

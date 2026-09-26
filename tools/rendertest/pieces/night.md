@@ -257,3 +257,152 @@ window grid; top/left/right too close; brown/maroon towers muddy; core street le
 
 ### Coordinator note (2026-09-26 20:35) — after w4r5: left == right, root cause to find
 Five critics, one gap: at night left and right faces are the same value. Your own probe says it: 1 : 0.73 : 0.73. That means the moon key is NOT offset in azimuth the way the day key is — by day engine.js locks the key at camera azimuth + KEY_AZ_OFFSET (now -110°, measured), so the left face faces the sun and the right face is away from it. Check what azimuth sky.js / lighting.js give the moon (and whether the night hemi/bounce dominates the right face). Fix: the moon key should use the SAME camera-locked azimuth offset as the day key (only colour, intensity and elevation change), and the night fill/bounce on the right face must drop so the probe reads ~1 : 0.70 : 0.45. Verify with your nfr.sh probe; log the numbers. This single fix is worth more than any window work.
+
+## 2026-09-26 — wave 4 round 6 (builder)
+
+Gap (w4r3..r5 agree): downtown towers one slate-blue mass; top/left/right too close. Also r5: stamped
+identical lamp ovals; r3+r5: greens go olive at night.
+
+Diagnosis with a new scratch probe (`scratchpad/towerprobe.js`: three 6x6x18 towers white / comRoof /
+dtNavyPanel on open grass, walls sampled at 70% height, `tpm.py`): the right face was NOT the problem.
+The LIT wall was: the 60 deg moon key gives a wall ~half a roof's N.L, so lit wall (0.53) sat almost
+on the navy shade bounce (0.43). And dark-slate tower roofs stayed dark (a key boost only scales a
+dark albedo): SKY tower roof 85 < lit wall 116.
+
+### Changed
+- materials.js (night-gated by flK): `nightTopLift [0.45, 1]` -> uNightTopLift: moonlit tops above the
+  nightTop ramp take albedo^0.45 (hue kept, dark roofs lift most; glass excluded). `nightFace [2.8, 0.8]`
+  -> uNightFace: vertical faces x2.8 moon key, away-facing faces x0.8 indirect.
+  Probe white 1:0.53:0.43 -> 1:0.70:0.36; comRoof top 155->191, 1:0.44:0.32 -> 1:0.56:0.21; navy top 90->145.
+- lighting.js: `lampVary [0.28, 0.35, 0.3]` — each pool gets its own radius/intensity (+/-) and ~30% are
+  warm-white instead of amber, hashed on lamp position (`_lampHash`). [0,0,0] = old stamped pools.
+- post.js (night only, ortho only): `nightGreen {amount 1, lift 0.15, blueKeep 0.45}` -> uNightGreen:
+  green-dominant pixels on the ground layer (world y < ~1.7) or vegetation (alpha 0.2) pulled from
+  sage-teal to lime (B x0.45, R x1.15, luma restored +15%). Green px mean (61,103,64) -> (66,110,49).
+
+### Measured
+- iso-night nmeas pct 11/34/79/131/213 -> 11/38/91/143/215; mid body (68,83,89) -> (78,93,94).
+- 0 console errors iso-night, iso-mid, dusk 0.55/0.70; dusk 0.55 matches w4r5's. iso-mid (day) unchanged.
+  Self-tests: all pass except roads (pre-existing shared-GL-context issue, coherence #11). fps 18-20 at 2x.
+- Shots: rounds/night/w4r6-builder; variants n6/ (N0 base, L*/Q*/R*/S* face sweeps, P*/S*p probes,
+  G* green, d55/d70 dusk).
+
+### Next
+- If a critic calls lit walls too pale/"moonlit day": nightFace.x 2.8 -> 2.2 first.
+- If right faces read near-black again: nightFace.y 0.8 -> 0.95.
+- moonRim strength 0.85 was tried (R2) without a clear gain; left at 0.55.
+
+### Coordinator note (2026-09-26 22:15) — after w4r6
+Your face fix landed (probe 1:0.70:0.36, on target) — keep it. w4r6 moves on to: (1) lit windows form "repetitive uniform cream zigzag bands" — the lit-window pattern needs per-building and per-floor variety (whole floors dark, a few floors fully lit, some rooms warm-orange vs cool-white, lit lobbies), and no diagonal/zigzag banding from the hash (check the hash isn't correlated along x+y); (2) ground reads "murky brown-black" — grass/lots at night should read as dark blue-green / blue-grey, not brown (check the night grade on greens and on lot paving), with lamp pools warm but small and a bit brighter. Measure the ground colour (PIL) before/after.
+
+## 2026-09-26 — wave 4 round 7 (builder)
+
+Gap (w4r4..r6 agree): downtown towers "one blue-grey wall" with the SAME repetitive cream zigzag bands;
+r5/r6: stamped / murky brown lamp pools on black ground; r5/r6: faces should stay colourful.
+
+Diagnosis (n7/ close-night = iso plaza dist 60 at night 0.92; `noglass` toggle): the zigzag was the
+plain-OFFICE-GLASS path, not the windows. (1) Its horizontal strips were per 1-u lattice cell, and they
+wrapped round every fin / set-back: a horizontal line on a left face and on a right face slope opposite
+ways in iso, so each fin drew a V -> chevrons. (2) dtGlassDeep (0x2c5a78) is the fin / mullion / spandrel
+colour on the curtain-wall towers, so the "rooms" lit the frame, not the panes (blotchy gold chunks).
+
+### Changed
+- materials.js (night-only office glass):
+  - new varying `vVoxHalf` (model half extents x/z from voxLat, res>1 only) + `glassRoom [3, 2, 0.12, 0.35]`
+    -> uGlassRoom: rooms 3 u wide x one 2-u FLOOR (strip/floor hashes on the floor, not the cell), and
+    only FACADE-facing glass lights (a face's own axis must dominate the model-normalised position, margin
+    0.12; lobby band exempt). [3,1,1e3,0] = old behaviour.
+  - cool-white offices: 35% of office towers burn (0.74,0.90,1.0) fluorescent, ~1 room in 6 swaps temp.
+  - `nightGlassColors`: dtGlassDeep dropped (slot repeats dtGlassHi). Panes light, frames stay dark.
+  - `nightSat` 0.6 -> 0.85, `nightShade` [0x4a8cff,1.3] -> [0x7090e0,1.15] (right faces keep their hue).
+- sky.js: `nightKeyColor` [0.60,0.80,1] -> [0.70,0.82,1] (cooler-neutral moon, tan/gold towers stay gold).
+- lighting.js: pool profile param `poolShape [0.45, 0.15, 1]` -> uPoolShape (a lit disc with a hot centre
+  and short soft rim; z=0 = old soft falloff whose long dim tail was the brown fringe). lampRadius
+  4.4 -> 3.5, lampIntensity 0.34 -> 0.62. lampVary kept.
+- post.js: `nightToe {color [0.028,0.042,0.095], fade 0.10}` -> uNightToe: near-black pixels get a small
+  navy lift at night (x nightEffK; day 0). Streets (10,16,21) -> (11,17,27)..(15,21,31): deep moonlit blue,
+  pools read as warm discs on it.
+
+### Measured
+- iso-night pct 12/39/91/144/215 -> 14/39/90/142/213 (overall level unchanged); road (14,20,25) -> (15,21,31).
+  (nmeas patch coordinates no longer hit the same buildings — other builders moved content.)
+- 0 console errors iso-night, iso-mid, close-night, mid-night, dusk 0.55/0.70 (smooth hand-off). iso-mid
+  (day) unchanged. fps 18-23 at 2x under other builders' load.
+- Shots: rounds/night/w4r7-builder (cmp.png = w4r6 critic crop vs now, cmp2.png = roads/pools);
+  n7/ (b* glass room/facade, c* glass colour list, e*/g* pools, h* face colour, k55/k70 dusk).
+
+### Next
+- The round towers (dtRound?) still light nearly every ring band cream; they're window-path (voxWin)
+  panes on a busy building — fine as "some towers mostly lit", but a lower winFloor busy share would vary them.
+- If a critic finds the core too dark now (fewer lit office rooms): glassNight.y 0.48 -> 0.38.
+- Coherence #6 [night] (terrain lots lighter than building lots) still open — ground owns terrain.js.
+
+### Coordinator note (2026-09-26 22:55) — night now has a real reference
+Seven losses were partly structural: critics paired our night against DAYLIGHT ref05. From now on critics pair against scratchpad ref/ref05-night.png (ref05 through tools/rendertest/nightref.py — see ART-DIRECTION.md). Look at it: moonlit blue masses with clear three-tone faces, big warm window patches (whole windows, ~half lit), glowing signage, dark roads, grass dark blue-green. Your w4r7 gap ("murky olive/slate mass, tiny pinprick windows") maps directly onto it: bigger warm window glow (whole panes, not pinpricks), bluer (not olive) masses, brighter moonlit tops.
+
+## 2026-09-26 — wave 4 round 8 (builder)
+
+Gap (w4r5..r7 agree): downtown towers merge into an olive/slate mass; windows tiny pinpricks that read as
+noise; want whole rooms/floors lit, cooler colourful masses, warm lights. r7: roads heavy navy-black.
+
+Diagnosis (n8/ close-night, h1..h3, i1): the "noise" on the downtown towers was NOT the hash. downtown.js
+`paintPane()` paints every pane foot (dtGlassDark) / BODY (dtGlassDeep) / upper (Teal) + rising streak (Hi),
+and w4r7 had dropped dtGlassDeep from nightGlassColors — so a lit room showed only foot + upper + streak:
+jagged diagonal staircases in every lit window (also visible by day as the painted streak). Olive = tan/gold
+albedo x green-cyan moon key (0.70,0.82,1). Mid-body measured green-grey (84,94,88).
+
+### Changed
+- materials.js: `nightGlassColors` slot 3 = dtGlassDeep again (fins stay dark thanks to w4r7's facade test;
+  checked close + iso). New `winRoom [1.3 u, frame glow 0.35, pane jitter 0.3, big-pane room h 1.0]` ->
+  uWinRoom: neighbouring panes of a row switch together (rooms), a lit window's frame takes 35% of its glow,
+  big panes (> 1.6 u, derivative pane centre unreliable) take rooms from the exact lattice position with a thin
+  spandrel line. Floor-band id and shop test now use the SNAPPED pane centre (a centre on a band edge flipped
+  per triangle). `nightFace` [2.8,0.8] -> [2.8,0.65] (right faces a darker third tone).
+- sky.js: `nightKeyColor` [0.70,0.82,1] -> [0.78,0.80,1] (gold/tan towers stay gold, not olive).
+- lighting.js: `moonShadowStrength` 0.55 -> 0.3 (tower moon-shadows put neighbours' tops/lit walls on fill).
+- post.js: bloom 0.8/0.38 -> 0.72/0.46; `nightToe` color -> [0.042,0.06,0.125]; NEW `nightCool {amount 0.6,
+  mul [0.88,0.97,1.25], fade [0.35,0.75], warmKeep 0.9}` -> uNightCool/uNightCoolMul: luma-kept cool multiply
+  on unlit night masses; bright pixels and warm light (pools, lit rooms) protected. x nightEffK, day 0.
+
+### Measured
+- iso-night crop (700,400)-(2500,1600) luma p5/25/50/75/95 14/40/91/143/215 -> 15/34/77/134/214;
+  mid-body (84,94,88) green-grey -> ~(75,79,85) cool slate (cool 1.0 gave (73,79,91)).
+- Probe (tan/terra/navy, tpm.py): tan 1 : 0.62 : 0.28 (tops 225), terra 1 : 0.43 : 0.13.
+- 0 console errors iso-night, iso-mid, close-night, dusk 0.6. iso-mid unchanged. fps 18-22 in tune runs;
+  final shoot printed 5 fps under load avg 7 (other builders' Chromes) — not a budget read.
+- Shots: rounds/night/w4r8-base vs w4r8-builder (cmp.png); n8/ (gi = deep glass, gk = cool grade sweep).
+
+### Next
+- CPU mirror (computeWindowGlows) does not know winRoom — only feeds the sky city glow, fine.
+- If a critic says "blue-grey wall" again: nightCool.amount 0.6 -> 0.35. If "gold windows too big/blotchy":
+  winRoom.y 0.35 -> 0.15.
+- Coherence #6 [night] still open (terrain owner).
+
+## 2026-09-26 — wave 4 round 9 (builder)
+
+Gap (w4r6..r8 agree): downtown reads as one busy slate+ochre texture; ground / lot / building too close in
+value; r8: lamp pools are flat beige ellipses; r7/r8: roads should be darker. Measured the cause against
+ref05-night (full frame, luma bands): ref masses sit at luma 60-130 and are BLUE ((58,76,99) / (82,99,148)),
+only 0.7% of pixels at 130-180, then the warm lights. Ours had 18% at 130-180 and 19% at 90-130, both
+NEUTRAL grey ((145,152,150), (104,111,110)), so warm windows sat on a bright grey wall = "texture".
+Roads: ref (5,7,13), ours (18,19,33).
+
+### Changed
+- post.js: `nightCool` 0.6 / [0.88,0.97,1.25] luma-kept -> amount 1.0, mul [0.74,0.9,1.45], NEW `gain 0.66`
+  (luma scale of unlit masses), fade [0.35,0.75] -> [0.5,0.9], NEW `warmSat [0.35,0.6]` -> uNightCoolWarm (only
+  saturated warm LIGHT is protected; tan/gold walls now cool too; old ramp 0.18..0.40). `nightToe` colour
+  [0.042,0.06,0.125] -> [0.012,0.018,0.04] (near-black navy streets).
+- lighting.js: pools are a pure radial falloff now: `poolShape` [0.45,0.15,1] -> [0,0,1] (no plateau),
+  lampRadius 3.5 -> 3.0, lampIntensity 0.62 -> 2.6, lampColor 0xffc47c -> 0xffa850 (beige on navy -> amber).
+
+### Measured
+- iso-night p50 76 -> 45 (ref 61); mean RGB (81,85,87) -> (57,62,77) (ref 53,62,78). Band 130-180 18% -> 6%;
+  60-90 band (71,75,77) -> (63,75,105), ref (58,76,99). Roads <15 luma 5% -> 24% (ref 15%).
+- 0 console errors iso-night, iso-mid, d60, d72. iso-mid (day) unchanged. fps 15-21 at 2x under load.
+- Shots: rounds/night/w4r9-base vs w4r9-builder; n9/ (a*/b* grade + pool sweeps, pair_b4.png vs ref crop,
+  pool_cmp2.png pools, d60/d72 dusk).
+
+### Next
+- If a critic calls it too dark / too saturated blue: gain 0.66 -> 0.75 first, then mul -> [0.8,0.92,1.35].
+- Lime parks (nightGreen lift 0.15) now stand out brightest in the outskirts; lift -> 0 if a critic flags it.
+- If pools read as orange floods on crossings (coherence #1): lampIntensity 2.6 -> 2.0.

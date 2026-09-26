@@ -754,3 +754,172 @@ w4r2 wanted "tall glass bays, not punched slots"; w4r4 now sees "coarse flat sla
 1. The glass office (the blue 1x1 on gal-1) is still a coarse framedBays curtain wall. It could take gridBays with teal frames.
 2. SKY v1 is mostly white frames. If a critic calls it pale, colour its frames or ledges.
 3. The 2x2 podiums still fill about 65% of the lot. A roomier plinth needs a smaller P box (all coordinates are hard-coded).
+
+### Coordinator note (2026-09-26 21:45) — after w4r5: I looked at the pair; concrete targets
+(rounds/downtown/w4r5-critic/pair.png) The critic compared SKY + ONYX against ref05's bank + hotel. Two measurable differences:
+1. LOT: ref hotel's building covers ~50% of its lot; the front ~30% is a forecourt (steps up to a canopied entrance, lawn strips, planters, a flagpole/lamp). Ours: shaft fills ~85% to the kerb, with parked cars round the edge. Target: tower footprint ≤ 60% of the lot, set back from the front kerb; front forecourt ≥ 25% of lot depth; NO cars parked on tower lots (delete them).
+2. FACADE DEPTH: ref bank = columns standing 2+ voxels proud of glass recessed between them (the recess catches shadow on one side and sky highlight on the glass); ours = flat wall with small windows flush. Target: on the podium and at least one face of each shaft, pilasters/columns projecting 2 fine voxels (res 4) with glass bays recessed between them; keep the fine window rhythm above (19:15 note), each window framed.
+Also consider: ref towers are broad and mid-height (hotel ~10 storeys); a couple of our slender 20+ storey shafts could be broader/shorter to give the frame bigger readable masses.
+
+## 2026-09-26 — wave 4, round 6 (builder)
+
+**Critic (w4r5) picked the reference.** Three critics running (w4r3, r4, r5) agreed that the towers fill their lots to the kerb. The ref05 hotel and bank each stand on a ~1-tile footprint in a 2x2 lot, with an open paved forecourt, hedges, lawn, steps and a porch. w4r3 and r5 also said the glass reflects nothing. coherence.md has no [downtown] items.
+
+**Changed (downtown.js only; no palette keys).**
+- New `hotelLot(g, P, rng, {xc, hw, fz, flags})`, the ref05 hotel lot:
+  - a dark-paved, stone-kerbed walk from the kerb to the steps;
+  - two lawn panels in clipped-hedge rims either side of the walk, each with a tree and flowers;
+  - L-shaped hedges on the front corners;
+  - side strips that are lawn with spaced trees (or a hedge if narrow);
+  - a back hedge line and a service corner.
+  - Everything else is left as OPEN paving: no fillLot, plazaStrip or forecourt clutter.
+- New footprints for the 2x2 towers, set back toward the rear so the front ~1/3 of the lot is forecourt:
+  - SKY: P 13..49 x 24..60, T 15..47 x 27..57 (33x31, was 37x32), nf 7+v (was 8+v). Sand plazaLot.
+  - ONYX: P 13..49 x 24..60, stages 33x31 / 25x23 / 17x15, spire moved to z 42, lantern ins 3. Light-grey plazaLot, and the flags moved to the walk.
+  - SPIRE: P 14..48 x 24..60, stages 33 / 25 / 19 wide, mast moved to z 42. The cochère drive is kept.
+  - TWINS: moved back 7 (P z 21..60, T1 z 23..57). The notches, skybridge and roof garden moved with them.
+  - BLOX and TECH are unchanged. BLOX still has its right-hand car park.
+- On the narrower shafts, gridBays uses `pw 1` + `cw 1/2` so there are still six windows a face (3 pairs) with narrow corner piers. With pw 2 the leftover width went to 5-voxel corner slabs, which read as big dark blocks.
+- New `glint(base, lit, P, seed)` glassFn: a rising diagonal band of lit panes across the whole face (dtGlassHi pane at the leading edge, then a dtGlassTeal-ramped pane), so a light streak crosses several windows. Used on SKY, all ONYX stages and spire tier 1.
+- TRIED `recess: 1` (glass 2 behind a proud frame), as the w4r5 critic asked. In game, 2-3-wide panes turn into cream-jambed slits with the glass hidden in the reveal. REVERTED to recess 0. Depth must come from pilasters or ledges, or the panes must be ≥5 wide. Note: the software iso tool (scratchpad/iso.mjs) also mis-sorts recessed panes, so check recess in game.
+
+**Measured.** check.sh ok, `_selfTest` ok, zero console errors on all 5 shots (rounds/downtown/w4r6-builder).
+- Tris: gal-1 0.47M, gal-2 0.63M, gal-3 0.58M, one-glass-sky 0.47M, iso-mid 2.03M (r5: 2.17M).
+- fps 25-60 at load ~7.
+- In gal-2 and gal-3, the SKY, ONYX, SPIRE and TWINS lots now show hedged lawns and paving in front of the entries, instead of a tower wall at the kerb.
+
+**Next.**
+1. The SKY shaft still reads white-framed with small panes. If a critic repeats "punched windows", try frames in the pier colour (silver) and wh 8, or pd 2 fins on the lr faces only.
+2. BLOX still fills its lot, with its car park on the right. Give it a hotelLot front, or move L back 6.
+3. The 1x1 towers (gal-1) still fill 1x1 lots. The only lever there is a thinner shaft or a 2-voxel lawn rim.
+4. hotelLot's side-lawn logic assumes nothing else sits in the side strips. Don't call it on lots with a side car park.
+
+## 2026-09-26 — wave 4, round 7 (builder)
+
+**Critic (w4r6) picked the reference.** Main point: SKY, ONYX and the sage slab read as extruded window grids on a thin lobby. The ref05 hotel and bank each have a separate, heavily detailed 1-2 storey base: a brick podium, a column portico, wide steps, a glass canopy and deep cornices. The critic also wanted a few balcony or ledge floors and busier roofs (AC units, water tanks, railings). coherence.md has no [downtown] items.
+
+**Changed (downtown.js only; no palette keys).**
+- New `podiumTerrace(g, P, T, top, rng, {trim, cornC, pave, box, railC})` dresses the podium roof as a setback terrace:
+  - a stepped cornice: dentils, then courses 2 and 3 out;
+  - pale paving and a metal railing on the parapet;
+  - a clipped-hedge ring with flowers in stone boxes inside the parapet;
+  - trees on the front corners and down the side strips;
+  - benches on the front strip and condensers on the back strip.
+- New `balconyFloor(g, B, y, slabC)` adds a slab 3 out with a 2-tall glass balustrade and a steel rail.
+- `streetPodium` has a new `cornerC` option. With it, colonnade corner piers use that colour (the wall) and get quoins, so a brick podium reads as brick.
+- SKY:
+  - The podium is now P 9..53 x 22..60, 5-6 voxels wider than the shaft on every side. The shaft box is unchanged.
+  - The podium is deep brick (v1 terracotta) with a giant order of cream columns, brick corner piers with cream quoins, and a terrace.
+  - Balcony floors on storey 2 and the top storey.
+  - A water tank and a railing on the lantern roof.
+- ONYX:
+  - The podium is now P 9..53 x 22..60, in sandstone `dtLimeShade` with white trim and a gold cornice lip (v1: terracotta with cream). The shop ground floor is kept. SKY next to it is brick, so the two are distinct.
+  - Added a terrace, and a jade balcony floor half way up stage 1.
+- SPIRE: the podium is now P 9..53 x 24..60, 6 wider on each side (the cochère keeps the front), with brick corners, quoins and a terrace.
+
+**Measured.** check.sh ok. Zero console errors on all 5 shots (rounds/downtown/w4r7-builder).
+- Tris: gal-1 0.47M, gal-2 0.63M, gal-3 0.59M, one-glass-sky 0.49M, iso-mid 2.04M. All unchanged within noise.
+- fps: 35-60 galleries, 22 iso-mid.
+- In gal-2, SKY now stands on a red-brick base with cream columns and a planted terrace ledge. ONYX stands on a sandstone base with a gold lip. Each base is a clearly separate block under the shaft.
+
+**Next.**
+1. The twins and BLOX podiums still hug their shafts. The twins' T1 fronts sit only 2 behind P.
+2. The SKY shaft is still white frames on silver. If a critic calls it pale, use pier-coloured frames.
+3. The SKY portico could become a pedimented temple (ref05 bank). The small office and the clock tower use the temple on gal-1, so check for duplicates per page first.
+4. If critics call the brick podiums "two reds", note that the spire (gal-3) and SKY (gal-2) share the brick-and-cream-column podium, on different pages.
+
+### Coordinator note (2026-09-26 23:05) — after w4r7: build depth OUTWARD, not inward
+Good call reverting recess (narrow panes become slits at iso). Seven critics now name facade depth, so build it outward: (1) full-height pilasters/piers projecting 2 fine voxels PROUD of the wall between every bay (or every 2 bays), in the trim/stone colour, on both visible faces — they throw a vertical shadow strip on the key-away side and give the "columns" read; (2) a projecting cornice at the top (2-3 voxels out, 2 tall) and a belt course over the podium; (3) the podium itself 1-2 voxels proud of the shaft above it, in a heavier material (stone/brick), with the canopy entrance. Base–middle–top must read from iso-mid. The bank: make it the broad grand landmark (ref05 bank: wide, 3-4 storeys, big portico with 4-6 columns and a pediment, broad steps). Keep the windows flush where they are (no recess).
+
+## 2026-09-26 — wave 4, round 8 (builder)
+
+**Critic (w4r7) picked the reference.** It looked at gal-3. What w4r5, r6 and r7 all say: the facades are flat grids with no depth. They want thicker pilasters with the bays pushed back behind them, glass reflections, and a clear base, shaft and crown. r7 also said the BANK is "a small grey box squeezed under the towers" with a faint label. coherence.md has no [downtown] items.
+
+**Changed (downtown.js only; no palette keys).**
+- New `gridBays` option `ledgeIn`: the per-floor ledge stays in the bays, behind the pilaster faces. The pilasters now run unbroken from base to top and the bays read as recessed vertical strips. Before, every ledge ran out to the corner-pier depth (max(lo, cpd)) across the whole face, which turned it into a uniform floor-by-floor grid.
+- Twins tier 1 follows the ref05 hotel: CREAM pilasters 2 proud (they were brick, 1 proud, and could not be seen) over red-brick bays. Windows are paired and 3 wide with a shared mullion, carry a glint reflection streak, and have a band with a gold cap every 3 storeys.
+- Spire tier 1: pw 2, pd 2, cpd 3, `ledgeIn`, petrol spandrels (`spandC`).
+- SKY shaft: pd 2, cpd 2, `ledgeIn`. At cpd 3 the petrol corners turned into dark masses.
+- ONYX stage 1: pd 2, cpd 3, `ledgeIn`.
+- BLOX: two white fins per face stand 3 proud through the floor slabs, making an egg-crate.
+- TECH upper block: terracotta sun fins every ~9 voxels, 3 proud, crossing the white sunshades (brise-soleil).
+- The bank is rebuilt about 25% bigger:
+  - off-white stone (v1 limestone) instead of the mid-grey dtStone;
+  - an 11-tall plinth and 38-tall columns, 4 per face, 7 wide and 5 deep, standing in front of a navy hall 1 behind them;
+  - tall glass sheets flush in the bays, running from a petrol foot to a teal body, with two rising dtGlassHi streaks, stone transoms and a mullion;
+  - a 17-tall frieze with BANK in 2x navy 5x7 letters, readable at gallery zoom;
+  - a full-width pediment with a radius-6 clock, and a 35-wide stair.
+  - Two things I tried and dropped: at hall inset 5 or 4, the columns hid the glass completely. A 1-deep glass reveal went dark in AO, so the glass is now flush.
+
+**Measured.**
+- check.sh ok, `_selfTest` ok, zero console errors on all shots (rounds/downtown/w4r8-builder).
+- Tris: gal-1 0.47M, gal-2 0.58M (was 0.63M), gal-3 0.52M (was 0.59M), one-glass-sky 0.48M, iso-mid 2.00M.
+- In game, gal-2 SKY and ONYX show deep unbroken ribs with shadow bands on the right face. gal-3 twins read as cream pilasters on red brick, like the ref hotel. TECH has red fins over dark glass. The bank is a white landmark with a big legible BANK.
+
+**Next.**
+1. The bank glass is still partly hidden behind the columns at the iso angle. If a critic wants more glass, go to 3 bays per face (columns at 8/31/54) with wider sheets.
+2. The pediment's teal gable roof steps back over the attic, and seen from the back it reads as a staircase. It could stop at the attic front.
+3. BLOX's white fins are white on white. Try the fins in pier navy or teal glass if a critic still calls BLOX flat.
+4. A white "P"-shaped block appears at the TECH lot's front-left in the gal-3 shot. It is not in the model (the software iso shows nothing there), so it is probably another piece's prop.
+
+## 2026-09-26 — wave 4, round 9 (builder)
+
+**Critic (w4r8) picked the reference.** Critics w4r6, r7 and r8 agree: the shafts (SPIRE, TWINS, BLOX, SKY) read as flat, repeated window grids with pale, low-contrast glass. They want facade relief of 1-2 voxels on every floor (protruding sills and cornices, shadowed recesses) and saturated glass with highlights. r7 and r8 also called the lots sparse. coherence.md has no [downtown] items.
+
+**Measured first (PIL, gal-3 w4r8).** On the spire's tier 1, the dominant colours were beige stone and GREY (the white frame rings on the dark face). Glass was 11% of the face against 19% on the ref05 hotel, with saturation 0.49 against 0.65. The white frame round every 3-wide pane is what made the grid read as a pale lattice.
+
+**Changed (downtown.js only; the palette ends unchanged).**
+- `gridBays` has two new options. `hoodC`/`hoodOut` adds a hood moulding over each window, 2 proud and 1 wider each side. `lugC`/`lugOut` adds a lug sill.
+- Spire tier 1, SKY shaft and ONYX stages 1-3 now share one treatment:
+  - frames are FLUSH and in the pilaster colour (stone / dtStone / jade) instead of a white ring;
+  - each window gets a hood (white; cream on ONYX) and a lug sill;
+  - panes are 8 tall (were 7);
+  - the per-floor `ledgeIn` ledge is dropped, because the hoods now mark the floors.
+- Tried and dropped: frameOut 1 jambs. At iso they hid about a third of each 3-wide pane, which took the spire's glass from 0.11 down to 0.07.
+- Twins: I tried hoods there too, and they buried the red brick. REVERTED, so the twins are unchanged.
+- `paintPane` ramp: the dark body is now 25% of the pane (was 40%), so more of each pane is lit teal. Saturation went from 0.49 to 0.58 on the spire and from 0.57 to 0.60 on SKY.
+- BLOX:
+  - The v0 ribbons are ramped dtGlassDeep (were flat dtGlassTeal), so the white tower now has saturated blue bands, like the ref05 hospital.
+  - The 3-proud fins have teal-glass outer faces; white on white had made them vanish. Navy fins were tried first and read as dark stripes.
+- `hotelLot` now ends with a moderate `fillLot` scatter: 14 props on a 2x2 lot, 6 on a 1x1, with the walk kept clear. This covers the r7 and r8 "sparse lots" notes.
+- TRIED `dtGlassTeal 0x35a0b0 → 0x2a9ccc` (with materials.js nightGlassColors synced). It turned SKY v1's teal pilasters into a royal-blue slab, the same trap as w4r3. REVERTED both files. **Never shift dtGlassTeal's hue**: SKY v1 uses it as its pier colour.
+
+**Measured.**
+- check.sh ok, `_selfTest` ok, zero console errors on all 5 shots (rounds/downtown/w4r9-builder).
+- Tris: gal-1 0.47M, gal-2 0.57M, gal-3 0.53M, one-glass-sky 0.47M, iso-mid 2.01M. All unchanged within noise.
+- fps 50-61 in galleries, 23 on iso-mid.
+
+**Next.**
+1. Signs: r7 and r8 both call TECH, BLOX and SKY crude or blocky. The SKY roof sign is k2, about twice the letter size of the ref's HOTEL sign; k1 would match the ref's scale.
+2. A white floating "P"-shaped block drifts over the gallery (seen near SKY, then over the grass). It is not in any downtown model; it is probably a life/sky prop.
+3. The glass share is still about 0.10 against the ref's 0.19. The next lever is `per 3` groups or `ww 4` panes on the spire and SKY.
+4. The spire's lit face picks up a lot of AO from the hoods. If a critic calls it muddy, set hoodOut to 1 beyond the frame on the lit faces only.
+
+### Coordinator note (2026-09-27 01:25) — w4r9: identity per tower
+w4r9 judged iso-mid: "a solid wall of towers that share the same blue glass + cream setbacks and reuse the same rooftop kit (AC boxes, column pavilion, lime cube planters, SKY billboards)". The demo city packs downtown densely on purpose, so the fix is per-id IDENTITY: give each of the 14 ids its own (a) material family (red brick, white stone, teal glass, bronze/dark glass, terracotta, sage…), (b) crown/silhouette (spire, stepped art-deco top, flat helipad, pyramid cap, clock, dome), (c) rooftop kit — don't reuse the pavilion/lime planters/billboard on every roof; at most one tower carries a billboard. Keep the depth work (pilasters, cornices, podium). Check iso-mid: no two adjacent towers should share material + crown.
+
+## 2026-09-26 — wave 4, round 10 (builder)
+
+**Critic (w4r9) picked the reference.** It looked at iso-mid and saw a solid wall of towers that all share blue glass and reuse one rooftop kit (a grey column pavilion, AC boxes, lime cube planters, SKY billboards). I followed the coordinator's 01:25 note: fix per-id identity, not the density. I left heights alone. Measured, ref05's hotel is also about 4 tiles tall. The "wall" comes from 1x1 towers packed 3x3 per block in demo-city, which is not my file. coherence.md has no [downtown] items. The white floating "P" block is tagged [ui][life] and is still present; it is not in any downtown model (checked with the software iso).
+
+**Changed (downtown.js only; no palette keys).**
+- SKY (glass-skyscraper): the grey K lantern (the "column pavilion"), the 2x SKY billboard and the water tank are gone. SKY now has its own crown: a glass drum set back 6 with a HELIPAD over it that overhangs by 3 (dark deck, yellow ring, white H, lamps), plus a 22-tall mast. The name stays on the portico.
+- Billboards: HOTEL is now the only tower with a roof sign. I removed the small office's roof billboard and the BLOX and TECH roof sign boxes; their names stay on the canopies.
+- Water tanks: only on the small office and the brick highrise now. The hotel and the twins' crowns get condensers instead.
+- ECO (green-glass-tower): GREEN glass in every variant (dtGlassGreen / dtPad), so it has its own material family. It also gets one roof per variant: v0 trees + pergola, v1 a solar array + a small wind turbine, v2 a glass greenhouse. This id repeats about 3x in iso-mid, which is where the "same lime cube planters" came from.
+- Glass office v1: the piers are terracotta instead of blue on blue. The variants are now sand, terracotta and teal.
+
+**Measured.** check.sh ok. Zero console errors on all 5 shots (rounds/downtown/w4r10-builder).
+- Tris: gal-1 0.47M, gal-3 0.52M, one-glass-sky 0.42M (was 0.48M).
+- gal-2 read 0.56M on the first pass and 0.65M on the re-shoot, and iso-mid 2.00M then 2.34M. The two gal-2 frames are identical and none of my changes are in that frame, so the jump comes from another piece.
+- fps 15-61 at load average ~9.
+- Glass share on shaft faces is about 0.13, against 0.26 on the ref05 hotel. Glass colour is close: median (45,111,130) against the ref's (0,113,143).
+- In iso-mid there is now one roof sign (HOTEL), two helipads as landmarks, green ECO towers with three different roofs, and a red terracotta glass office.
+
+**Next.**
+1. Glass share is still half the ref's. On the spire, ww 4 does not help (it only fits 4 windows). Try wh 9 or thinner pilasters (pw 1).
+2. The round tower's three variants all read blue + copper in iso-mid. Give v1/v2 a stronger colour.
+3. To open up iso-mid, the demo-city downtown density is the lever (coordinator call), not tower height.
+
+### Coordinator note (2026-09-27 02:50) — w4r10: the glass is dark because of the palette mix
+Count in downtown.js: dtGlassDeep (#2c5a78) ×50 + dtGlassDark (#2a4a66) ×32 vs dtGlass (#4f86bd) ×38, dtGlassTeal ×44, dtGlassHi ×74. Pane BODIES should be dtGlass / dtGlassTeal (ref05 hotel/bank glass sits mostly #376f8a–#6cb6ce, brightest panes ~#9ad2f2), with dtGlassHi as a top row / diagonal glint on most panes; Deep/Dark only for 1-voxel reveals and ONE deliberately dark-glass tower. Surface is separately adding reflection streaks to the shared glass material — don't fight it. Forecourts: w4r10 still sees "thin rims of green blobs" — pave them (light stone), with 2-4 planters, steps and a canopy, not hedge blobs.

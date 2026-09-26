@@ -1164,22 +1164,33 @@ function bCarnival(rng, v) {
 // long, a fence ~5 tall, a streetlight ~16.
 // =============================================================================
 function dFlowerBed(rng, v) {
-  // Low stone kerb, dark soil, chunky 3×3 flower clumps round a clipped shrub.
-  const g = grid(25, 8, 25, R4);
+  // (civic w4r8) The gallery now fills the strips between civic lots with
+  // this tile (coordinator), random variant per tile. The old bed — a 25-wide
+  // island of dark soil with 16 flower clumps and a red brick kerb on some
+  // variants — read as a busy red-rimmed patchwork (critic w4r7: "cut the
+  // clutter, let the landmarks stand alone"). Now: a lawn filling the whole
+  // tile inside a pale kerb (neighbours join into one calm parterre), one
+  // low round bed of clipped shrub + blooms in the middle. Only the flower colours change per variant.
+  const g = grid(31, 6, 31, R4);
   const vi = mod(v, 4);
-  const edge = [C.lotRim, C.brick, C.civMarble, C.stone][vi];
-  const sets = [[C.red, C.yellow, C.signWhite], [C.pink, C.purple, C.signWhite], [C.civSeat, C.yellow, C.orange], [C.red, C.pink, C.yellow]][vi];
-  g.walls(0, 0, 0, 24, 1, 24, edge);
-  g.box(1, 0, 1, 23, 0, 23, C.dirtDark);
-  g.box(9, 1, 9, 15, 3, 15, V.bush); g.box(9, 1, 9, 15, 1, 15, V.bushDark); g.box(10, 4, 10, 14, 4, 14, V.bush);
-  fineBlooms(g, 10, 10, 14, 14, 5, sets, 3);                        // (r9) fine blooms
-  let k = 0;
-  for (let x = 2; x <= 19; x += 4) for (let z = 2; z <= 19; z += 4) {
-    if (x >= 6 && x <= 15 && z >= 6 && z <= 15) continue;
-    const c = sets[k++ % 3];
-    g.box(x, 1, z, x + 2, 1, z + 2, V.bush);
-    fineBlooms(g, x, z, x + 2, z + 2, 2, [c, c, C.signWhite], 2);
+  const edge = [C.lotRim, C.lotRim, C.civMarble, C.lotRim][vi];
+  const sets = [[C.red, C.yellow, C.signWhite], [C.pink, C.purple, C.signWhite], [C.civSeat, C.yellow, C.signWhite], [C.red, C.pink, C.yellow]][vi];
+  // (civLawn: lotGrass rendered neon (199,245,61) across the whole fill strip;
+  // civLawn lands near the terrain field grass (~157,218,89))
+  g.box(0, 0, 0, 30, 0, 30, C.civLawn != null ? C.civLawn : C.lotGrass);
+  g.walls(0, 0, 0, 30, 0, 30, edge);
+  for (let x = 7; x <= 23; x++) for (let z = 7; z <= 23; z++) {
+    const r = Math.hypot(x - 15, z - 15);
+    if (r < 7.0) g.set(x, 0, z, C.dirtDark);                       // soil ring (a pale kerb ring read as white donuts)
+    if (r < 6.2) g.set(x, 1, z, r < 3.4 ? V.bushDark : V.bush);
+    if (r < 3.4) { g.set(x, 2, z, V.bush); if (r < 2.2) g.set(x, 3, z, V.bush); }
   }
+  { const H = hiGrid(g); let i = 0;                                   // blooms on the bed's outer ring
+    for (let X = 17; X <= 44; X += 3) for (let Z = 17 + ((X >> 1) % 2); Z <= 44; Z += 3) {
+      const r = Math.hypot((X + 0.5) / 2 - 15.5, (Z + 0.5) / 2 - 15.5);
+      if (r < 3.8 || r > 6.0) continue;
+      H.set(X, 4, Z, sets[(i++ * 7 + (X ^ Z)) % 3]);
+    } }
   return doneHi(g);
 }
 function dBench(rng, v) {
@@ -1355,17 +1366,29 @@ function dStatue(rng, v) {
   return doneHi(g);
 }
 function dStonePath(rng, v) {
+  // (civic w4r8) The gallery fills the strips between civic lots with this
+  // tile (coordinator 02:00, "clean paving lets each landmark stand alone"),
+  // and the variant is random per tile. The old variants (recessed pavers
+  // with black grout, grey stepping stones on grass, a red brick walk) read
+  // as a patchwork of checker, rubble and red stripes. Now every variant is
+  // the SAME flush, pale stone paving edge to edge (adjacent tiles join into
+  // one plaza), with a quiet joint grid one shade darker; v1 and v2 add one
+  // low accent only (a tan inlay square, a low round shrub bed).
   const vi = mod(v, 3);
-  const g = grid(31, 2, 31, R4);
-  if (vi === 0) {                                            // square pavers with grout
-    g.box(0, 0, 0, 30, 0, 30, C.lotPaveDark);
-    for (let x = 0; x < 31; x += 8) for (let z = 0; z < 31; z += 8) g.box(x, 1, z, Math.min(30, x + 6), 1, Math.min(30, z + 6), C.lotPave);
-  } else if (vi === 1) {                                     // stepping stones
-    for (const [x, z, w] of [[8, 2, 6], [18, 8, 7], [9, 15, 6], [18, 22, 6], [10, 26, 5]]) { g.box(x, 0, z, x + w - 1, 0, z + w - 2, V.rock); g.box(x + 1, 1, z, x + w - 2, 1, z + w - 3, V.rockLight); }
-  } else {                                                   // brick walk with kerbs
-    g.box(9, 0, 0, 21, 0, 30, C.brick);
-    for (let z = 1; z < 31; z += 4) g.box(10, 1, z, 20, 1, z + 2, C.civBrick);
-    g.box(8, 0, 0, 8, 1, 30, C.lotRim); g.box(22, 0, 0, 22, 1, 30, C.lotRim);
+  const g = grid(31, 3, 31, R4);
+  g.box(0, 0, 0, 30, 0, 30, C.lotRim);
+  for (let k = 0; k <= 30; k += 10) { g.box(k, 0, 0, k, 0, 30, C.lotPave); g.box(0, 0, k, 30, 0, k, C.lotPave); }
+  if (vi === 1) {                                            // tan inlay with a pale frame
+    g.box(10, 0, 10, 20, 0, 20, C.lotPave);
+    g.box(11, 0, 11, 19, 0, 19, C.civPlaza);
+    g.box(14, 0, 14, 16, 0, 16, C.lotRim);
+  } else if (vi === 2) {                                     // low round shrub bed
+    for (let x = 9; x <= 21; x++) for (let z = 9; z <= 21; z++) {
+      const r = Math.hypot(x - 15, z - 15);
+      if (r < 6.6) g.set(x, 0, z, C.lotPave);
+      if (r < 5.6) g.set(x, 1, z, r < 3.2 ? V.bush : V.bushDark);
+      if (r < 3.2) g.set(x, 2, z, V.bush);
+    }
   }
   return doneHi(g);
 }

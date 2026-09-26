@@ -1293,6 +1293,7 @@ void main() {
 `;
 
 const POOL_FRAG = /* glsl */`
+uniform vec3 uPoolShape;
 varying vec2 vLocal;
 varying vec3 vTint;
 varying float vAmt;
@@ -1301,6 +1302,13 @@ void main() {
 	if ( d >= 1.0 ) discard;
 	float f = 1.0 - d;
 	float a = pow( f, 1.6 ) * ( 0.28 + 0.72 * f );  // broad soft pool, hot centre
+	// night w4r7 (critics w4r5/r6: pools read as murky brown smudges, not
+	// distinct round pools): a lit DISC with a short soft rim — plateau
+	// uPoolShape.y..1 inside, fading over d in [uPoolShape.x, 1] — mixed in
+	// by uPoolShape.z (0 = the old soft falloff, whose long dim tail was the
+	// brown fringe on the black asphalt).
+	float disc = ( 1.0 - smoothstep( uPoolShape.x, 1.0, d ) ) * ( uPoolShape.y + ( 1.0 - uPoolShape.y ) * f * f );
+	a = mix( a, disc, uPoolShape.z );
 	gl_FragColor = vec4( vTint * ( a * vAmt ), 1.0 );
 }
 `;
@@ -1801,7 +1809,7 @@ export class LightingRig {
       // aoCrease/Dist: dark band on a wall under an exposed underside
       // (cornice, sill, awning). aoGap: vis of a wall facing solid stuff
       // closer than ~1 texel (narrow slots). aoHeightTol: same-surface test.
-      worldAO: true,
+      worldAO: false,   // coordinator 2026-09-27: screen-space world AO mottles flat roofs/plinths (A/B: rounds/surface/worldAO-on-vs-off.png); crease AO comes from the voxel bake
       aoRadius: 1.0,
       // r7b: extra darkening from what stands within 0.3 aoRadius only — the
       // thin crease line at a wall foot / prop foot (critic r6: "no tight dark
@@ -1840,7 +1848,7 @@ export class LightingRig {
       aoFloodWorld: 1.6,         // how deep "open air" reaches under an overhang
       aoPower: 2.0,              // contrast of the visibility curve (>1 = deeper tuck)
       moonShadows: true,
-      moonShadowStrength: 0.55,  // cascade strength multiplier while the moon keys
+      moonShadowStrength: 0.3,   // cascade strength multiplier while the moon keys. night w4r8: 0.55 -> 0.3 (critics w4r5-r7: downtown towers merge — tall towers' moon shadows put neighbours' tops and lit walls on the fill, so they read as right faces)
       maxSunElevation: 62,       // degrees
       horizonEase: 0.62,         // <1 = linger longer in the golden-hour band
       // Below `minShadowElevation` the SHADOW DIRECTION is lifted so the ortho
@@ -1873,7 +1881,7 @@ export class LightingRig {
       // fix (the visible DISC is sky.js's; see the note in _updateCelestial).
       // null disables the floor entirely.
       moonKeyElevation: 30,      // degrees
-      lampColor: 0xffc47c,   // night r1: a touch warmer than 0xffcf8a (sodium-ish, still cheerful)
+      lampColor: 0xffa850,   // w4r9: 0xffc47c -> amber (beige on the navy asphalt). night r1: a touch warmer than 0xffcf8a (sodium-ish, still cheerful)
       // coherence 09-25: 9.5 / 1.0 were tuned for the old perspective camera
       // and sparse lamps. With the iso camera and ~1 lamp per road tile the
       // additive pools overlapped into solid orange roads (markings, zebras
@@ -1885,10 +1893,15 @@ export class LightingRig {
       // asphalt, markings and zebras between lamps (coherence #1 kept).
       // w4r3 (critic w4r2: "lamp pools are small dim dots, not pools on the
       // asphalt"): 3.4 / 0.24 -> 4.4 / 0.34.
-      lampRadius: 4.4,
-      lampIntensity: 0.34,
+      // w4r7 (critic w4r6: pools read as murky brown smudges): 4.4 / 0.34 soft -> 3.5 / 0.62 on the disc profile (poolShape).
+      // w4r9 (critic w4r8: "flat beige ellipses stamped on the asphalt"): the disc plateau is gone —
+      // poolShape [0,0,1] = a pure radial falloff (hot centre, no floor), 3.5 / 0.62 -> 3.0 / 2.6, amber 0xffa850.
+      lampRadius: 3.0,
+      lampIntensity: 2.6,
       // night w4r6: per-lamp variation (see _fillInstances): radius +/-, intensity +/-, warm-white share.
       lampVary: [0.28, 0.35, 0.3],
+      // night w4r7: pool profile [rim start (0..1 of radius), inner floor, disc amount] (see POOL_FRAG).
+      poolShape: [0.0, 0.0, 1.0],
       // night r1: the bulb billboard was a 3-unit disc (glowRadius 1.5) on a
       // 2.3-unit lamp — a floating orange ball bigger than the post. A small
       // hot core; bloom supplies the halo.
@@ -2177,7 +2190,8 @@ export class LightingRig {
     this._patched = new Set();
 
     // ---- night light pools -------------------------------------------------
-    this._poolUniforms = { uNight: { value: 0 }, uTime: { value: 0 } };
+    this._poolUniforms = { uNight: { value: 0 }, uTime: { value: 0 },
+      uPoolShape: { value: new THREE.Vector3().fromArray(this.opts.poolShape || [0.6, 0.4, 0]) } };
     this._lampAnchors = [];
     this._windowGlows = [];
     this._poolMesh = null;
@@ -2267,6 +2281,7 @@ export class LightingRig {
     if (p.maxPenumbra !== undefined) this.uniforms.uCsmSoft.value.w = p.maxPenumbra;
     if (p.blockerSearchWorld !== undefined) this.uniforms.uCsmSoft.value.y = p.blockerSearchWorld;
     this._applyAoParams();
+    if (p.poolShape && this._poolUniforms) this._poolUniforms.uPoolShape.value.fromArray(p.poolShape);
     if (p.lampColor !== undefined || p.lampRadius !== undefined || p.lampIntensity !== undefined || p.lampVary !== undefined ||
         p.lampGlowRadius !== undefined || p.lampGlowIntensity !== undefined || p.windowGlowBillboards !== undefined) {
       this._rebuildPools();

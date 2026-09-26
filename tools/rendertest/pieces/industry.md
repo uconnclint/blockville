@@ -578,3 +578,89 @@ Critic (w4r2) picked the reference. Every lot repeated the same formula: a white
 
 ### Coordinator note (2026-09-26 20:35) — after w4r3: fewer, bigger masses
 w4r3: "dense clutter piles of small pale-grey boxes with no dominant readable mass". Combine with w4r1 (crammed) and w4r2 (cloned glass towers): each factory = ONE dominant big building (a long shed/warehouse with a loading-dock row, or a plant hall) + at most 2 secondary elements (a tank pair, a chimney, a silo pair), set in the organised open yard. Delete small scattered boxes/crates/extra trucks rather than add; merge small volumes into the main mass. The mega-factory/power plant can be the one with four banded stacks on a solid base (ref05).
+
+## 2026-09-26 — wave 4 round 4 (builder)
+
+Critic (w4r3) picked the reference. The gallery blocks were "crowded piles of small pale-grey boxes, stacks, silos, signs, a rocket and back-to-back trucks, with no single mass that reads as a building". ref05 shows a few big coherent sheds in open, orderly yards. Critics agree across w4r1–w4r3: too many props per lot (r1, r3), one long dock facade (r1–r3), glazing rows on big faces (r1, r3), and a washed-out palette (r2, r3). The mega works was praised again, so it is unchanged.
+**Changed (industrial.js only).**
+- 1×1 dock `works()`: the hall spans the whole lot (x 2..28, `WK.dock.hx1` 28). The office is the hall's glazed END (x `W_OX0` 22..28, full depth, same parapet, curtain glass on its street and side faces, ribbon rows at the back). It is one box with the shed, not a separate annex. `shx1` = the shed part (canopy, clerestory, roof forms, back wall).
+- Removed from every 1×1 lot: the free-standing silo, head-house and conveyor, the piped tank behind the office, the dropped trailer (one truck per dock lot), the back crates (now a planted strip), and `yardFill` clusters (1×1 works + rocket lab). Process lots lost the loading-rack tower and canopy (one riser + arm remain). CHOCO and YUM have no stack now (tanks are their one vertical). Hopper towers (NOM, ECO) lost the conveyor gallery (`noConv`).
+- Vault and gable roofs (they stepped like grey pyramids) became a glazed roof MONITOR (`monitorRoof`, lantern z WZ0+6..WZ1-6) on a flat deck. There are fans on its cap and fineRoof round it.
+- Sawmill: a smooth shallow surf gable (new surfKit `poly`) replaces the 45° voxel stair roof. Cyclone, forklift, loose planks and the second log pile are gone. It now has a striped apron with one timber truck. The WOOD sign is a plaque. Greenhouse: 2 veg crates (was 4), the hay is gone, and FARM is a half-size plaque (was a posted board).
+- Rocket lab: mission control 28 → 20 high, hangar 44 → 34 (door, bands, ledges and tag rescaled). SPACE and BV are plaques.
+- Dock canopy fascia is now `indBase` mid steel (was white). VENTS: the mega's plumes are off too. Its puffs rose as big white slabs over the neighbouring lots in gal-2 (data kept in `_megaPlumes`).
+**Measured.** `modelhash` selfTest ok, all modules parse, 0 console errors on all 4 shots (scratchpad rounds/industry/w4r4-builder). Scene tris: gal-1 584k, gal-2 671k, gal-3 534k, one-mega 455k (about the same as w4r3). fps was 34–57 under other builders' load. PIL on the district (non-asphalt, non-grass pixels): blue glass share is 7.0–7.4% (w4r3 5.6–6.6%; ref05 11–12%), white is 14–17% (ref 16–17%), L25 is 0.47 (ref 0.34). Ours still lacks the ref's dark-mid tones.
+**Next.** The dark-mid tones gap (L25 0.47 vs 0.34) is mostly the shaded wall faces, which belong to the lighting piece, plus our light rooftop units. Options: darker condenser mix in `fineItem`, or an `indBase` lower wall band 3–4 high on the halls. The rocket (48) is still the tallest non-stack item in gal-1. Street traffic trucks (life piece) still line every kerb, and critics count them as "back-to-back trucks".
+
+### Coordinator note (2026-09-26 22:35) — w4r4 agrees with w4r3
+Two critics running: dozens of tiny grey rooftop boxes and thin facade stripes smother the silhouette. Follow the 20:35 note hard: big calm roof planes with 2-4 chunky vents/fans only, large clear wall or glass panels (no thin striping), one readable footprint per plant, open white-lined truck yard.
+
+## 2026-09-26 — wave 4 round 5 (builder)
+
+Critic (w4r4) picked the reference: the mega's roofs were "dozens of tiny grey rooftop boxes", its facades "busy with thin blue-grey stripes", and the gallery lots packed so tight "the space between buildings disappears". ref05 has calm roof planes with a few chunky units, big glass panels and open marked truck yards. Agreed across w4r1–w4r4: too much small clutter (r1, r3, r4), lots too packed (r1, r3, r4), one clean mass per plant (r3, r4). Stacks and silos were praised again, so they are unchanged.
+**Changed.**
+- `fineRoof` is CALM by default (`calmRoof`): one repeated chunky AC pod (`roofPod`: curb, housing, light framed top, dark grille, 7–14 fine) in an even ring inside the parapet, or one centred row on narrow decks, plus one large glazed roof-light grid in the middle of big decks. The rest of the deck stays bare dark slate. The old dense greedy packing is `{busy: true}`. This applies to every roof (mega, power, rocket, 1×1).
+- Facades: `fineWall` is calm by default, with one downpipe at each end plus the ladder, and no wall pipe pair or AC boxes (`busy` restores them). `panelSeams` is off (dev flag `__IND_SEAMS`). `glazeBays` glass is tall and unbroken (only a mid transom on bays ≥16 high), with light pilasters (the blue-grey Dk pilasters are mapped to indWall). `curtainBand` has mullions every 6 and no mid transom on short bands.
+- Mega works: lean-tos, dock-roof hvacPads, pallet yards, forklift, gas bottles and `yardFill` are gone (`__IND_MEGAFILL` brings yardFill back). The dock apron is 15 deep with bay lines, a solid and a dashed lane line and open asphalt behind the semis, and the planted strip is a thin kerb with hedges and 4 trees. The container yard and portal crane became `truckPark`: 7 white-lined stalls, 4 orange/white semis nosed in, a dashed lane (`__IND_CONTAINERS` restores the old yard).
+- Process 1×1 works: the office is the hall's flush glazed back-left END (curtain glass on its outer faces). It no longer rises 3 above the roof with its own pad and mast.
+- tools/demo-city.js (my r11 block): factory-page infill now only fills STREET-FRONT spare tiles (the z±1 neighbour is road). Interior spare tiles are left to terrain, so a striped yard sits between plants and they don't stand back to back in 3-deep piles. I tried road-framed blocks + parks (the parks with statues/fountains read as a park page) and no infill (car parks swallowed gal-1/gal-3, as r3 once said). Both were worse.
+**Measured.** `modelhash` selfTest ok. All modules parse. 0 console errors on all 4 shots (scratchpad rounds/industry/w4r5-builder). Scene tris: gal-1 568k, gal-2 614k, gal-3 526k, one-mega 443k (w4r4: 584k/671k/534k/455k). fps 19–39 under other builders' load (not a budget reading). My own pair vs ref-factory.png (w4r5-h/pair.png): the mega now reads as one calm mass with pods, glass and an open apron.
+**Next.** Terrain's truck depot on gal-2's interior tile still has a pale apron and 2×-scale trailers (terrain.js, not mine: ask to darken it and scale `truck()` ×0.6). The NOM/ECO hopper towers still rise as tall grey blocks. Drop or lower them if "towers" comes back. The power plant (variant 1) still uses yardFill clusters. Calm them like the mega if a critic sees the plant.
+
+### Coordinator note (2026-09-26 23:45) — w4r5 swung back: where detail goes
+r3/r4: "smothered in dozens of tiny rooftop boxes"; r5: "large flat grey facade panels, coarse window blobs, needs ~3x finer facade subdivision + more machinery". Both are satisfied by putting detail in the right place:
+- FACADES (fine): window grids with thin mullions (not coarse blobs), panel seams, louvre vents, pipe runs and ladders ON the walls — ~3x finer subdivision of the big faces. This is surface detail, it doesn't break the silhouette.
+- ROOFS (calm): big planes with a few chunky units (fans, 2-4 vents), not dozens of small boxes.
+- YARD (grouped): one dense tank-and-pipe cluster per plant (tanks linked by pipe racks) + striped truck bays with trucks backed in; open asphalt elsewhere.
+Silhouette = one dominant mass + 1-2 secondary (tanks/stack). Detail density lives on the walls and in one yard cluster.
+
+## 2026-09-26 — wave 4 round 6 (builder)
+
+Critic (w4r5) picked the reference. Facades had "large flat grey panels" and "coarse blue bands of blobs" for windows; ref05 breaks every wall into fine window grids with frames ("~3x finer subdivision"). Also: "every loading dock repeats the same parked trucks and green bars". Followed the coordinator's 23:45 note: detail goes on the WALLS, roofs stay calm.
+**Changed (industrial.js only).**
+- New `fineFacades(F, g)` runs automatically in `hiRes().done()` before every other fine op, so it covers every industrial model: it scans the finished res-4 base for exposed side faces and draws in the res-8 fine part.
+  (1) Every exposed glass face (civGlass/dtGlass/dtGlassHi/dtGlassDeep/winCool) gets a light indWall frame grid (a mullion every 4 fine, a transom every 6) and per-PANE glass: a lit top row, a diagonal reflection pane and a sprinkle of light panes. This covers the old per-voxel streak "blobs".
+  (2) Bare light wall (indWall/Steel/Navy/Corr, dtLime, resTerracotta, resSage) gets rows of small framed windows with white sills wherever a whole window plus a 1-voxel margin fits.
+  (3) The remaining bare wall gets square 7×7 fine cladding panels (a proud indShade frame ring), like ref05's parapet squares.
+  Opt out with `H.noFacades()` (used by the greenhouse, whose stepped glass roof went noisy and cost +10k tris). Dev flag: `--pre "globalThis.__IND_NOFACADE=1"` for A/B.
+- The hiRes fine part is now always built (it was only built when `ops.length`), because facades need it.
+- Dock yard variety: an explicit theme→variant map `LV` in `works()` sets which bay the truck backs into (0/1/2), the staging bay, and the yard-edge planting: a hedge, 2 trees, or 3 planter boxes. With the trees variant, the office-forecourt hedge becomes one planter.
+**Measured.** My node mesher (scratchpad ind6/tris.mjs, buildVoxelGeometry with default opts, which is not the same scale as the old indtris) gives all factories 455k → 632k (+39%): mega 71k→74k, rocket 38k, 1×1 works +1.5–2.5k each. Scene tris are nearly unchanged: gal-1 608k, gal-2 683k, gal-3 545k, one-mega 481k (w4r5: 568k/614k/526k/443k). `_selfTest` ok, all modules parse, 0 console errors on all 4 shots (rounds/industry/w4r6-builder). fps 23–60 under other builders' load.
+NOTE: the dev server on :8351 was down mid-round (connection refused). I restarted it with the launch.json command (tools/dev-server.py 8351), logging to scratchpad devserver.log.
+**Next.** The 1×1 works' front parapet above the canopy is still plain. It is too short for windows or panels (only 4 rows), so the panel tile could shrink to 5×5 there. There is still no tank-and-pipe cluster on the dock 1×1 lots (coordinator 23:45 "one dense cluster per plant"), and the power plant still uses the old yardFill. If fine-part tris bite, drop the per-pane glass colours and keep only the mullions (most of the cost is in colour splits).
+
+### Coordinator note (2026-09-27 01:05) — w4r6: roofs need STRUCTURE, not scatter
+Roof verdicts swing (r3/r4 "tiny boxes smother it" ↔ r6 "flat dark slabs"). The ref05 answer is linear, repeated structure: SAWTOOTH roofs with glazing strips on the sheds (fine rhythm, calm silhouette), roof-edge catwalks/rails, pipe racks running along/over roofs to the tank cluster, and vents in neat ROWS (aligned along the sawtooth or ridge), not scattered singles. Also w4r6: the blocks are near-identical blue-grey boxes — give each id its own colour/material family (brick red works, white/teal plant, grey sheds with orange trim…) and cut the oversized pixel sign text to small plaques.
+
+## 2026-09-26 — wave 4 round 7 (builder)
+
+Critic (w4r6) picked the reference. The factory blocks were "near-identical blue-grey boxes" with "big flat dark-grey slabs" for roofs, the signs were oversized, the palette was monotone, and the rocket muddled the piece. Followed the coordinator's 01:05 note (roof STRUCTURE, a colour family per id, small plaques).
+**Changed (industrial.js only).**
+- Roofs: a `saw` shed now has a FULL-depth sawtooth (D4/H4, continuous dtGlass, a mullion every 6), with the teeth cleared round the stacks. The new `rowRoof` is the default `fineRoof` mode on any deck ≥18×14 fine (`calm: true` / `busy: true` keep the old modes). It lays bands along x: a glazed roof-light strip, then a row of identical units at a fixed pitch (`miniUnit`: a fan or a condenser, sized 6/8/10 with the deck). A light `roofRail` runs on the coping of non-saw 1×1 roofs. The ridge vents on the saw crests were tried and dropped: they read as a grid of crumbs. Roofs: TOYS/ROBOT/NOM/TOOLS/POP saw, CHOCO/CARS/YUM monitor, the rest rows.
+- Colour families: new CLAD `redbrick` (brick), `tan` (sand) and `teal` (civHall), plus `T.trim` on the dock canopy fascia and the back roll-door hood. TOYS is white/teal, ROBOT steel/orange, CHOCO and CARS red brick, YUM terracotta, NOM tan, ART teal/purple, JUICE cream/orange, MILK white/blue, POP white/pink, ECO sage/green, TOOLS corr/yellow, DEPOT white/blue. The dock jambs use the family pilaster tone. Masonry families have no glazeBays and their office end has glass on the FRONT only, so fineFacades puts window rows on the bare wall and the colour shows. Heights are 15–17 by theme.
+- Signs: `hiRes().fine2()` adds a res-16 part. The works plaques are drawn there, at half their size.
+- Yards: the truck yards, drive wells and the mega apron/truck park are `W_YARD` = civSlate, not near-black. PIL: ref05's yard is a blue-slate ~#3c5e6d, clearly lighter than its #131313 roads. Our black yards merged with the street. civApron rendered too green. civSlate is a touch lighter than the ref but has the right hue. The office forecourt is indPave beige with grey stall lines.
+- Pipe runs between buildings: a low surf rack of 3 pipes runs along each 1×1 lot's back edge (z 30, y0+7.5), end to end, with a branch into the hall or tank bund. In packed rows the racks join up. `__IND_NORACK` turns them off.
+- Rocket lab: rocket 48 → 36 and gantry 56 → 42 (critics r7 and w4r6).
+**Measured.** All 4 shots have 0 console errors (scratchpad rounds/industry/w4r7-builder). Scene tris: gal-1 614k, gal-2 746k (690k earlier this round; the rest is not from this piece), gal-3 565k, one-mega 508k. fps 26–58 under load. Factories total (ind6/tris.mjs) is 640k (was 632k in w4r6).
+**Next.** The mega's dock roof is a narrow deck, so it still gets one unit row. Try a glazed strip there, or a sawtooth dock shed. The power plant still uses yardFill clusters. Street traffic trucks still line every kerb (life piece).
+
+### Coordinator note (2026-09-27 02:40) — w4r7: one ARCHETYPE per id (sawtooth was for sheds, not everything)
+My 01:05 note said sawtooth for "the sheds"; it went onto every id, so w4r7 sees one repeated grey sawtooth block. Give each id its own silhouette + colour family (suggested, adjust freely):
+- workshop: small brick shed, big roller door, lean-to, tool racks
+- toy-factory: colourful sawtooth hall (the ONE bright sawtooth), balloon/toy sign plaque
+- chocolate-factory: brown brick mill, one tall banded brick stack, cocoa silos
+- robot-factory: white/blue tech hall, flat roof with dish/antenna, glass annex
+- sawmill: open-sided timber shed, log piles, conveyor, sawdust cone
+- warehouse: long low grey shed, row of numbered dock doors + trailers
+- recycling-center: sorting hall + coloured bins + conveyor to a bale stack
+- cheese-factory: cream hall + 2-3 yellow silos with catwalk
+- crayon-factory: hall + a row of multi-coloured silos
+- balloon-factory: hall + spherical gas tanks (sphere silhouette)
+- car-factory: long assembly hall + lined lot of new cars
+- bakery-plant: white hall, rows of oven stacks, flour silo
+- greenhouse-farm: glasshouse ridges + planter rows
+- juice-factory: tank farm (orange/green tanks) with pipe racks
+- cookie-factory: brick hall + round silo + conveyor bridge
+- rocket-lab (2x2): hangar + launch gantry; mega-factory (3x3): the power plant with banded stacks
+Pipework: pipe racks linking tanks on the ids that have tanks; striped truck yards on warehouse/car/juice/recycling. The gallery fill (tools/demo-city.js) reuses 1×1 ids to fill gaps — distinct archetypes fix that repetition too.

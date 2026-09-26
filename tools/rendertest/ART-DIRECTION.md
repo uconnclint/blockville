@@ -1,5 +1,8 @@
 # Art direction — target: Pablo Gamedev's "Isometric City Voxel"
 
+> **NIGHT OVERRIDE — READ FIRST (critics).** If the piece you are judging is the NIGHT piece ("Night lights & windows", shot `iso-night`), then everywhere your instructions say "ref05", use **`ref/ref05-night.png`** in the scratchpad ref folder instead (ref05 through a fixed night grade; make it with `python3 tools/rendertest/nightref.py <ref>/ref05.jpg <ref>/ref05-night.png` if missing). A night render paired against daylight ref05 is an INVALID pair — redo it. Consistency with our own `iso-mid` is a secondary note only, never the blind pair.
+
+
 This replaces the old "Cities: Skylines realism" target. Every render piece is
 judged blind, side by side, against the reference pack. Reference images (not in
 the repo — copyrighted, review use only):
@@ -117,3 +120,6 @@ downscales both to 900 high). Never upscale ours. Performance: judge fps with
 at once, 2x pixels) is not the budget.
 - (17:50) Gallery layout is now per category: homes/shops/deco pack shoulder to shoulder along the street; fun/civic/downtown/factories get a road-framed block each. Judge layout accordingly.
 - (2026-09-26) The dev server on :8351 is managed by the coordinator. If it seems down, wait 30 s and retry; do NOT start your own copy (a detached copy blocks the managed one from restarting).
+
+## Night pieces: pair against the NIGHT reference (mandatory, 2026-09-26)
+The pack has no night shots, and a night render paired against a daylight image is not a fair blind test (the day image always "wins"). For any night judgement, the reference side of the blind pair is `ref/ref05-night.png` in the scratchpad ref folder — ref05 put through a fixed, deterministic night grade by `tools/rendertest/nightref.py` (moonlit blue grade keeping three-tone faces, ~55% of glass lit warm in window blocks, signage glowing). If it is missing: `python3 tools/rendertest/nightref.py <ref>/ref05.jpg <ref>/ref05-night.png`. Crop both sides to comparable content at matched scale as usual (iso-night vs the same region of ref05-night). Judge craft and readability night-vs-night: silhouettes, face separation, window variety, lamp/sign glow, cheerfulness.
