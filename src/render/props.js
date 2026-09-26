@@ -647,7 +647,7 @@ vPropMat  = matParams;
   // and a dark #2f7200 shade side; solved from those pixels in linear.
   float bushy = leafy * (1.0 - lime);
   topT  = mix(topT,  vec3(0.47, 0.52, 0.10), bushy);
-  litT  = mix(litT,  vec3(0.57, 0.64, 0.20), bushy);
+  litT  = mix(litT,  vec3(0.40, 0.44, 0.08), bushy);   // coherence w4: 0.57/0.64/0.20 -> 0.40/0.44/0.08 (veg w4r3 critic: park/median hedges & bushes 'flat emerald, no top/side split'; the lit side rendered as bright as the top, ref06 bush lit side ~0.8 of its top and a touch yellower)
   darkT = mix(darkT, vec3(1.80, 1.62, 0.25), bushy);
   // Greys (rocks): ref06 #8d8d8d top / #737373 lit / #4d4d4d shade. The rig
   // plus the rock's own AO and self-shadow rendered the shade side #363a39
@@ -1423,6 +1423,26 @@ export class Props {
       return nT;
     };
 
+    // coherence w4 GROVES (coordinator 2026-09-26 21:30: "a NEW city's whole
+    // map is an even lattice of trees + grey rocks at ~1.2 trees/tile … reads
+    // as a forest grid and leaves no open meadow to build on"). The field
+    // lattice above keeps ref05's measured density, but only inside
+    // low-frequency GROVES (a separate fbm, ~5-10 tile blobs covering roughly
+    // a quarter of the land); the rest is open lime meadow with the odd lone
+    // tree (GROVE_FLOOR of the lattice) and very rare rocks (rocks scale with
+    // the same factor). The middle of the map (where a new city's camera
+    // starts) is kept more open still. Deterministic per seed; works off-map.
+    const GROVE_LO = 0.60, GROVE_HI = 0.70, GROVE_FLOOR = 0.06;
+    const groveK = (tx, tz, onMap) => {
+      const n = fbm((tx + S * 0.53) / 7, (tz + S * 0.41) / 7, 811) * 1.12;
+      let g = smooth01(GROVE_LO, GROVE_HI, n);
+      if (onMap) {
+        const dc = Math.hypot(tx + 0.5 - N / 2, tz + 0.5 - N / 2);
+        g *= 0.25 + 0.75 * smooth01(7, 15, dc);
+      }
+      return GROVE_FLOOR + (1 - GROVE_FLOOR) * g;
+    };
+
     for (let z = 0; z < N; z++) {
       for (let x = 0; x < N; x++) {
         const i = z * N + x;
@@ -1615,7 +1635,7 @@ export class Props {
         // pond / coast inside town is not a yard between towers). Verge
         // tiles keep their road-side cells for the kerb row.
         if (!groveHit && p === 1 && !onPath[i]) {
-          const fc = 0.95 * wild * wild;
+          const fc = 0.95 * wild * wild * groveK(x, z, true);
           // On a verge tile the cells on the road side hold the kerb row.
           let skip = 0;
           if (rN) skip |= 0b0011;
@@ -1757,7 +1777,7 @@ export class Props {
           // tiles), so its scree only starts past it.
           if (m !== T_MOUNTAIN) {
             const y0 = skirtLandY((tx + 0.5) * TILE, (tz + 0.5) * TILE);
-            meadow(tx, tz, fade, 0, y0, 0);
+            meadow(tx, tz, fade * groveK(tx, tz, false), 0, y0, 0);
             continue;
           }
           const pT = 0;

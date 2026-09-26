@@ -30,7 +30,7 @@ const CAR_CAP = 300;    // pool size; the live count follows the view (below) (r
 const PED_CAP = 150;
 const PUFF_CAP = 40;
 const BIRD_COUNT = 4;
-const CLOUD_COUNT = 8;
+const CLOUD_COUNT = 0;   // coherence w4: 8 -> 0. The low voxel clouds (y 45-60) read as white stepped 'P' blocks lying on lots/grass in the ortho iso view (res/downtown builders' transient white block); the reference has no clouds.
 
 const BOAT_CAP = 8;     // at most 8 boats when the map has enough water
 const BALLOON_CAP = 12; // global balloon pool cap

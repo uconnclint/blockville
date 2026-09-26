@@ -403,6 +403,7 @@ uniform vec3  uNightTop;      // night w4r3: up faces' floor ramp (from, to [u a
 uniform vec2  uNightTopLift;  // night w4r6: moonlit-top albedo lift (exponent < 1, amount)
 uniform vec2  uNightFace;     // night w4r6: vertical faces' key scale, shade-side fill scale
 uniform vec4  uShadeSide;     // x depth, y hue carry, z away ramp: key-away faces' fill (params.shadeSide)
+uniform vec3  uShadeGain;      // coherence w4: (gain, sat lo, sat hi) on key-away faces of SATURATED warm albedos (params.shadeGain)
 uniform vec4  uShadeWarm;     // rgb luma-normalised warm tint (linear), w amount: key-away faces' total indirect (params.shadeWarm, w4r4)
 uniform vec2  uGlassDiffuse;
 uniform float uGlassReflTint; // how much the glass body hue colours its sky/env reflection (surface w2 r1)  // (direct, indirect) diffuse scale on glass by day (surface w2 r1)
@@ -1276,6 +1277,21 @@ const FRAG_AO = /* glsl */`
     float pkW = max(max(diffuseColor.r, diffuseColor.g), max(diffuseColor.b, 0.02));
     float wkW = smoothstep(-0.10, 0.25, (diffuseColor.r - diffuseColor.b) / pkW);
     reflectedLight.indirectDiffuse *= mix(vec3(1.0), uShadeWarm.rgb, uShadeWarm.w * awW * wkW);
+    // coherence w4 (surface w4r14: 'bakery left/right walls read almost the
+    // same tan brightness'): saturated warm walls' shade side one step darker
+    // (ref04 warm wall lit/shade luma 0.74). Gated on albedo SATURATION so
+    // whites / greys keep the white-cube ratio 1 : 0.89 : 0.63.
+    if (uShadeGain.x != 1.0) {
+      float mnW = min(min(diffuseColor.r, diffuseColor.g), diffuseColor.b);
+      float stW = smoothstep(uShadeGain.y, uShadeGain.z, (pkW - mnW) / pkW);
+      // Faces turned away from the key (the default iso shade wall has
+      // nl ~ -0.56); vertical only, so eaves / awning undersides keep theirs.
+      float vtW = 1.0 - smoothstep(0.35, 0.7, abs(dot(geometryNormal, normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz))));
+      float sdW = smoothstep(0.0, 0.2, -nlW) * vtW * (1.0 - uNight) * (1.0 - voxGlass);
+      // warm hues only (hue ~0-55 deg: r >= g); lime foliage / lawn keep theirs
+      float rgW = smoothstep(-0.04, 0.08, (diffuseColor.r - diffuseColor.g) / pkW);
+      reflectedLight.indirectDiffuse *= mix(1.0, uShadeGain.x, sdW * wkW * stW * rgW);
+    }
   }
   #endif
 
@@ -1910,7 +1926,7 @@ export function computeWindowGlows(objects, opts) {
 // ===========================================================================
 
 const DEFAULT_PARAMS = {
-  ao: 3.2,             // w4r14: 2.6 -> 3.2 with aoDirect 2.8 -> 3.6, aoFloor.x 0.42 -> 0.30, aoWallCap 0.57 -> 0.62: voxel aoTopHat now lifts the flat plateaus (critics w4r11-w4r13: 'faces stay flat and evenly lit'), so the creases and under-ledge ramps can go deeper without greying whole walls (rounds/surface/w4r14 A6 X4).   w4r11: 2.3 -> 2.6 with aoDirect 2.5 -> 2.8, aoTop [3.3,3.5] and the new aoFloor (critics w4r8 + w4r10: AO too faint/tight; the floor keeps every crease a coloured mid-tone, the lot strip beside the wall foot no longer renders near-black).  w4r9 FROZEN: 2.6 -> 2.3 with aoDirect 2.8 -> 2.5 (coordinator 02:30: midpoint of r7/r8; the bake reaches wider now, voxel aoDist 2.25 / aoBroad 0.4). one-bakery vs no-AO: bldg p5 0.56 -> 0.51, share<0.9 0.31 -> 0.39, open median 1.00.  w4r8: 2.0 -> 2.6 with aoDirect 2.2 -> 2.8 and aoToe [0.03,0.2]: the contained bake (voxel aoDist 1.5, aoBroad 0) leaves open faces at 1.0, so the creases can go deeper without greying whole walls. one-bakery rendered/no-AO right wall p5 0.61 -> 0.53, building median 1.00, iso-mid towers not brown.  w4r7: 1.8 -> 2.0 (walls; tops take aoTop). indirect AO strength; > 1 = EXPONENT pow(ao, x) on the indirect light. w4r6: 1.0 -> 1.8 (critics w4r1-w4r5 ALL: AO far too weak). Rendered one-bakery AO/no-AO ratio (sRGB luma): p5 0.75 -> 0.61, p25 0.86 -> 0.78, roof deck at the parapet 0.83 -> 0.74; shaded creases get only indirect light, which post's shade-floor lift + tone shoulder squashed (a baked 0.5 showed as ~0.83).
+  ao: 3.8,             // coherence w4 AO SETTLEMENT (FROZEN): 3.2 -> 3.8 with aoDirect 3.6 -> 4.4, aoTop [2.4,3.6] -> [3.0,4.8], aoFloor [0.30,0.12,..] -> [0.20,0.06,..], aoWallCap 0.62 -> 0.70, voxel aoPlateauKeep [0.65,0.4] -> [0.58,0.35] (tally 5 weak : 1 smudgy; see pieces/coherence.md 2026-09-27).               // w4r14: 2.6 -> 3.2 with aoDirect 2.8 -> 3.6, aoFloor.x 0.42 -> 0.30, aoWallCap 0.57 -> 0.62: voxel aoTopHat now lifts the flat plateaus (critics w4r11-w4r13: 'faces stay flat and evenly lit'), so the creases and under-ledge ramps can go deeper without greying whole walls (rounds/surface/w4r14 A6 X4).   w4r11: 2.3 -> 2.6 with aoDirect 2.5 -> 2.8, aoTop [3.3,3.5] and the new aoFloor (critics w4r8 + w4r10: AO too faint/tight; the floor keeps every crease a coloured mid-tone, the lot strip beside the wall foot no longer renders near-black).  w4r9 FROZEN: 2.6 -> 2.3 with aoDirect 2.8 -> 2.5 (coordinator 02:30: midpoint of r7/r8; the bake reaches wider now, voxel aoDist 2.25 / aoBroad 0.4). one-bakery vs no-AO: bldg p5 0.56 -> 0.51, share<0.9 0.31 -> 0.39, open median 1.00.  w4r8: 2.0 -> 2.6 with aoDirect 2.2 -> 2.8 and aoToe [0.03,0.2]: the contained bake (voxel aoDist 1.5, aoBroad 0) leaves open faces at 1.0, so the creases can go deeper without greying whole walls. one-bakery rendered/no-AO right wall p5 0.61 -> 0.53, building median 1.00, iso-mid towers not brown.  w4r7: 1.8 -> 2.0 (walls; tops take aoTop). indirect AO strength; > 1 = EXPONENT pow(ao, x) on the indirect light. w4r6: 1.0 -> 1.8 (critics w4r1-w4r5 ALL: AO far too weak). Rendered one-bakery AO/no-AO ratio (sRGB luma): p5 0.75 -> 0.61, p25 0.86 -> 0.78, roof deck at the parapet 0.83 -> 0.74; shaded creases get only indirect light, which post's shade-floor lift + tone shoulder squashed (a baked 0.5 showed as ~0.83).
   // r12: 1.0 -> 1.5. Values > 1 are an EXPONENT, pow(ao, aoDirect), on the
   // key's direct light (see FRAG_AO): sunlit faces sit on the display
   // shoulder and a linear AO dip barely showed there (critic r11: "almost no
@@ -1918,11 +1934,11 @@ const DEFAULT_PARAMS = {
   // wave-4 r1: soft cap on wall AO darkness [max darkness, knee] (0 = off).
   // 0.34 / 0.12 -> a crease that baked to 0.55 renders ~0.68 (x aoDirect
   // 1.25 on the direct term ~0.62): the coordinator's ~0.65 midpoint.
-  aoTop: [2.4, 3.6],   // w4r13: [3.0,3.2] -> [2.4,3.6] (indirect softer, direct stronger): in cast shadow only the indirect term shows, so a high indirect exponent turned every pool that crossed a shadow edge into a hard-edged dark patch (A5 G1: forecourt p2 0.17); the lit contact pools carry the depth instead.   w4r12: [3.3,3.5] -> [3.0,3.2] (critics w4r9 + w4r11: 'smudgy dark blotches on the forecourt paving / roof deck'; the far-field pools on big tops).  w4r11: [3.0,3.2] -> [3.3,3.5] (see ao).  w4r7: [indirect, direct] AO exponents on up-facing faces (roof decks, lot paving, ledges), see FRAG uAOTop. Rendered deck-at-parapet / paving-at-wall-foot ratio vs no-AO: ~0.7 -> ~0.45. 0 = same as ao / aoDirect.
-  aoFloor: [0.30, 0.12, 0.2, 0.3],     // w4r14: wall 0.42 -> 0.30 (see ao).   w4r13: [wall, top, wall knee, TOP knee]; top 0.25 -> 0.12 with its own 0.3 knee (critic w4r12: 'flat evenly lit roof deck, no falloff toward the parapet'; the 0.25 floor + 0.2 knee pinned the parapet pool at a flat 0.78 plateau; now 0.71 at the contact ramping to 1.0).   w4r12: [0.3,0.15,0.15] -> [0.42,0.25,0.2] (critic w4r10/w4r11: corners went near-black maroon while open recesses stayed faint = 'uneven'; the deeper floor evens the band).  w4r11: [wall, top, knee] soft floor on the FINAL AO light multipliers (see FRAG); 0 = off.
+  aoTop: [3.0, 4.8],   // coherence w4 (see ao).   // w4r13: [3.0,3.2] -> [2.4,3.6] (indirect softer, direct stronger): in cast shadow only the indirect term shows, so a high indirect exponent turned every pool that crossed a shadow edge into a hard-edged dark patch (A5 G1: forecourt p2 0.17); the lit contact pools carry the depth instead.   w4r12: [3.3,3.5] -> [3.0,3.2] (critics w4r9 + w4r11: 'smudgy dark blotches on the forecourt paving / roof deck'; the far-field pools on big tops).  w4r11: [3.0,3.2] -> [3.3,3.5] (see ao).  w4r7: [indirect, direct] AO exponents on up-facing faces (roof decks, lot paving, ledges), see FRAG uAOTop. Rendered deck-at-parapet / paving-at-wall-foot ratio vs no-AO: ~0.7 -> ~0.45. 0 = same as ao / aoDirect.
+  aoFloor: [0.20, 0.06, 0.2, 0.3],     // coherence w4 (see ao).     // w4r14: wall 0.42 -> 0.30 (see ao).   w4r13: [wall, top, wall knee, TOP knee]; top 0.25 -> 0.12 with its own 0.3 knee (critic w4r12: 'flat evenly lit roof deck, no falloff toward the parapet'; the 0.25 floor + 0.2 knee pinned the parapet pool at a flat 0.78 plateau; now 0.71 at the contact ramping to 1.0).   w4r12: [0.3,0.15,0.15] -> [0.42,0.25,0.2] (critic w4r10/w4r11: corners went near-black maroon while open recesses stayed faint = 'uneven'; the deeper floor evens the band).  w4r11: [wall, top, knee] soft floor on the FINAL AO light multipliers (see FRAG); 0 = off.
   aoToe: [0.06, 0.2], // w4r12: [0.01,0.08] -> [0.06,0.2] (open decks / paving / walls back to clean flat colour; forecourt was greyed by faint far tails).  w4r11: [0.03,0.2] -> [0.01,0.08]: the continuous atlas (voxel w4r10) removed the level terraces the toe was hiding, so the wide soft tails can show.  w4r8: [from, to] contact toe on baked darkness (see FRAG_COLOR); [0,0] = off. Zeroes the faint far tails (baked > ~0.95) that the exponents turned into roof-deck mottling.
-  aoWallCap: [0.62, 0.14],   // w4r14: 0.57 -> 0.62 (see ao).   w4r7: 0.55 -> 0.57.  wave-4 r4: 0.50 -> 0.55 with the ray-only voxel AO (open panels stay 1.0, so the crease can go a little deeper).    // wave-4 r2: [0.34,0.12] -> [0.50,0.14] (critic w4r1: no soft AO under cornice/sills; the 0.66 cap rendered the crease at only 0.82 of no-AO in sRGB, the post floor lifts it further)
-  aoDirect: 3.6,       // w4r14 (see ao).   w4r11 (see ao).  w4r9 FROZEN (see ao).  w4r8: 2.2 -> 2.8 (see ao).  w4r7: 2.0 -> 2.2 (walls; tops take aoTop; 3.0 everywhere turned dense downtown towers brown).  wave-4 r5: 1.4 -> 2.0 with voxel aoBroad back on (critics w4r1-r4: AO too weak on the LIT faces; baked 0.7 showed as ~0.9 on screen).  wave-4 r3: 1.25 -> 1.4 (the ledge pools survive the lit face's display shoulder; walls keep the 0.48 baked floor, so no crush). r13: 1.5 -> 1.25 (critic r12: shopfront AO near-black; the voxel AO itself is gentler and floored now).
+  aoWallCap: [0.70, 0.14],   // coherence w4 (see ao).   // w4r14: 0.57 -> 0.62 (see ao).   w4r7: 0.55 -> 0.57.  wave-4 r4: 0.50 -> 0.55 with the ray-only voxel AO (open panels stay 1.0, so the crease can go a little deeper).    // wave-4 r2: [0.34,0.12] -> [0.50,0.14] (critic w4r1: no soft AO under cornice/sills; the 0.66 cap rendered the crease at only 0.82 of no-AO in sRGB, the post floor lifts it further)
+  aoDirect: 4.4,       // coherence w4 (see ao).       // w4r14 (see ao).   w4r11 (see ao).  w4r9 FROZEN (see ao).  w4r8: 2.2 -> 2.8 (see ao).  w4r7: 2.0 -> 2.2 (walls; tops take aoTop; 3.0 everywhere turned dense downtown towers brown).  wave-4 r5: 1.4 -> 2.0 with voxel aoBroad back on (critics w4r1-r4: AO too weak on the LIT faces; baked 0.7 showed as ~0.9 on screen).  wave-4 r3: 1.25 -> 1.4 (the ledge pools survive the lit face's display shoulder; walls keep the 0.48 baked floor, so no crush). r13: 1.5 -> 1.25 (critic r12: shopfront AO near-black; the voxel AO itself is gentler and floored now).
                        // how much AO also bites direct light (r8 0.8 -> 1.0: critic r7 'AO reads flat'). Raised from 0.38
                        // in surface r2 when the voxel AO became the ONLY AO on
                        // voxel pixels (ssaoKeep 0): ref04's soft corner bands
@@ -2101,6 +2117,8 @@ const DEFAULT_PARAMS = {
   // total indirect diffuse is multiplied by mix(1, tint / luma(tint), amount),
   // so the dark side shifts warm at the same value (ref04 shade/lit per
   // channel R 0.81 G 0.71 B 0.68; ours was cool, R 0.66 B 0.70). 0 = off.
+  // coherence w4: [gain, albedo-sat lo, hi] on the key-away indirect of saturated warm albedos (see FRAG uShadeGain); 1 = off.
+  shadeGain: [0.6, 0.15, 0.4],   // coherence w4 (surface w4r14 'bakery walls same tan both sides'; ref04 warm wall lit/shade luma 0.735, V 0.93, S +0.2): bakery tan lit/shade luma 0.81 -> ~0.73, V ratio 0.92 -> ~0.81, S 0.38 -> 0.57. White probe unchanged (sat-gated).
   shadeWarm: [0.7, 0xffd6a8],   // w4r4: probe (with post floor.peakKey 0.5) cream shade (158,148,113) -> (171,140,93): per-channel shade/lit R .74 G .67 B .59, ref04 .81/.71/.68
   // night w4r2: shade-side fill at night (sRGB hex, strength scale on bounce) — see FRAG
   nightShade: [0x7090e0, 1.15],    // w4r7: 0x4a8cff/1.3 -> 0x7090e0/1.15 (critics w4r5/r6: right faces darker but still their own colour, not one blue-grey). w4r5: 2.8 -> 1.3 (right faces a clear dark third tone; the stronger moon key carries the lift). w4r4: 1.25 -> 2.8 (right faces coloured deep blue, not near-black). w4r3: 0x5a78ff (violet-blue) -> blue-teal
@@ -2119,7 +2137,7 @@ const DEFAULT_PARAMS = {
   // 1 : 0.70 : 0.45). x2.8 key on walls, x0.8 away fill -> 1 : 0.70 : 0.36;
   // comRoof 1 : 0.44 : 0.32 -> 1 : 0.56 : 0.21.
   nightFace: [2.8, 0.65],   // w4r8: away fill 0.8 -> 0.65 (critic w4r7: right faces a clearly darker, still coloured third tone)
-  nightTop: [0.6, 1.6, 2.2],   // w4r5: 0.7 -> 2.2 (critic w4r4: moonlit tops must be clearly the brightest). w4r4: key boost 0.35 -> 0.7 (moonlit roofs a clear step above walls)
+  nightTop: [0.6, 1.6, 2.5],   // coherence w4: 2.2 -> 2.5 (night w4r9 critic: masses and ground share one blue-violet value; moonlit roof tops a touch brighter so blocks separate from the streets).   // w4r5: 0.7 -> 2.2 (critic w4r4: moonlit tops must be clearly the brightest). w4r4: key boost 0.35 -> 0.7 (moonlit roofs a clear step above walls)
   // night w4r2: sky env at full night = base * envNight (was base * 1.22: the
   // violet IBL lifted every face ~8/255 and flattened the masses)
   envNight: 0.5,
@@ -2534,6 +2552,7 @@ export class MaterialLib {
       uNightFace: { value: new THREE.Vector2().fromArray(p.nightFace || [1, 1]) },
       uShadeSide: { value: new THREE.Vector4(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], p.shadeSide[3] || 0) },
       uShadeWarm: { value: _shadeWarmVec(p.shadeWarm, new THREE.Vector4()) },
+      uShadeGain: { value: new THREE.Vector3().fromArray(p.shadeGain || [1, 0.15, 0.4]) },
       uWallKey: { value: p.wallKey },
       uGlassDiffuse: { value: new THREE.Vector2(p.glassDiffuse[0], p.glassDiffuse[1]) },
       uGlassReflTint: { value: p.glassReflTint },
@@ -2895,6 +2914,7 @@ export class MaterialLib {
     if (p.nightFace) U.uNightFace.value.fromArray(p.nightFace);
     U.uShadeSide.value.set(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], p.shadeSide[3] || 0);
     if (U.uShadeWarm) _shadeWarmVec(p.shadeWarm, U.uShadeWarm.value);
+    if (U.uShadeGain && p.shadeGain) U.uShadeGain.value.fromArray(p.shadeGain);
     U.uWallKey.value = p.wallKey;
     U.uGlassDiffuse.value.set(p.glassDiffuse[0], p.glassDiffuse[1]);
     U.uGlassReflTint.value = p.glassReflTint;

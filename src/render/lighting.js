@@ -915,6 +915,13 @@ vec3 csmWallFill( const in vec3 viewNormal ) {
 	float f = dot( wn.xz / nh, uCsmKeyDirW.xz / kh );    // +1 faces the key, -1 turned away
 	float wall = ( 1.0 - smoothstep( 0.35, 0.85, abs( wn.y ) ) ) * uCsmWallFill.z;
 	float away = smoothstep( 0.0, 0.55, - f ) * wall;
+	// coherence w4 (res w4r13, surface w4r3: 'near-black plinth side band'):
+	// the lot plinth / terrain footing sides (world y < LOT_TOP 0.92) are
+	// kerb-height, lit by the bright street and paving round them, not a
+	// storey of dim far sky; the away cut stacked on their own low fill and
+	// took them to 9-40/255. Exempt them, so the band reads a coloured
+	// mid-grey like ref05's plinth sides.
+	away *= smoothstep( 0.9, 1.0, vCsmWorldPos.y + uCsmOrigin.y );
 	float toward = smoothstep( 0.0, 0.55, f ) * wall;
 	vec3 awayMul = mix( vec3( 1.0 ), uCsmWallTint * ( 1.0 - uCsmWallFill.x ), away );
 	return cool * awayMul * ( 1.0 + uCsmWallFill.y * toward );

@@ -350,7 +350,7 @@ const DEFAULTS = {
   // plateau under it to aoPlateauKeep of its value. [wall r, top r] in world
   // units (0 = off), keep = share of the plateau that survives.
   aoTopHat: [1.0, 1.5],   // w4r14 A/B (rounds/surface/w4r14 A3-A6): 0.5 kept only 1-2 voxel creases ('faint and tight' again); 1.0 keeps ledge ramps up to ~1 unit
-  aoPlateauKeep: [0.65, 0.4],   // [wall, top] (a number = both). w4r14 (A7): walls 0.7 clean, 0.55 faint spot, 0.4 lit the centre of small recessed red panels into a round 'glow' spot; 0.2 worse; tops 0.4 cleans the forecourt/deck haze
+  aoPlateauKeep: [0.58, 0.35],   // coherence w4 AO SETTLEMENT (FROZEN; see materials ao): [0.65,0.4] -> [0.58,0.35].   // [wall, top] (a number = both). w4r14 (A7): walls 0.7 clean, 0.55 faint spot, 0.4 lit the centre of small recessed red panels into a round 'glow' spot; 0.2 worse; tops 0.4 cleans the forecourt/deck haze
   aoSpread: 0.4,       // r12: 1.0 -> 0.4 (the sky shadow carries the wide bands now; see above)
   aoSpreadGain: 0.9,
   aoSpreadPow: 0,

@@ -627,6 +627,8 @@ const CSS = `
   pointer-events: none; max-width: 82vw; z-index: 3;
 }
 .bv-banner.bv-show { display: flex; animation: bv-banner-pop .3s var(--bv-spring) both; }
+/* coherence w4: the tool banner sits above the HUD (z 3) and floated over dialog titles (sticker book, help); hide it while any dialog overlay is open. */
+#bv-ui:has(> .bv-overlay) .bv-banner { display: none !important; }
 .bv-banner .bv-bn-em { font-size: 30px; line-height: 1; }
 .bv-banner .bv-bn-nm { font-size: 18px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes bv-banner-pop { from { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(.8); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }

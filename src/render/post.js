@@ -251,6 +251,7 @@ function defaultParams() {
         dipStart: 0.35,   // u = (y - dipStart)/(1 - dipStart); peak at y ~0.78
         sat: 0.7,         // r12: 1.1 -> 0.7. chroma returned to darkened pixels (no grey sides)
         green: 0.85,      // fraction of the curve lawn/foliage hues are spared
+        mid: { amount: 0.20, lo: 0.08, hi: 0.72 },   // coherence w4: chroma-keyed mid GAIN (see uMidLift). iso-mid p5/25/50/75 0.07/0.24/0.45/0.64 -> 0.07/0.26/0.50/0.68 alone; with the settled AO + warm shade gain the frame is 0.07/0.23/0.48/0.67 (ref05 0.09/0.27/0.55/0.75). White-cube faceratio unchanged 1:0.90:0.63 (neutrals exempt). 0 = off
       },
       deepDark: 0.2,      // r6: neutral darks (asphalt) down/de-tinted, see composite
                           // (r7: low ramp 0.05..0.12 -> 0..0.04 — a uniform ratio, no flat band)
@@ -1132,6 +1133,7 @@ uniform vec3  uCurve;      // display luma curve: (gamma, toe start, toe end)
 uniform float uCurveSat;   // chroma returned to pixels the curve darkened
 uniform float uCurveGreen; // fraction of the curve yellow-green (lawn) is spared
 uniform vec2  uCurveDip;   // (depth, start) of the upper-mid dip
+uniform vec3  uMidLift;    // coherence w4: (amount, lo, hi) display-luma mid hump, day only
 uniform vec2  uCoolSat;    // (saturation cut on cyan..blue hues, hue-band centre deg)
 uniform float uDeepDark;   // round 6: neutral dark (asphalt) value deepen + de-tint
 uniform vec2  uAsphalt;    // round 7: (amount, target display luma) neutral-dark flatten
@@ -1506,6 +1508,28 @@ void main() {
       if (minDev < -1e-6) s = min(s, max(1.0, (0.3 * y2 - 0.7 * minDev) / (-minDev)));
       d = max(vec3(0.0), vec3(y2) + dev * s);
     }
+  }
+
+  // coherence w4 MID LIFT (coordinator 03:20: iso-mid luma p25/p50 0.24/0.45
+  // vs ref05 0.27/0.55). A chroma-keyed GAIN, y * (1 + A w(y)), with w a
+  // plateau from lo0..lo1 up to hi0..hi1 (display luma after the curve):
+  //  - a gain, not a hump, so a coloured wall's lit and shaded faces (which
+  //    straddle the frame's p50 band) rise together and keep their ratio
+  //    (a hump lifted the bakery's tan shade face to 0.99 of its lit face);
+  //  - chroma-keyed, because a white cube's shade face sits at the same luma
+  //    as the frame's p50 (A/B coherence-w4 mid/mid2: every uncoloured lift
+  //    that moved p50 +0.1 took the probe's right face 0.63 -> 0.67-0.69), so
+  //    neutrals keep the ref04 white-cube ratio 1 : 0.89 : 0.63;
+  //  - yellow-green lawn/foliage spared (grass already reads bright), faded
+  //    out at night and on water (won pieces), zero below lo0 (asphalt).
+  // Monotone for A * y * |w'| < 1 (A <= 0.2 with the default ramps).
+  if (uMidLift.x > 0.0) {
+    float y = max(luma(d), 1e-4);
+    float w = smoothstep(uMidLift.y, uMidLift.y + 0.12, y) * (1.0 - smoothstep(uMidLift.z, min(uMidLift.z + 0.28, 1.0), y));
+    float mxc = max(max(d.r, d.g), d.b);
+    float satc = (mxc - min(min(d.r, d.g), d.b)) / max(mxc, 1e-4);
+    float a = uMidLift.x * (1.0 - uNightK) * (1.0 - waterK) * smoothstep(0.06, 0.2, satc) * (1.0 - (chrOk(d) ? greenKey(d) : 0.0));
+    d *= 1.0 + a * w;
   }
 
   // cool-hue restraint: cyan/blue glazing covers a third of a downtown frame
@@ -2401,7 +2425,7 @@ export class PostFX {
       uContrast: U(1.1), uLift: U(0), uGamma: U(1), uGain: U(1), uVignette: U(0.34),
       uPunch: U(0.45), uWarm: U(0.075), uWB: U(new THREE.Vector3(1, 1, 1)), uTonemap: U(0), uKnee: U(0.9),
       uShadowLift: U(0), uShadowSat: U(0), uVibrance: U(0), uGreenLift: U(0),
-      uShoulder: U(0.76), uBlackSlope: U(0), uBlackOffset: U(0.04), uCurve: U(new THREE.Vector3(1, 0.05, 0.3)), uCurveSat: U(0), uCurveGreen: U(0), uCurveDip: U(new THREE.Vector2(0, 0.3)), uCoolSat: U(new THREE.Vector2(0, 195)), uDeepDark: U(0), uAsphalt: U(new THREE.Vector2(0, 0.086)), uNightK: U(0), uFloor: U(new THREE.Vector4(0, 0.35, 2, 6.75)), uAtmo: U(new THREE.Vector3(0.1, 200, 900)),
+      uShoulder: U(0.76), uBlackSlope: U(0), uBlackOffset: U(0.04), uCurve: U(new THREE.Vector3(1, 0.05, 0.3)), uCurveSat: U(0), uCurveGreen: U(0), uCurveDip: U(new THREE.Vector2(0, 0.3)), uMidLift: U(new THREE.Vector3(0, 0.2, 0.7)), uCoolSat: U(new THREE.Vector2(0, 195)), uDeepDark: U(0), uAsphalt: U(new THREE.Vector2(0, 0.086)), uNightK: U(0), uFloor: U(new THREE.Vector4(0, 0.35, 2, 6.75)), uAtmo: U(new THREE.Vector3(0.1, 200, 900)),
       uAspect2: U(1.6), uDebug: U(0),
       uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0), uFloorPk: U(0),
       uOrthoBox: U(new THREE.Vector4(-1, 1, -1, 1)), uWorldRowY: U(new THREE.Vector4(0, 1, 0, 0)),
@@ -2918,6 +2942,8 @@ export class PostFX {
       u.uCurveSat.value = Cv.sat || 0;
       u.uCurveGreen.value = Cv.green || 0;
       u.uCurveDip.value.set(clamp(Cv.dip || 0, 0, 0.18), clamp(Cv.dipStart != null ? Cv.dipStart : 0.3, 0, 0.9));
+      const Ml = Cv.mid || {};
+      u.uMidLift.value.set(clamp(Ml.amount || 0, 0, 0.19), Ml.lo != null ? Ml.lo : 0.2, Ml.hi != null ? Ml.hi : 0.7);
       u.uCoolSat.value.set(G.coolSat || 0, G.coolHue != null ? G.coolHue : 195);
       u.uDeepDark.value = clamp(G.deepDark || 0, 0, 0.5);
       const As = G.asphalt || {};
