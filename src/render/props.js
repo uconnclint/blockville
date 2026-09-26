@@ -1170,6 +1170,18 @@ export class Props {
         plant[i] = t === T_SAND ? 2 : 1;
       }
     }
+    // (coordinator 2026-09-27, res w4r2/w4r10) Keep natural scatter one tile
+    // off building lots: rocks and trees right behind a building clipped its
+    // roof silhouette. The deliberate street-tree pass is separate.
+    if (occ) {
+      for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+        if (!occ[z * N + x]) continue;
+        for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+          const X = x + dx, Z = z + dz;
+          if (X >= 0 && Z >= 0 && X < N && Z < N) plant[Z * N + X] = 0;
+        }
+      }
+    }
     for (let z = 0; z < N; z++) {
       for (let x = 0; x < N; x++) {
         const i = z * N + x;

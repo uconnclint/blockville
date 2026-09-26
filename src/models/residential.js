@@ -145,7 +145,46 @@ function grooveLot(W) {
 // and right facades). A/B on one-small-house (rounds/res/w4r9-x6 vs x10):
 // aoSpread 0 gives smooth single-colour walls; the crease level, cornice and
 // quoin-neck AO and ground contact are unchanged (the ray AO still runs).
-const RES_VOX = Object.freeze({ aoSpread: 0 });
+// (w4r10) The w4r9 critic: 'smudgy, blotchy AO/shadow smears at the front door
+// step and along the lot rim ... the right face is muddy ... ref04 has tight,
+// clean AO lines only in inside corners and under trim and sills'. The two
+// wide terms (aoBroad's massing cone, aoSkyShadow's downward dilation) laid
+// grey pools on the door step, the plinth front and the whole shade face, and
+// the 2.25-unit rays (22 voxels here) greyed the quoin necks olive. A/B
+// (rounds/res/w4r10-x*): broad 0 + sky 0 + rays 1.2 units keeps the crease,
+// cornice, sill and ground-contact lines and drops the smears; decks and
+// paving read as one clean colour. Shops (res 4) keep the global recipe.
+// (w4r11) Lighting's screen-space worldAO is now off globally, so the w4r10
+// recipe left the house with almost no soft AO (critic w4r10: 'walls read as
+// flat single-tone slabs ... looks pasted onto its lot'). Midpoint A/B
+// (rounds/res/w4r11-xa..xf): the wide terms come back, but the broad cone is
+// kept OFF decks and paving (aoBroadTop 0.3, the w4r7/w4r8 'smudged deck') and
+// aoSpread stays 0 (the w4r8 glow patches). Result: soft pools under the
+// cornice, down the inside of the quoin stacks, round the frames and a dark
+// band at the ground line, with a gentle top-to-bottom gradient on the walls.
+// (w4r13) The w4r12 critic: 'blotchy, smeared darker-orange gradients' on the
+// walls, worst on the shade face round the upper windows, under the parapet
+// and at the foot of the rooftop room; ref04 keeps every face one clean tone
+// with only a thin soft AO band in inside corners and under ledges. A/B
+// (rounds/res/w4r13-x*, sheets w4r13-ab1..5): ao:false gives clean faces, so
+// it is all mesher AO. The 1.8-unit rays (18 voxels here) haloed every
+// 2-proud frame and the 4.5-unit broad cone + sky dilation laid storey-sized
+// gradients that the vertex ramps smear diagonally. Tight rays (0.7 units =
+// ref04's ~6-voxel pools at matched scale), a SHORT broad cone (1.2 units,
+// full ground weight: the dark band at the ground line and the cornice pool
+// stay) and a light sky term give one confident tone per face.
+// (w4r14) Critic w4r13: 'flat single tones, no contact darkening, pasted
+// on'. aoDist 0.7 < 1 had silently switched OFF voxel.js's building-scale
+// terms (broad cone, sky, floors, lot ground drop all gate on aoDist >= 1),
+// leaving only 7-voxel rays. Now aoDist 1.0 turns them back on, with
+// aoRayFall 2 keeping the fine pools hugging the crease; the broad cone
+// (0.6, 4.5-unit reach, full ground weight) lays ref04's soft gradient up
+// from the ground line, down the quoin feet and where the roof room meets
+// the deck. aoSkyShadow stays 0: A/B (rounds/res/w4r14-x*) showed the sky
+// term alone is the w4r12 'smear' (a 121 -> 94 luma pool under every window
+// head with light diamonds between them); with it off the open wall stays
+// one tone (121 flat) and darkens only in the bottom ~quarter (to 93).
+const RES_VOX = Object.freeze({ aoSpread: 0, aoDist: 1.0, aoRayFall: 2, aoBroad: 0.6, aoBroadDist: 4.5, aoBroadTop: 0.3, aoBroadGround: 1.0, aoSkyShadow: 0 });
 function rawGrid(sx, sy, sz, res) {
   const cell = new Uint8Array(sx * sy * sz);           // palette index + 1 (0 = empty)
   const I = (x, y, z) => (y * sz + z) * sx + x;
@@ -193,7 +232,7 @@ function rawGrid(sx, sy, sz, res) {
       }
       const m = { sx, sy, sz, blocks };
       if (res !== 1) m.res = res;
-      if (res >= 8) m.voxOpts = globalThis.__resVox || RES_VOX;   // TEMP A/B hook (w4r10)
+      if (res >= 8) m.voxOpts = RES_VOX;
       return m;
     },
   };
@@ -273,7 +312,11 @@ function gableRoof(g, axis, a0, a1, b0, b1, wallTop, s) {
   const B = axisBox(g, axis);
   // (r10) default 45° single-voxel courses: the r9 critic read the old
   // rise-2 steps as 'ribbed and striped' slopes instead of broad planes
-  const ov = s.ov != null ? s.ov : 3, ova = s.ova != null ? s.ova : 2, rise = s.rise || 1, run = s.run || 1;
+  // (w4r13) default 2×2 courses at the same 45°: w4r11 + w4r12 critics both
+  // read the 1-voxel courses as 'very stripey ... roof tile stripes noisy'
+  // next to ref01's clean roof planes. Half as many step lines, each course
+  // one solid tone (the lip defaults to the tile, not the shadow tone).
+  const ov = s.ov != null ? s.ov : 3, ova = s.ova != null ? s.ova : 2, rise = s.rise || 2, run = s.run || 2;
   const aa = a0 - ova, ab = a1 + ova, ba = b0 - ov, bb = b1 + ov;
   const y0 = wallTop + 1 - Math.ceil(ov / run) * rise;
   const [tc, td] = s.roof;
@@ -284,7 +327,7 @@ function gableRoof(g, axis, a0, a1, b0, b1, wallTop, s) {
     const bf1 = Math.min(bf + run - 1, br), br0 = Math.max(br - run + 1, bf);
     if (bf1 + 1 <= br0 - 1 && fill != null) B(a0, yk, bf1 + 1, a1, y1, br0 - 1, fill);
     const c = s.band && k % s.band === s.band - 1 ? td : tc;
-    const lp = rise === 1 ? c : s.lip != null ? s.lip : td;
+    const lp = rise === 1 ? c : s.lip != null ? s.lip : c;
     B(aa, yk, bf, ab, yk, bf1, lp); B(aa, yk, br0, ab, yk, br, lp);
     if (rise > 1) { B(aa, yk + 1, bf, ab, y1, bf1, c); B(aa, yk + 1, br0, ab, y1, br, c); }
     if (edge != null) {
@@ -307,7 +350,7 @@ function gableRoof(g, axis, a0, a1, b0, b1, wallTop, s) {
 // Stepped hip roof over x0..x1 × z0..z1 (all four sides slope), tile course
 // over a shadow lip per layer, fascia ring and a ridge cap.
 function hipRoof(g, x0, x1, z0, z1, wallTop, s) {
-  const ov = s.ov != null ? s.ov : 3, rise = s.rise || 1, run = s.run || 1;
+  const ov = s.ov != null ? s.ov : 3, rise = s.rise || 2, run = s.run || 2;   // (w4r13) 2×2 courses, see gableRoof
   const xa = x0 - ov, xb = x1 + ov, za = z0 - ov, zb = z1 + ov;
   const y0 = wallTop + 1 - Math.ceil(ov / run) * rise;
   const [tc, td] = s.roof;
@@ -316,7 +359,7 @@ function hipRoof(g, x0, x1, z0, z1, wallTop, s) {
     const y = y0 + k * rise, i = k * run;
     // rise 1: one-voxel courses, a shadow-tone course every third (fine bands)
     // (r10) clean planes: no shadow course every third row unless s.band
-    g.box(xa + i, y, za + i, xb - i, y, zb - i, rise > 1 ? (s.lip != null ? s.lip : td) : s.band && k % s.band === s.band - 1 ? td : tc);
+    g.box(xa + i, y, za + i, xb - i, y, zb - i, rise > 1 ? (s.lip != null ? s.lip : tc) : s.band && k % s.band === s.band - 1 ? td : tc);
     if (rise > 1) g.box(xa + i, y + 1, za + i, xb - i, y + rise - 1, zb - i, s.band && k % s.band === s.band - 1 ? td : tc);
     k++;
   }
@@ -1401,8 +1444,8 @@ function bigWin(F, u0, y0, w, h, S, o = {}) {
 // ref04 double door: a thick raised surround, an inner step, two cream
 // leaves with bar handles, and a red mat laid into the ground in front.
 function bigDoor(F, u0, y0, w, h, S, o = {}) {
-  const u1 = u0 + w - 1, y1 = y0 + h - 1, fr = S.frame;
-  F.box(u0 - 3, y0, 1, u1 + 3, y1 + 3, 1, fr);
+  const u1 = u0 + w - 1, y1 = y0 + h - 1, fr = S.frame, sw = o.sw || 3;   // (w4r12) o.sw: surround width
+  F.box(u0 - sw, y0, 1, u1 + sw, y1 + sw, 1, fr);
   F.clear(u0 - 1, y0, 1, u1 + 1, y1 + 1, 1);
   F.box(u0 - 1, y0, 0, u1 + 1, y1 + 1, 0, fr);
   F.clear(u0, y0, 0, u1, y1, 0);
@@ -1417,10 +1460,18 @@ function bigDoor(F, u0, y0, w, h, S, o = {}) {
 }
 // ref04 wall lamp: a bracket arm off the wall and a 3×3 amber lantern with
 // a glowing underside.
-function bigLamp(F, u, y, S) {
-  F.box(u, y + 3, 1, u, y + 3, 3, S.frame);
-  F.box(u, y + 3, 1, u, y + 5, 1, S.frame);
-  F.box(u - 1, y, 2, u + 1, y + 2, 4, C.amber);
+// (w4r10) ref04's door lanterns are chunky amber boxes under a dark cap; the
+// 3-cube lamp vanished at game zoom. Now 3 wide x 5 tall x 3 deep, capped.
+// (w4r12) w4r11 critic asked for 'two small wall lamps' — ours sat hard
+// against the door surround in the same orange and read as surround. Now a
+// dark bracket and cap (door tone) with a clear gold lantern, and callers keep
+// a wall gap between lamp and surround.
+function bigLamp(F, u, y, S, o = {}) {
+  const arm = o.arm != null ? o.arm : C.darkGray;
+  F.box(u, y + 6, 1, u, y + 8, 1, arm);
+  F.box(u, y + 6, 1, u, y + 6, 3, arm);
+  F.box(u - 1, y + 5, 2, u + 1, y + 5, 4, arm);
+  F.box(u - 1, y, 2, u + 1, y + 4, 4, o.glass != null ? o.glass : C.gold);
   F.box(u - 1, y, 2, u + 1, y, 4, C.lamp);
 }
 // Potted topiary (ref04: a red box pot and a tall clipped lime column).
@@ -1513,13 +1564,18 @@ const whash = (a) => ((a | 0) * 2654435761) >>> 0;
 function refQuoins(g, x0, z0, x1, z1, y0, y1, c, o = {}) {
   const ca = o.ca || 4, cp = o.cp || 1, ba = o.ba || 7, bp = o.bp || 2, bh = o.bh || 4, per = o.per || 7;
   for (const [cx, cz, dx, dz] of [[x0, z0, 1, 1], [x1, z0, -1, 1], [x0, z1, 1, -1], [x1, z1, -1, -1]]) {
-    const col = (a, p, ya, yb) => {
+    const col = (a, p, ya, yb, a2 = a) => {
       g.box(cx - dx * p, ya, cz - dz * p, cx + dx * (a - 1), yb, cz - dz, c);
-      g.box(cx - dx * p, ya, cz - dz * p, cx - dx, yb, cz + dz * (a - 1), c);
+      g.box(cx - dx * p, ya, cz - dz * p, cx - dx, yb, cz + dz * (a2 - 1), c);
     };
     col(ca, cp, y0, y1);
     // blocks hang from the top so the last one caps the column under the cornice
-    for (let yt = y1; yt - bh + 1 >= y0; yt -= per) col(ba, bp, yt - bh + 1, yt);
+    // (w4r12) o.alt = [long, short]: arms alternate course by course and swap
+    // between the corner's two faces (classic long/short quoins)
+    for (let yt = y1, n = 0; yt - bh + 1 >= y0; yt -= per, n++) {
+      if (o.alt) col(o.alt[n % 2], bp, yt - bh + 1, yt, o.alt[(n + 1) % 2]);
+      else col(ba, bp, yt - bh + 1, yt);
+    }
   }
 }
 // (w4r3) ref04's fat window: a 1-wide outer lip 1 proud, a 2-wide main frame
@@ -1587,12 +1643,20 @@ function refDeck(g, x0, z0, x1, z1, y, S, o = {}) {
 
 // (w4r9) ref04's wall AC unit: a light box standing proud of the wall, a
 // louvred left half (dark slats) and a square fan grille on the right.
+// (w4r12) w4r11 critic: 'the rooftop AC unit is an unreadable grey blob'
+// (it abutted the door surround with a topiary in front of it). Now a clean
+// 12 x 8 white box, 3 deep, with a clear gap all round: three dark louvre
+// slats on its left half, and a dark square fan grille with a light hub on
+// the right, recessed 1 into the face so the grille reads by its own shadow.
 function refAC(F, u0, y0) {
-  F.box(u0, y0, 1, u0 + 10, y0 + 6, 3, C.white);
-  for (let y = y0 + 2; y <= y0 + 4; y += 2) F.box(u0 + 1, y, 4, u0 + 4, y, 4, C.metal);
-  F.box(u0 + 6, y0 + 1, 4, u0 + 9, y0 + 5, 4, C.metalDark);
-  F.box(u0 + 7, y0 + 2, 5, u0 + 8, y0 + 4, 5, C.darkGray);
-  F.box(u0 + 1, y0 - 1, 1, u0 + 1, y0 - 1, 2, C.metalDark); F.box(u0 + 9, y0 - 1, 1, u0 + 9, y0 - 1, 2, C.metalDark);
+  const u1 = u0 + 11, y1 = y0 + 7;
+  F.box(u0, y0, 1, u1, y1, 3, C.white);
+  for (let y = y0 + 2; y <= y0 + 6; y += 2) F.box(u0 + 1, y, 3, u0 + 4, y, 3, C.darkGray);
+  F.box(u0 + 6, y0 + 1, 3, u0 + 10, y0 + 6, 3, C.darkGray);
+  F.clear(u0 + 7, y0 + 2, 3, u0 + 9, y0 + 5, 3);
+  F.box(u0 + 7, y0 + 2, 2, u0 + 9, y0 + 5, 2, C.metalDark);
+  F.box(u0 + 8, y0 + 3, 3, u0 + 8, y0 + 4, 3, C.metal);
+  F.box(u0 + 1, y0 - 1, 1, u0 + 2, y0 - 1, 2, C.darkGray); F.box(u1 - 2, y0 - 1, 1, u1 - 1, y0 - 1, 2, C.darkGray);
 }
 // Small House — ref04 at street scale: one clean warm stucco storey that
 // fills its lot, chunky cream quoins, thick raised window and door frames,
@@ -1620,7 +1684,12 @@ const SMALL = [
   // shingle / hairAuburn went pink-red (#e25642 / #dd5040); indChocoLt renders
   // burnt orange #d25b30, one step darker than the wall like ref04's
   // #ae4b18 frame on its #cc834a wall.
-  scheme({ wall: C.peach, quoin: C.sand, frame: C.indChocoLt, trim: C.indChocoLt, door: C.resQuoin, deck: C.cream, roof: ROOF.tile, glass: C.win, pot: C.red, flowers: FLOWERS[1], kind: 'deck' }),
+  // (w4r10) wall peach -> civPlaza: on today's grade peach renders a pale
+  // pastel (lit 247,178,124 / shade 189,112,67); civPlaza renders lit
+  // 242,166,100 / shade 184,103,54, the hue and saturation of ref04's
+  // 201,131,70 / 165,88,45 on both faces (w4r9 critic: shade face 'needs
+  // more saturation'). resTile / skin3 went red, comConeDk went orange.
+  scheme({ wall: C.civPlaza, quoin: C.sand, frame: C.indChocoLt, trim: C.indChocoLt, door: C.resQuoin, deck: C.cream, roof: ROOF.tile, glass: C.win, pot: C.red, flowers: FLOWERS[1], kind: 'deck' }),
   scheme({ wall: C.pYellow, quoin: C.white, frame: C.resTerraTrim, trim: C.resTerraTrim, door: C.roofGreen, deck: C.white, roof: ROOF.red, glass: C.win, pot: C.resTerraTrim, flowers: FLOWERS[2], kind: 'hip' }),
   scheme({ wall: C.cream, quoin: C.resTerraTrim, frame: C.roofBlue, trim: C.roofBlue, door: C.white, deck: C.white, roof: ROOF.slate, glass: C.win, pot: C.roofBlue, flowers: FLOWERS[3], kind: 'gable' }),  // (w4r2) peach read grey, royal-blue roof was loud
 ];
@@ -1655,7 +1724,17 @@ function smallHouse(variant) {
   const x0 = 12, x1 = 67, z0 = 13, z1 = 60, top = G + 52;
   const B = (a, b, c, d, e, f, col) => W.box(a, b, c, d, e, f, col);
   const gw = W;                           // authored straight on the tile grid
-  ref04Block(gw, x0, z0, x1, z1, G, top, S, { refQ: {} });
+  // (w4r12) the ref04 homage: the w4r11 critic saw 'hard light and dark
+  // stripes' on every quoin block. A/B (rounds/res/w4r12-b..e): the stripe
+  // is the SUN's cast shadow of each 1-voxel block overhang falling on the
+  // 3-tall neck below it (a sawtooth grey band, 79,79,64 on a 230,199,131
+  // block); with shadows off the necks are ref04's soft even shading, and
+  // AO settings barely move it. So the neck is now ONE voxel tall (per =
+  // bh + 1): the shadow only fills that joint and reads as a mortar line.
+  // The blocks alternate long / short arms course by course (ref04's
+  // stagger), bigger courses (bh 5) so there are fewer of them; arms 8/5
+  // (9/6 read as heavy stacked planks next to ref04's ~1/7-of-face blocks).
+  ref04Block(gw, x0, z0, x1, z1, G, top, S, S.kind === 'deck' ? { refQ: { ca: 4, cp: 1, bp: 2, bh: 5, per: 6, alt: [8, 5] } } : { refQ: {} });
   const wy = G + 8, wh = 13;              // ground-floor glass (outer G+5..G+23)
   const uy = G + 33, uh = 12;             // upper-floor glass (outer G+30..G+47)
   const L = facade(gw, 'left', x0), Rt = facade(gw, 'right', x1);
@@ -1671,11 +1750,18 @@ function smallHouse(variant) {
   // FRONT: a window on the left, the double door on the right with a lamp
   // either side (ref04's door face), two windows upstairs with flower boxes;
   // the back mirrors it.
-  const dm = 48;
+  // (w4r12) the ref04 homage: door one voxel left with a 2-wide surround, so
+  // each lamp keeps a wall gap from the surround and from the quoin ears
+  const calm = S.kind === 'deck', dm = calm ? 47 : 48;
   for (const f of [F, Bk]) {
     refWin(f, x0 + 13, wy, 7, wh, S);
-    bigDoor(f, dm - 5, G, 10, 21, S, { mat: f === F });
-    bigLamp(f, dm - 10, G + 15, S); bigLamp(f, dm + 9, G + 15, S);
+    if (calm) {
+      bigDoor(f, dm - 5, G, 10, 21, S, { mat: f === F, sw: 2 });
+      bigLamp(f, dm - 10, G + 15, S); bigLamp(f, dm + 9, G + 15, S);
+    } else {
+      bigDoor(f, dm - 5, G, 10, 21, S, { mat: f === F });
+      bigLamp(f, dm - 10, G + 15, S); bigLamp(f, dm + 9, G + 15, S);
+    }
     for (const u of [x0 + 13, dm - 3]) {
       refWin(f, u, uy, 7, uh, S);
       if (f === F && S.kind !== 'deck') flowerBox(f, u - 2, u + 8, G + 29, S.flowers, S.frame);   // (w4r7) ref04 homage stays calm
@@ -1705,7 +1791,7 @@ function smallHouse(variant) {
       for (let z = rz0 - 3; z <= z1; z++) gw.del(x1, y, z);
       for (let x = rx0 - 3; x <= x1; x++) gw.del(x, y, z1);
     }
-    ref04Block(gw, rx0, rz0, rx1, rz1, ry0, rt, S, { refQ: { ca: 3, cp: 1, ba: 6, bp: 2, bh: 3, per: 5 } });
+    ref04Block(gw, rx0, rz0, rx1, rz1, ry0, rt, S, { refQ: { ca: 4, cp: 1, bp: 2, bh: 4, per: 5, alt: [7, 5] } });   // (w4r12) 1-voxel joints, as the body
     // its roof: wall tone inside a 2-wide rim in the frame tone, stepped caps
     gw.box(rx0 - 2, rt + 1, rz0 - 2, rx1 + 2, rt + 1, rz1 + 2, S.frame);
     gw.box(rx0 + 1, rt + 1, rz0 + 1, rx1 - 1, rt + 1, rz1 - 1, S.wall);
@@ -1717,14 +1803,16 @@ function smallHouse(variant) {
     // ref04's room dressing on its lit wall, facing the open deck: the AC
     // unit with a potted topiary under it, and the door with its red mat
     const RF = facade(gw, 'front', rz0);
-    refAC(RF, rx0 + 8, ry0 + 11);
-    potTopiary(gw, rx0 + 13, rz0 - 5, S.pot, 5, ry0);
-    bigDoor(RF, rx1 - 15, ry0, 6, 13, S);
+    // (w4r12) AC and door each with clear wall round them; the potted
+    // topiary stands free on the open deck by the room's front-left corner
+    refAC(RF, rx0 + 7, ry0 + 9);
+    potTopiary(gw, rx0 - 7, rz0 - 6, S.pot, 6, ry0);
+    bigDoor(RF, rx1 - 13, ry0, 6, 13, S, { sw: 2 });
   } else {
     let roof;
-    const rs = { roof: S.roof, fill: S.wall, edge: true, fascia: S.frame, ov: 3, ova: 3, rise: 1, run: 1, lip: S.roof[0] };
+    const rs = { roof: S.roof, fill: S.wall, edge: true, fascia: S.frame, ov: 3, ova: 3, rise: 2, run: 2, lip: S.roof[0] };   // (w4r13) 2×2 courses (see gableRoof)
     if (S.kind === 'hip') {
-      roof = hipRoof(gw, x0, x1, z0, z1, top, { roof: S.roof, ov: 3, rise: 1, run: 1, fascia: S.frame, ridge: S.roof[1] });
+      roof = hipRoof(gw, x0, x1, z0, z1, top, { roof: S.roof, ov: 3, rise: 2, run: 2, fascia: S.frame, ridge: S.roof[1] });
       boxDormer(gw, roof, (x0 + x1) >> 1, 13, 11, Object.assign({}, S, { trim: S.quoin }), 'front');
     } else {
       roof = gableRoof(gw, 'x', x0, x1, z0, z1, top, rs);
@@ -1748,8 +1836,17 @@ function smallHouse(variant) {
   // side windows (low, colourful, no dark foundation band).
   B(dm - 5, G - 1, 2, dm + 5, G - 1, z0 - 2, C.lotPave);
   for (let z = 5; z < z0 - 2; z += 4) B(dm - 5, G - 1, z, dm + 5, G - 1, z, C.lotPaveDark);
-  potTopiary(gw, dm - 10, z0 - 5, S.pot); potTopiary(gw, dm + 10, z0 - 5, S.pot);
-  stampVeg(W, 'shrub', v % 2 ? X - 7 : 6, G, 6, v + 5, 1);
+  // (w4r12) the ref04 homage: planters stand free, flanking the path a few
+  // voxels out from the wall (w4r11: 'two tall planters jammed against the
+  // front door')
+  if (S.kind === 'deck') {
+    potTopiary(gw, dm - 14, z0 - 8, S.pot, 8); potTopiary(gw, dm + 12, z0 - 8, S.pot, 8);
+    B(dm - 7, G - 1, z0 - 5, dm + 6, G - 1, z0 - 1, C.red);          // the door's red mat (the path had paved over it)
+  }
+  else { potTopiary(gw, dm - 10, z0 - 5, S.pot); potTopiary(gw, dm + 10, z0 - 5, S.pot); }
+  // (w4r13) not on the ref04 homage: the front-corner shrub read as a green
+  // blob crowding the forecourt (w4r12: 'a crowded, flat-lit forecourt')
+  if (S.kind !== 'deck') stampVeg(W, 'shrub', v % 2 ? X - 7 : 6, G, 6, v + 5, 1);
   B(14, G - 1, z1 + 4, 42, G - 1, z1 + 15, C.lotPave);
   W.walls(14, G - 1, z1 + 4, 42, G - 1, z1 + 15, C.lotPaveDark);
   B(dm - 5, G - 1, z1 + 1, dm + 5, G - 1, z1 + 6, C.lotPave);      // back step to the patio
@@ -1800,7 +1897,9 @@ function bApartment(rng, variant) {
   // string course per floor, and a bold crown — a 2-step cornice, a tall
   // proud parapet with a coping and ref04's stepped corner post caps.
   for (let f = 1; f < nf; f++) belt(g, x0, z0, x1, z1, g1 + f * fh - 1, A.pil, 2);
-  bigQuoins(g, x0, z0, x1, z1, g1, top - 4, A.pil, 4, [6, 3], 2);
+  // (w4r12) courses 4 -> 6 tall: the 4-tall courses laid a hard shadow joint
+  // every 0.4 units up the corners (the w4r11 'light and dark stripes')
+  bigQuoins(g, x0, z0, x1, z1, g1, top - 4, A.pil, 6, [7, 4], 2);
   cornice(g, x0, z0, x1, z1, top - 3, A.trim, A.trim);
   g.box(x0, top + 1, z0, x1, top + 1, z1, C.cream);    // (w4r8) cream deck, was grey stone (lighter roofs; ref04's deck)
   g.walls(x0 - 2, top, z0 - 2, x1 + 2, top + 4, z1 + 2, A.pil);                 // parapet
@@ -2184,7 +2283,7 @@ function bTownhouse(rng, variant) {
   // (w4) fewer, bigger relief trims: chunky 2-proud quoins up the corners
   // (not r9's slim white pilasters), 2-tall string courses, and the
   // apartment's bold crown instead of the bracket cornice + balustrade
-  bigQuoins(g, x0, z0, x1, z1, f1 + 1, top - 4, S.quoin, 4, [5, 3], 2);
+  bigQuoins(g, x0, z0, x1, z1, f1 + 1, top - 4, S.quoin, 5, [6, 3], 2);
   for (let f = 1; f < 3; f++) belt(g, x0, z0, x1, z1, f1 + f * fh - 2, S.trim, 2);
   belt(g, x0, z0, x1, z1, f1, S.trim, 2);
   boldCrown(g, x0, z0, x1, z1, top, S.quoin, [C.resTileDk, C.resTileGreenDk, C.resTileDk][v]);
@@ -2389,7 +2488,8 @@ function bCabin(rng, variant) {
   for (let x = x0 - 1; x <= x1 + 3; x += 6) g.box(x, G + 3, 14, x, G + 3, z0 - 1, C.lotPaveDark);
   for (const px of [x0 - 3, 30, x1 + 3]) g.box(px, G + 4, 14, px + 1, G + 27, 15, C.woodDark);
   for (const [a, b] of [[x0 - 1, 23], [37, x1 + 1]]) { g.box(a, G + 11, 14, b, G + 11, 14, C.woodDark); for (let x = a; x <= b; x += 3) g.box(x, G + 4, 14, x, G + 10, 14, C.wood); }
-  for (let k = 0; k < 8; k++) g.box(x0 - 5, G + 28 + k, 12 + k * 2, x1 + 5, G + 28 + k, 13 + k * 2, k % 2 ? K.roof[0] : K.roof[1]);
+  // (w4r13) one tile tone (the alternating courses were the stripiest plane on gal-homes-1)
+  for (let k = 0; k < 8; k++) g.box(x0 - 5, G + 28 + k, 12 + k * 2, x1 + 5, G + 28 + k, 13 + k * 2, K.roof[0]);
   g.box(x0 - 5, G + 27, 12, x1 + 5, G + 27, 13, C.woodDark);
 
   const F = facade(g, 'front', z0);
@@ -2721,8 +2821,8 @@ function bTallApartment(rng, variant) {
   }
   // (w1) chunky 2-proud quoins instead of slim pilasters (critic consensus:
   // fewer but bigger relief trims)
-  bigQuoins(g, x0, z0, x1, z1, g1 + 1, ys - 4, A.pil, 4, [5, 3], 2);
-  bigQuoins(g, xs, zs, x1, z1, ys + 1, top - 4, A.pil, 4, [5, 3], 2);
+  bigQuoins(g, x0, z0, x1, z1, g1 + 1, ys - 4, A.pil, 6, [6, 4], 2);
+  bigQuoins(g, xs, zs, x1, z1, ys + 1, top - 4, A.pil, 6, [6, 4], 2);
   cornice(g, x0, z0, x1, z1, ys - 2, A.pil, A.trim);
   boldCrown(g, xs, zs, x1, z1, top, A.pil, A.cap);                // (w4) bold parapet crown
 
@@ -3042,7 +3142,7 @@ function bMansion(rng, variant) {
     patch(g, 96, 94, 118, 116, C.lotPave);
     for (const [x, z] of [[98, 96], [116, 96], [98, 114], [116, 114]]) g.box(x, G, z, x + 1, G + 18, z + 1, S.trim);
     g.box(98, G, 96, 117, G, 115, C.plank);
-    for (let k = 0; k < 10; k++) g.box(96 + k, G + 19 + k, 94 + k, 119 - k, G + 19 + k, 117 - k, k % 2 ? S.roof[1] : S.roof[0]);
+    for (let k = 0; k < 10; k++) g.box(96 + k, G + 19 + k, 94 + k, 119 - k, G + 19 + k, 117 - k, S.roof[0]);
     g.box(107, G + 29, 105, 108, G + 31, 106, C.gold);
   } else {                                                      // topiary garden
     for (const [x, z] of [[98, 96], [110, 96], [98, 108], [110, 108]]) { hedge(g, x - 2, z - 2, x + 5, z + 5, 3); topiary(g, x, G + 3, z, 10); }

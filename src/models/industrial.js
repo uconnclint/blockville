@@ -3433,66 +3433,161 @@ function megaWorks(rng, variant) {
   const H = hiRes(S, 224, 'mega:' + accent + ':' + variant), g = H.g;
   const y0 = lotPlinth(g, 0, 0, S - 1, S - 1, { fill: C.indPave });
   const yl = y0 - 1;
-  // ---- main works: central block with a raised stack house + 4 banded chimneys ----
-  // r10 (critic r9: "one pale white-grey stepped block with thin orange
-  // pinstripes"; ref05's works: blue glass curtain walls, darker steel-grey
-  // massing against light concrete, dark roof decks under light plant): the
-  // accent pinstripe bands are gone, every roof deck is dark slate (the light
-  // rooftop plant pops off it), the works hall carries a continuous blue
-  // clerestory curtain band above the wings, and the stack house is a darker
-  // steel volume with tall glazed bays between light pilasters.
-  const mx0 = 30, mx1 = 66, mz0 = 22, mz1 = 52;
-  const PQX = 58.5, PPZ = 64.5;                  // the tank → stack pipe main (see below)
+  // ---- w4 r9: a PROCESS COMPLEX, not a tiered cake ----
+  // Critic w4r8: "grey boxes stacked in tiers, the same blue window grid on big
+  // flat facades … ref05 breaks every block into pipe racks, catwalks, clusters
+  // of small tanks, rooftop machinery and stepped annexes"; coordinator 04:10:
+  // 2-3 distinct buildings LINKED by elevated racks + catwalks, a tank cluster
+  // with ladders, rooftop machinery in rows. The old works hall + stack house
+  // (dock 22 → hall 32 → stack house 50, one stepped mass) is split into:
+  //   BOILER HOUSE  x44..66 z20..40, free-standing, tall, the banded stacks
+  //   PLANT HALL    x30..66 z45..56, low, curtain glass, rooftop unit rows
+  //   PROCESS AREA  x4..28  z19..57, on the camera-facing flank (was the
+  //                 sawtooth wing): open steel frame, 2 columns, bullets,
+  //                 a sphere, a compressor house
+  //   TANK CLUSTER  x31..42 z21..41, six short domed tanks on a bund
+  // and a main pipe rack with a catwalk (z 43) threads all four together.
+  const bx0 = 44, bx1 = 66, bz0 = 20, bz1 = 40;
+  const hx0 = 30, hx1 = 66, hz0 = 45, hz1 = 56;
+  const PQX = 58.5, PPZ = 64.5;                  // the tank-corner → boiler pipe main (see below)
   const pipeKeep = (x0, x1, z0, z1) => { const k = []; for (let x = x0; x <= x1; x += 1.5) for (let z = z0; z <= z1; z += 1.5) k.push([x, z, 2]); return k; };
-  const mtop = hall(g, mx0, mz0, mx1, mz1, y0, 32, { wall: C.indCorr, trim: C.indWall, roof: C.indYard });
-  const MB = facade(g, 'back', mz1), ML = facade(g, 'left', mx0), MF = facade(g, 'front', mz0), MR = facade(g, 'right', mx1);
-  for (const f of [ML, MR]) glazeBays(f, mz0 + 1, mz1, y0 + 4, y0 + 17, 5);
-  for (const f of [MB, MF]) glazeBays(f, mx0 + 1, mx1, y0 + 4, y0 + 17, 5, [[44, 52]]);
-  for (const [f, a, b] of [[ML, mz0, mz1], [MR, mz0, mz1], [MB, mx0, mx1], [MF, mx0, mx1]]) curtainBand(f, a + 2, b - 2, y0 + 21, y0 + 28);
-  rollDoor(MB, 45, 51, y0, 11, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
-  const sx0 = 34, sx1 = 64, sz0 = 26, sz1 = 46;
-  // w4 r1 (ref05's stack factory, cropped: light concrete walls, tall blue
-  // glass strips between white pilasters, one bold blue band under the
-  // cornice): the stack house is light, not mid steel
-  const stop = hall(g, sx0, sz0, sx1, sz1, y0, 50, { wall: C.indWall, trim: C.indShade, base: C.indBase, roof: C.indYard });
+  const RZ = 43;                                  // main rack line (between the boiler house and the hall)
+  // -- boiler house: steel ground storey, tall glass strips, navy band, cornice
+  const stop = hall(g, bx0, bz0, bx1, bz1, y0, 42, { wall: C.indWall, trim: C.indShade, base: C.indBase, roof: C.indYard });
+  g.walls(bx0, y0 + 2, bz0, bx1, y0 + 10, bz1, C.indSteel);
   for (const side of ['left', 'back', 'front', 'right']) {
-    const pl = { left: sx0, right: sx1, back: sz1, front: sz0 }[side];
-    const f = facade(g, side, pl), a = side === 'left' || side === 'right' ? sz0 : sx0, b = side === 'left' || side === 'right' ? sz1 : sx1;
-    glazeBays(f, a + 1, b, y0 + 33, y0 + 43, 5, side === 'back' || side === 'front' ? [[40, 56]] : [], C.white);
-    f.box(a, y0 + 45, 0, b, y0 + 46, 0, C.dtNavyPanel);                               // blue band under the cornice
-    f.box(a, y0 + 47, 1, b, y0 + 47, 1, C.indShade);                                  // light cornice under the coping
+    const pl = { left: bx0, right: bx1, back: bz1, front: bz0 }[side];
+    const ax = side === 'back' || side === 'front';
+    const f = facade(g, side, pl), a = ax ? bx0 : bz0, b = ax ? bx1 : bz1;
+    f.box(a, y0 + 11, 1, b, y0 + 11, 1, C.indShade);                            // ledge over the steel storey
+    // the camera-facing back gets ONE big curtain wall (ref05's blue glass
+    // fronts), the other faces tall glass strips between light pilasters
+    if (side === 'back') curtainBand(f, a + 2, b - 2, y0 + 14, y0 + 33);
+    else glazeBays(f, a + 1, b, y0 + 15, y0 + 33, 5, ax ? [[52, 58]] : [], C.white);
+    f.box(a, y0 + 36, 0, b, y0 + 37, 0, C.dtNavyPanel);                           // blue band under the cornice
+    f.box(a, y0 + 39, 1, b, y0 + 39, 1, C.indShade);
   }
-  // signs in the res-8 part: half-size 1× letters (r4 critic: "shrink the signs")
+  rollDoor(facade(g, 'back', bz1), 47, 52, y0, 9, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
+  rollDoor(facade(g, 'left', bx0), 23, 28, y0, 9, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
   const fsign = (side, plane, uc, y, text, fg) => H.fine((Fg) => tag(facade(Fg, side, side === 'back' || side === 'right' ? 2 * plane + 1 : 2 * plane), Math.round(2 * uc), Math.round(2 * y), text, { fg }));
-  fsign('back', sz1, 49, y0 + 34, 'MEGA', accent);
-  fsign('front', sz0, 49, y0 + 34, 'MEGA', accent);
-  H.surf((M) => {                                 // smooth banded chimneys
-    for (const [cx, cz, h] of [[41, 31, 96], [49, 31, 88], [57, 31, 92], [49, 40, 84]]) surfStack(M, cx + 0.75, cz + 0.75, stop, 3, h, { seg: 32 });
-  });
-  // r8 (critic r7: "flat grey roofs with a few AC cubes"): every roof carries a
-  // dense fine-scale plant — module pads with condensers, fans, vent clusters,
-  // small tanks, ducts, cabinets — and pipe pairs along the aisles
-  const chim = [[41, 31, 96], [49, 31, 88], [57, 31, 92], [49, 40, 84]];
+  fsign('back', bz1, 55, y0 + 24, 'MEGA', accent);
+  fsign('front', bz0, 55, y0 + 24, 'MEGA', accent);
+  // three fat banded stacks in a row along the screen-horizontal diagonal, so
+  // each one stands clear against the sky (ref05's power plant)
+  const chim = [[48.5, 24.5, 100], [55.5, 31, 92], [62, 36.5, 96]];
+  H.surf((M) => { for (const [cx, cz, h] of chim) surfStack(M, cx, cz, stop, 3.2, h, { seg: 32 }); });
+  // -- plant hall: low, a full blue curtain face toward the process area
+  const htop = hall(g, hx0, hz0, hx1, hz1, y0, 20, { wall: C.indCorr, trim: C.indWall, roof: C.indYard });
+  const HL = facade(g, 'left', hx0), HB = facade(g, 'back', hz1), HF = facade(g, 'front', hz0);
+  // north-light sawtooth, glazing turned to face the viewer (+z)
+  for (let zs = hz0 + 1; zs + 4 <= hz1 - 1; zs += 5) {
+    const ze = zs + 4;
+    for (let j = 0; j < 4; j++) {
+      const zb = ze - Math.max(1, Math.round(4 * (1 - j / 4)));
+      g.box(hx0 + 1, htop + j, zb, hx1 - 1, htop + j, ze, C.indRoofLt);
+      for (let x = hx0 + 1; x <= hx1 - 1; x++) g.set(x, htop + j, ze, j === 3 || x === hx0 + 1 || x === hx1 - 1 || (x - hx0) % 6 === 0 ? C.white : C.dtGlass);
+    }
+  }
+  curtainBand(HL, hz0 + 2, hz1 - 2, y0 + 5, y0 + 16);
+  glazeBays(HB, hx0 + 1, hx1, y0 + 4, y0 + 15, 5, [], C.indWall);
+  glazeBays(HF, hx0 + 1, hx1, y0 + 4, y0 + 15, 5, [[46, 53]], C.indWall);
+  rollDoor(HF, 47, 52, y0, 10, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
+  // -- compressor house (process area, front): low, steel, louvres
+  const ctop = hall(g, 5, 47, 17, 56, y0, 11, { wall: C.indSteel, trim: C.indWall, roof: C.indYard });
+  const CL = facade(g, 'left', 5), CB = facade(g, 'back', 56);
+  for (const [f, a, b] of [[CL, 48, 55], [CB, 6, 16]]) for (let u = a + 1; u < b - 1; u += 4) for (let y = y0 + 4; y <= y0 + 7; y++) f.set(u, y, 0, y & 1 ? C.indBase : C.vehCharcoal);
+  rollDoor(CB, 12, 15, y0, 7, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase, bollards: false });
+  // -- ground: bunds and process pads, dark hard-standing between them
+  g.box(3, yl, 19, 29, yl, 44, W_YARD);                                          // process area: dark hard-standing
+  g.box(31, yl, 21, 42, yl, 41, C.indShade);                                     // tank bund floor
+  g.walls(31, y0, 21, 42, y0, 41, C.indBase);                                    // bund kerb
+  g.box(3, yl, 45, 29, yl, 58, W_YARD);
+  g.box(30, yl, 41, 43, yl, 44, W_YARD);
+  for (let x = 3; x <= 29; x++) if (x % 4 < 2) g.set(x, yl, 45, C.indLine);       // lane paint along the rack
   H.fine((Fg) => {
-    fineRoof(Fg, g, mx0 + 1, mz0 + 1, mx1 - 1, mz1 - 1, mtop, { accent, keep: pipeKeep(PQX, PQX, sz1, mz1) });
-    fineRoof(Fg, g, sx0 + 1, sz0 + 1, sx1 - 1, sz1 - 1, stop, { accent, keep: chim.map(([x, z]) => [x + 0.75, z + 0.75, 4.6]).concat(pipeKeep(PQX, PQX, 34, sz1)), kinds: ['cond', 'fan', 'vents', 'vents', 'tank', 'duct', 'cab'] });
-    // stack-house + works walls: downpipes, wall pipes, AC boxes, ladders
-    for (const [side, pl, a, b] of [['left', sx0, sz0, sz1], ['right', sx1, sz0, sz1], ['front', sz0, sx0, sx1], ['back', sz1, sx0, sx1]]) fineWall(Fg, side, pl, a, b, mtop + 1, stop - 1, { pipe: false, ac: 1, skip: side === 'front' ? [[45, 54]] : side === 'back' ? [[45, 54], [56, 61]] : [] });
-    for (const [side, pl, a, b] of [['left', mx0, mz0, mz1], ['right', mx1, mz0, mz1], ['front', mz0, mx0, mx1], ['back', mz1, mx0, mx1]]) fineWall(Fg, side, pl, a, b, y0, mtop - 1, { pipeY: y0 + 13, ladder: side !== 'back', skip: side === 'back' ? [[43, 53], [56, 61]] : [] });
+    fineRoof(Fg, g, bx0 + 1, bz0 + 1, bx1 - 1, bz1 - 1, stop, { accent, keep: chim.map(([x, z]) => [x, z, 5]).concat(pipeKeep(PQX, PQX, 34, bz1)) });
+    fineRoof(Fg, g, 6, 48, 16, 55, ctop, { accent, kinds: ['fan', 'cond', 'vents'] });
+    roofRail(Fg, hx0, hz0, hx1, hz1, htop + 1);
+    for (const [side, pl, a, b] of [['left', bx0, bz0, bz1], ['back', bz1, bx0, bx1]]) fineWall(Fg, side, pl, a, b, y0, stop - 1, { ladder: side === 'left', skip: side === 'back' ? [[46, 58]] : [[22, 29]] });
+    fineWall(Fg, 'left', hx0, hz0, hz1, y0, htop - 1, { ladder: true });
   });
-  // ---- sawtooth assembly wing (left) ----
-  const wx0 = 8, wx1 = 26, wz0 = 22, wz1 = 52;
-  // r7: the wings are clad (corrugated grey assembly wing, navy dock shed) so the
-  // white stack house stands out of a mixed steel / navy / glass works (ref05)
-  const wtop = hall(g, wx0, wz0, wx1, wz1, y0, 22, { wall: C.indCorr, trim: C.indCorrDk, roof: C.indYard });
-  sawtooth(g, wx0 + 1, wx1 - 1, wz0 + 1, wz1 - 1, wtop, { D: 7, H: 4, roof: C.indRoofLt });
-  const WL = facade(g, 'left', wx0), WB = facade(g, 'back', wz1);
-  glazeBays(WL, wz0 + 1, wz1, y0 + 4, y0 + 15, 5, [], C.indCorrDk);
-  panelSeams(g, wx0, wz0, wx1, wz1, y0 + 2, y0 + 15, C.indCorr, C.indCorrDk, 5);
-  rollDoor(WB, 13, 21, y0, 10, { hood: C.indRoof, color: C.indWall, slat: C.indShade, frame: C.indBase });
+  H.surf((M) => {
+    const st = C.indRoof;                                                       // dark process steel (ref05)
+    // == main rack along z RZ: x 2 → 68, 3 pipes + a railed catwalk on top ==
+    surfPipeBridge(M, [[2.5, RZ], [67.5, RZ]], y0, y0 + 12, { cols: [C.yellow, C.indShade, C.indBlue, C.white], sp: 0.7, w: 0.5, step: 6, walk: true });
+    // cross rack along x 18.5 (z 19 → 58), lower, feeding the frame and tanks
+    surfPipeBridge(M, [[18.5, 19.5], [18.5, 58]], y0, y0 + 8, { cols: [C.indShade, C.orange, C.indBlue], sp: 0.6, w: 0.42, step: 6 });
+    // == open steel process frame x 4.5..16 z 29..41, three decks ==
+    const X = [4.5, 10.25, 16], Z = [29, 35, 41], L1 = y0 + 8, L2 = y0 + 15, L3 = y0 + 22;
+    for (const x of X) for (const z of Z) M.beam([x, y0, z], [x, x >= 10 && z <= 35 ? L3 : L2, z], 0.55, st);
+    railDeck(M, 4.1, 28.6, 16.4, 41.4, L1, { c: C.indRoof });                    // charcoal grating (ref05's dark steel)
+    railDeck(M, 4.1, 28.6, 16.4, 41.4, L2, { c: C.indRoof });
+    railDeck(M, 9.85, 28.6, 16.4, 35.4, L3, { c: C.indRoof });
+    for (const z of [29, 41]) { M.beam([4.5, y0 + 0.4, z], [10.25, L1, z], 0.3, st); M.beam([10.25, L1, z], [16, L2, z], 0.3, st); }
+    for (const x of [4.5, 16]) { M.beam([x, L1, 29], [x, L2, 35], 0.3, st); M.beam([x, y0 + 0.4, 35], [x, L1, 41], 0.3, st); }
+    M.beam([3.4, y0, 41.2], [3.4, L1, 33.5], 1.0, C.indBase);                     // stair
+    M.beam([2.8, y0 + 1.2, 41.2], [2.8, L1 + 1.2, 33.5], 0.12, C.yellow);
+    // plant on the decks: exchangers (L1), drums (L2), air coolers (L3)
+    for (const z of [31.5, 38.5]) {
+      M.tube([5.5, L1 + 1.2, z], [9.4, L1 + 1.2, z], 0.95, C.indTank, { seg: 14, heads: 0.5 });
+      for (const x of [6.2, 8.6]) M.box(x - 0.35, L1, z - 0.8, x + 0.35, L1 + 0.6, z + 0.8, C.indShade);
+    }
+    vessel(M, 13.2, 38.4, 1.6, L1, L1 + 5.5, C.white, accent);
+    M.tube([11.2, L2 + 1.3, 31], [15.2, L2 + 1.3, 31], 1.1, C.indTank, { seg: 14, heads: 0.6 });
+    vessel(M, 6.8, 38.2, 1.2, L2, L2 + 3.6, C.indTank, null);
+    for (const z of [30.2, 33.2]) { M.box(10.8, L3, z, 15.4, L3 + 1.4, z + 2.2, C.indBase); for (const x of [12, 14.2]) M.disc(x, z + 1.1, 0, 0.85, L3 + 1.42, C.darkGray, { seg: 10 }); }
+    // == two distillation columns behind the frame, ring platforms, ladders ==
+    for (const [cx, cz, r, h] of [[8, 23.5, 1.9, 42], [14, 22.5, 1.4, 33]]) {
+      const yT = y0 + h;
+      vessel(M, cx, cz, r, y0, yT, C.white, accent);
+      for (let y = y0 + 5; y < yT - 3; y += 3.6) M.lathe(cx, cz, () => r + 0.16, y, y + 0.32, 1, C.indShade, { seg: 18, flat: true });
+      for (const yp of [y0 + 16, yT - 0.5]) { M.arc(cx, cz, r, r + 1.2, -Math.PI * 0.2, Math.PI * 1.2, yp, 0.22, C.indRoofLt, 14); M.lathe(cx, cz, () => r + 1.15, yp + 1.0, yp + 1.14, 1, C.yellow, { seg: 16 }); }
+      M.beam([cx, y0, cz + r + 0.35], [cx, yT, cz + r + 0.35], 0.34, C.indBase);  // caged ladder spine
+      // overhead vapour line from the column head down into the frame
+      M.beam([cx + r, yT - 3, cz], [cx + r + 1.2, yT - 3, cz], 0.45, C.yellow);
+      M.beam([cx + r + 1.2, yT - 3, cz], [cx + r + 1.2, L3 + 1, 30], 0.45, C.yellow);
+    }
+    // == horizontal bullet tanks on saddles (x 21..27), crown catwalk ==
+    const br = 1.9, bcy = y0 + 1.4 + br;
+    for (const bx of [21.5, 26]) {
+      for (const z of [23.5, 29, 34.5]) M.box(bx - 1.6, y0, z - 0.4, bx + 1.6, bcy - 0.8, z + 0.4, C.indShade);
+      M.tube([bx, bcy, 21.5], [bx, bcy, 36.5], br, C.white, { seg: 20, heads: 1.0 });
+      M.tube([bx, bcy, 28.2], [bx, bcy, 29.8], br + 0.03, accent, { seg: 20 });
+    }
+    railDeck(M, 20.6, 26.2, 26.9, 27.4, bcy + br + 0.2, { open: [1, 3] });
+    M.beam([27.6, y0, 27.8], [27.6, bcy + br + 0.2, 26.4], 0.5, C.indBase);
+    // == a sphere (LPG) on legs, front of the process area ==
+    const scx = 24, scz = 51, sR = 4.2, sc = y0 + 7;
+    for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; M.beam([scx + Math.cos(a) * sR * 0.95, y0, scz + Math.sin(a) * sR * 0.95], [scx + Math.cos(a) * sR * 0.95, sc, scz + Math.sin(a) * sR * 0.95], 0.4, C.indBase); }
+    M.lathe(scx, scz, (y) => Math.sqrt(Math.max(0, sR * sR - (y - sc) ** 2)), sc - sR, sc + sR, 14, C.white, { seg: 28 });
+    M.lathe(scx, scz, () => sR + 0.04, sc - 0.35, sc + 0.35, 1, accent, { seg: 28 });
+    M.beam([scx - sR - 0.6, y0, scz + 1.5], [scx - 0.8, sc + sR, scz + 1.5], 0.6, C.indBase);   // stair to the crown
+    railDeck(M, scx - 1.3, scz - 1.3, scx + 1.3, scz + 1.3, sc + sR + 0.1, {});
+    // == tank cluster: six short domed tanks, catwalks between their crowns ==
+    const tk = [[34, 24.5, 11], [39.5, 24.5, 11], [34, 31, 11], [39.5, 31, 11], [34, 37.5, 11], [39.5, 37.5, 11]];
+    const tcol = [C.white, C.indTank, C.indTank, C.white, C.white, C.indTank];
+    tk.forEach(([cx, cz, h], i) => surfDomeTank(M, cx, cz, y0, 2.1, h, { c: tcol[i], band: i & 1 ? accent : C.orange, seg: 20, dome: 0.9, stairA: [Math.PI * 1.25, Math.PI * 1.75, Math.PI, 0, Math.PI * 0.75, Math.PI * 0.25][i] }));
+    for (const cz of [24.5, 31, 37.5]) railDeck(M, 35.8, cz - 0.6, 37.7, cz + 0.6, y0 + 3 + 11.2, { open: [1, 3] });
+    railDeck(M, 36.2, 24.5, 37.3, 37.5, y0 + 3 + 11.2, { open: [0, 2] });
+    // manifold: a header along the bund's inner edge, a stub off every tank
+    M.beam([36.75, y0 + 1.6, 22], [36.75, y0 + 1.6, 40.5], 0.45, C.yellow);
+    for (const [cx, cz] of tk) M.beam([cx + (cx < 36.75 ? 2.1 : -2.1), y0 + 1.6, cz], [36.75, y0 + 1.6, cz], 0.3, C.indShade);
+    // header rises to the main rack
+    M.beam([36.75, y0 + 1.6, 40.5], [36.75, y0 + 12, 42.4], 0.45, C.yellow);
+    // == branches: rack → boiler house, rack → frame, frame catwalk → hall roof ==
+    M.beam([44.3, y0 + 12.2, RZ - 0.7], [44.3, y0 + 12.2, bz1 + 1], 0.5, C.indShade);
+    const yP = y0 + 18, zP = 27.75;                                               // boiler house → cross rack, over the tanks
+    M.beam([bx0 - 0.6, yP, zP], [18.5, yP, zP], 0.5, C.orange);
+    M.beam([18.5, yP, zP], [18.5, y0 + 8.4, zP], 0.5, C.orange);
+    for (const x of [30, 19.3]) M.beam([x, y0, zP], [x, yP - 0.4, zP], 0.3, C.indBase);
+    M.beam([16.9, L2, 40.6], [16.9, y0 + 12.6, RZ - 0.6], 0.9, C.indBase);              // frame L2 → rack catwalk stair
+    M.beam([hx0 - 1, y0 + 12.6, RZ + 0.5], [hx0 - 1, htop + 0.6, hz0 + 1], 0.9, C.indBase);   // rack catwalk → hall roof stair
+    M.beam([hx0 - 1.5, y0 + 13.8, RZ + 0.5], [hx0 - 1.5, htop + 1.8, hz0 + 1], 0.1, C.yellow);
+  });
   // ---- logistics shed: canopied dock with trucks backed in (faces the viewer) ----
+  // w4 r9: lower (22 → 17) so the complex behind it shows
   const dx0 = 8, dx1 = 66, dz0 = 61, dz1 = 71;
-  const dtop = hall(g, dx0, dz0, dx1, dz1, y0, 22, { wall: C.indNavy, trim: C.indShade, roof: C.indYard });
+  const dtop = hall(g, dx0, dz0, dx1, dz1, y0, 17, { wall: C.indNavy, trim: C.indShade, roof: C.indYard });
   const DB = facade(g, 'back', dz1), DL = facade(g, 'left', dx0);
   // r10 (critic r9: "cut the dock face into real recessed bays with trucks
   // nosed in"): nine bays, each a 1-unit-deep recess into the shed — dark
@@ -3515,28 +3610,24 @@ function megaWorks(rng, variant) {
   }
   g.box(dx0, y0 + 11, dz1 + 1, dx1, y0 + 11, dz1 + 3, C.indRoof);             // dock canopy + fascia
   g.box(dx0, y0 + 10, dz1 + 3, dx1, y0 + 11, dz1 + 3, C.indWall);
-  fsign('back', dz1, 60, y0 + 14.5, 'DOCK', C.indBlue);
-  curtainBand(DB, dx0 + 2, 54, y0 + 14, y0 + 19);                             // glazed band over the canopy (ref05)
-  glazeBays(DL, dz0 + 1, dz1, y0 + 4, y0 + 15, 5);
+  fsign('back', dz1, 60, y0 + 12.5, 'DOCK', C.indBlue);
+  curtainBand(DB, dx0 + 2, 54, y0 + 13, y0 + 14);                             // glazed band over the canopy (ref05)
+  glazeBays(DL, dz0 + 1, dz1, y0 + 4, y0 + 13, 5);
   // r8: small lean-to annexes against the long side walls (ref05's outbuildings)
   // w4 r5 (critics w4r3/w4r4: one readable mass, no small scattered boxes): lean-tos gone
-  panelSeams(g, dx0, dz0, dx1, dz1, y0 + 2, y0 + 15, C.indNavy, C.indShade, 5);
+  panelSeams(g, dx0, dz0, dx1, dz1, y0 + 2, y0 + 13, C.indNavy, C.indShade, 5);
   H.fine((Fg) => {
     fineRoof(Fg, g, dx0 + 1, dz0 + 1, dx1 - 1, dz1 - 1, dtop, { accent, seed: 11, keep: pipeKeep(PQX, dx1, PPZ, PPZ) });
     fineWall(Fg, 'left', dx0, dz0, dz1, y0, dtop - 1, { pipeY: y0 + 16, ac: 1 });
     fineWall(Fg, 'right', dx1, dz0, dz1, y0, dtop - 1, { pipeY: y0 + 10, ac: 1 });
     fineWall(Fg, 'front', dz0, dx0, dx1, y0, dtop - 1, { pipeY: y0 + 12, ac: 3 });
-    fineWall(Fg, 'left', wx0, wz0, wz1, y0, wtop - 1, { pipeY: y0 + 9, ac: 2, pc: C.orange });
-    fineWall(Fg, 'front', wz0, wx0, wx1, y0, wtop - 1, { pipeY: y0 + 10, ac: 1 });
   });
   // pipe bridges linking the halls (critic r7: "exposed pipe runs linking
-  // buildings"): works ↔ dock shed, works ↔ sawtooth wing, works ↔ sheds
+  // buildings"): hall ↔ dock shed, boiler house ↔ sheds, hall ↔ tank corner
   H.surf((M) => {
-    for (const x of [36.5, 58.5]) surfPipeBridge(M, [[x, mz1 + 0.9], [x, dz0 + 0.1]], y0, y0 + 17, { legs: false });
-    surfPipeBridge(M, [[47.5, mz1 + 0.9], [47.5, dz0 + 0.1]], y0, y0 + 12.5, { legs: false, cols: [C.orange, C.indShade] });
-    for (const z of [29.5, 45.5]) surfPipeBridge(M, [[wx1 + 0.9, z], [mx0 + 0.1, z]], y0, y0 + 14, { legs: false, cols: [C.indBlue, C.yellow] });
-    surfPipeBridge(M, [[mx1 + 0.9, 37.5], [71.9, 37.5]], y0, y0 + 11, { legs: false, cols: [C.yellow, C.indShade] });
-    surfPipeBridge(M, [[mx1 + 0.9, 55.5], [69, 55.5], [69, 65.5], [74.2, 65.5]], y0, y0 + 9, { cols: [C.indShade, C.orange], noStart: true, noEnd: true });
+    for (const x of [36.5, 44.5]) surfPipeBridge(M, [[x, hz1 + 0.9], [x, dz0 + 0.1]], y0, y0 + 13, { legs: false });
+    surfPipeBridge(M, [[bx1 + 0.9, 37.5], [71.9, 37.5]], y0, y0 + 11, { legs: false, cols: [C.yellow, C.indShade] });
+    surfPipeBridge(M, [[hx1 + 0.9, 50.5], [69, 50.5], [69, 65.5], [74.2, 65.5]], y0, y0 + 9, { cols: [C.indShade, C.orange], noStart: true, noEnd: true });
   });
   // ---- truck apron: shallow, bay lines, half-size semis backed in ----
   // w4 r5 (critic w4r4: "open up loading yards so each lot shows asphalt,
@@ -3563,6 +3654,13 @@ function megaWorks(rng, variant) {
     // semi backed INTO the recess: rear 1.5 units inside the bay (dir -1 → a=0 at max z)
     fTruck(H, u + 0.5, y0, dz1 - 2, 'z', -1, { len: 20, cab: i & 1 ? accent : C.white, box: c, stripe: c === C.white ? accent : C.white, logo: c === C.white ? accent : C.white });
   });
+  // w4 r9 (critic w4r8: "a busy truck yard"): staged pallets + a forklift at the
+  // first empty bay (a semi in the lane read as a pile-up against the docked row)
+  {
+    const eb = bays[0];
+    H.fine((F) => { for (let k = 0; k < 3; k++) crates(F, 2 * eb - 1 + k * 4, 2 * y0, 2 * 76 + (k & 1), 3, 3, 1 + (k % 2), [C.wood, C.indShade]); });
+    fForklift(H, eb + 1, y0, 79.5, 'z', -1);
+  }
   // ---- planted strip + walkway between the apron and the lot rim ----
   g.box(2, yl, AZ1 + 1, 92, yl, 93, C.lotGrass);
   g.box(2, yl, AZ1 + 1, 92, yl, AZ1 + 1, C.lotRim);                            // kerb
@@ -3600,13 +3698,13 @@ function megaWorks(rng, variant) {
   g.box(70, y0 + 46, 12, 75, y0 + 46, 15, C.indShade);
   // enclosed conveyor gallery from the silo tops down to the works roof
   for (let q = 0; q <= 8; q++) {
-    g.box(mx1 + 1 + q, y0 + 29 + q * 2, 12, mx1 + 1 + q, y0 + 32 + q * 2, 14, C.indShade);
-    g.box(mx1 + 1 + q, y0 + 29 + q * 2, 12, mx1 + 1 + q, y0 + 29 + q * 2, 14, C.indBase);
+    g.box(bx1 + 1 + q, y0 + 29 + q * 2, 22, bx1 + 1 + q, y0 + 32 + q * 2, 24, C.indShade);
+    g.box(bx1 + 1 + q, y0 + 29 + q * 2, 22, bx1 + 1 + q, y0 + 29 + q * 2, 24, C.indBase);
   }
   // pipe rack from the silos to the works (two pipes on portal frames)
-  g.box(mx1 + 1, y0 + 14, 22, 74, y0 + 15, 23, C.yellow);
-  g.box(mx1 + 1, y0 + 14, 25, 74, y0 + 15, 26, C.indShade);
-  for (let x = mx1 + 3; x <= 74; x += 4) { g.box(x, y0, 21, x, y0 + 13, 21, C.indBase); g.box(x, y0, 27, x, y0 + 13, 27, C.indBase); g.box(x, y0 + 13, 21, x, y0 + 13, 27, C.indBase); }
+  g.box(bx1 + 1, y0 + 14, 22, 74, y0 + 15, 23, C.yellow);
+  g.box(bx1 + 1, y0 + 14, 25, 74, y0 + 15, 26, C.indShade);
+  for (let x = bx1 + 3; x <= 74; x += 4) { g.box(x, y0, 21, x, y0 + 13, 21, C.indBase); g.box(x, y0, 27, x, y0 + 13, 27, C.indBase); g.box(x, y0 + 13, 21, x, y0 + 13, 27, C.indBase); }
   // ---- outbuildings on a paved service yard ----
   g.box(70, yl, 28, 92, yl, 60, C.lotPaveDark);
   const shed = (x0, z0, x1, z1, h, c) => {
@@ -3633,23 +3731,24 @@ function megaWorks(rng, variant) {
   // tank farm → dock roof → works → stack house: one visible pipe main
   // (critic r9: "run visible pipes between the tanks and the stacks")
   H.surf((M) => {
-    const yA = y0 + 26, yB = y0 + 37, px = 68.4, pz = PPZ, qx = PQX;
+    const yA = y0 + 25, yB = y0 + 31, px = 68.4, pz = PPZ, qx = PQX;
     const cols = [C.indBlue, C.yellow, C.indShade];
     for (let i = 0; i < 3; i++) M.beam([px + (i - 1) * 0.75, y0 + 7, 84.2], [px + (i - 1) * 0.75, yA, 84.2], 0.5, cols[i]);   // risers off the manifold
-    surfPipeBridge(M, [[px, 84.2], [px, pz], [qx, pz], [qx, mz1 + 1.4]], y0, yA, { cols, legs: false });
+    // w4 r9: over the dock roof, across the gap, over the plant hall roof and the
+    // main rack, to the boiler house's back wall
+    surfPipeBridge(M, [[px, 84.2], [px, pz], [qx, pz], [qx, bz1 + 1.4]], y0, yA, { cols, legs: false });
     for (const z of [84.2, 76, pz]) for (const s of [-1, 1]) M.beam([px + s * 1.25, y0, z], [px + s * 1.25, yA - 0.4, z], 0.34, C.indBase);
     for (const z of [84.2, 76, pz]) M.beam([px - 1.4, yA - 0.5, z], [px + 1.4, yA - 0.5, z], 0.34, C.indBase);
     for (let x = qx + 5; x < px - 1; x += 6) for (const s of [-1, 1]) M.beam([x, dtop, pz + s * 1.25], [x, yA - 0.4, pz + s * 1.25], 0.3, C.indBase);
-    for (const s of [-1, 1]) M.beam([qx + s * 1.25, dtop, pz], [qx + s * 1.25, yA - 0.4, pz], 0.3, C.indBase);
-    // up the works' back wall, over its roof edge, into the stack house
-    for (let i = 0; i < 3; i++) M.beam([qx + (i - 1) * 0.75, yA, mz1 + 1.4], [qx + (i - 1) * 0.75, yB, mz1 + 1.4], 0.5, cols[i]);
-    surfPipeBridge(M, [[qx, mz1 + 1.4], [qx, sz1 + 1.1]], y0, yB, { cols, legs: false });
-    for (const s of [-1, 1]) M.beam([qx + s * 1.25, mtop, sz1 + 3], [qx + s * 1.25, yB - 0.4, sz1 + 3], 0.3, C.indBase);
-    // a big flue duct up the stack house and across its roof into a chimney
-    M.box(qx - 1.2, yB - 1, sz1 + 1, qx + 1.2, stop + 3, sz1 + 2.6, C.indShade);
-    M.box(qx - 1.2, stop + 1, 34.2, qx + 1.2, stop + 3.4, sz1 + 2.6, C.indShade);
-    for (const s of [-1, 1]) M.beam([qx + s * 0.9, stop, 40], [qx + s * 0.9, stop + 1, 40], 0.4, C.indBase);
-    for (const y of [yB + 2, yB + 6, stop - 2]) M.box(qx - 1.45, y, sz1 + 0.9, qx + 1.45, y + 0.5, sz1 + 2.85, C.indBase);
+    for (const z of [pz, 50.5]) for (const s of [-1, 1]) M.beam([qx + s * 1.25, z === pz ? dtop : htop, z], [qx + s * 1.25, yA - 0.4, z], 0.3, C.indBase);
+    for (const s of [-1, 1]) M.beam([qx + s * 1.25, y0, 58.5], [qx + s * 1.25, yA - 0.4, 58.5], 0.34, C.indBase);   // portal in the gap
+    M.beam([qx - 1.4, yA - 0.5, 58.5], [qx + 1.4, yA - 0.5, 58.5], 0.34, C.indBase);
+    // up the boiler house's back wall, then a big flue duct over its roof
+    for (let i = 0; i < 3; i++) M.beam([qx + (i - 1) * 0.75, yA, bz1 + 1.4], [qx + (i - 1) * 0.75, yB, bz1 + 1.4], 0.5, cols[i]);
+    M.box(qx - 1.2, yB - 1, bz1 + 1, qx + 1.2, stop + 3, bz1 + 2.6, C.indShade);
+    M.box(qx - 1.2, stop + 1, 33.5, qx + 1.2, stop + 3.4, bz1 + 2.6, C.indShade);
+    for (const s of [-1, 1]) M.beam([qx + s * 0.9, stop, 36], [qx + s * 0.9, stop + 1, 36], 0.4, C.indBase);
+    for (const y of [yB + 2, yB + 6, stop - 2]) M.box(qx - 1.45, y, bz1 + 0.9, qx + 1.45, y + 0.5, bz1 + 2.85, C.indBase);
   });
   // yards packed with pallets and crates
   // w4 r5 (critics w4r3 "cut the props by about half, leave clear paved

@@ -14,7 +14,7 @@ import {
 import {
   V, tree, bush, flower, lampPost, bin, car, umbrella, lounger, flagPole, disc, rrDist, roofBox, civText, benchS, hipRoof,
   person, crowd, kiosk, umbTable, parkingRow, hiText, doneHi,
-  hiGrid, hiFacade, fineWin, lotTree, INK, inkBand, inkEdges, brickCourse, fineUmbrella, fineLounger, fineAC, fineBand, fineDentils, fineBalustrade, fineHipRoof, gclr, lumpHedge, fineDome, fineBlooms, fineColumn, fineStatue,
+  hiGrid, hiFacade, fineWin, lotTree, INK, inkBand, inkEdges, brickCourse, fineUmbrella, fineLounger, fineAC, fineBand, fineDentils, fineBalustrade, fineHipRoof, gclr, lumpHedge, shrubRow, fineDome, fineBlooms, fineColumn, fineStatue,
 } from './civic.js';
 
 const R4 = 4;
@@ -77,77 +77,60 @@ function swimmers(g, x0, z0, x1, z1, y, n, seed = 1) {
 // FUN
 // =============================================================================
 
-// ---- PLAYGROUND (1×1): one bold silhouette — a two-tower play castle with
-// battlements and pointed roofs, a rope bridge between the towers, a wide wave
-// slide down the front and a striped tube slide down the lit side, on a
-// poured-rubber floor; swings and a few benches round the edge.
+// ---- PLAYGROUND (1×1): a calm, LOW neighbourhood playground on a paved lot
+// — one play frame (deck on white posts under a small hip roof, a slide and a
+// ladder) on a soft-surface pad, a swing set, a sandpit, a spring rider, a
+// lawn corner with one shade tree, two benches.
+// (civic w4r10) The gallery now uses this model as the filler lot between the
+// civic landmarks, and the two-keep play castle (towers to y+21, rope bridge,
+// tube slide, climbing wall, fence) read as "slide towers" boxing in the
+// monument and crowding the school / fire station (critic w4r9: "tone down
+// the clutter of saturated small parts on the neighbouring fun lots"). Now
+// nothing stands above y+12, the paving shows, and each variant is ONE pad
+// colour + ONE accent + white.
+// (civic w4r14) critic w4r13 + coherence: "small 1×1 fun lots are noisy
+// confetti of tiny multicolour props with no hierarchy — calm them: pale
+// paving, neat hedge border, 2-3 purposeful props". Now: one pale paved lot
+// inside a clipped hedge edge, ONE tan soft-surface pad carrying the play
+// frame (one roof colour, one accent), a slim swing frame and one shade tree.
+// No sandpit, spring rider, lamp, bin or red rubber.
 function bPlayground(rng, v) {
-  const g = grid(31, 44, 31, R4);
-  const y = lotPlinth(g, 0, 0, 30, 30, { fill: 'grass' });
+  const g = grid(31, 28, 31, R4);
+  const y = lotPlinth(g, 0, 0, 30, 30, { fill: 'pave' });
   const vi = mod(v, 3);
-  // two hues + white per variant (critic r4: the four-colour castle read as
-  // a jumble of saturated blocks with no clear silhouette)
-  // (r10) critic r9 read the castle as "a jumble of red, teal and white
-  // blocks with no clear building silhouette": the keeps are now SOLID
-  // cream stone towers (not posts + panels), ink-edged, under one roof
-  // colour per variant, so the frame reads as one castle.
-  const floorA = [C.civRubber, C.civSeat, C.roofGreen][vi], floorB = [C.lotPave, C.lotPave, C.lotPave][vi];
-  const post = C.signWhite, panel = C.cream, stoneDk = C.sandDark;
-  const roofA = [C.red, C.roofBlue, C.red][vi], roofB = roofA;
-  g.box(2, y - 1, 2, 28, y - 1, 28, floorA);                         // poured rubber
-  disc(g, 13, y - 1, 7, 5.5, floorB); disc(g, 13, y - 1, 7, 3.5, floorA);
-  // a castle tower: 2×2 posts, plank deck, panelled walls with portholes,
-  // crenellated top, stepped pointed roof, pennant
-  const tower = (x0, z0, x1, z1, deck, rc) => {
-    g.box(x0, y, z0, x1, deck + 4, z1, panel);                       // solid stone keep
-    g.walls(x0, y, z0, x1, y, z1, stoneDk);
-    g.walls(x0 - 1, deck, z0 - 1, x1 + 1, deck, z1 + 1, panel);      // corbelled walk
-    for (let x = x0 - 1; x <= x1 + 1; x += 2) { g.set(x, deck + 1, z0 - 1, panel); g.set(x, deck + 1, z1 + 1, panel); }
-    for (let z = z0 - 1; z <= z1 + 1; z += 2) { g.set(x0 - 1, deck + 1, z, panel); g.set(x1 + 1, deck + 1, z, panel); }
-    inkBand(g, x0 - 1, z0 - 1, x1 + 1, z1 + 1, 2 * deck - 1, 1, 0);
-    inkEdges(g, x0, z0, x1, z1, y + 1, deck - 1);
-    const mx = (x0 + x1) >> 1, mz = (z0 + z1) >> 1;
-    for (const d of [-2, 2]) { g.box(mx + d, deck - 5, z0, mx + d, deck - 3, z0, C.civNavy); g.box(x1, deck - 5, mz + d, x1, deck - 3, mz + d, C.civNavy); g.box(mx + d, deck - 5, z1, mx + d, deck - 3, z1, C.civNavy); g.box(x0, deck - 5, mz + d, x0, deck - 3, mz + d, C.civNavy); }   // arrow slits
-    g.box(mx - 1, y, z0, mx + 1, y + 4, z0, C.civNavy); g.box(x1, y, mz - 1, x1, y + 4, mz + 1, C.civNavy);   // arched doors
-    g.set(mx, y + 5, z0, C.civNavy); g.set(x1, y + 5, mz, C.civNavy);
-    let k = 0;
-    for (; x0 + k <= x1 - k && z0 + k <= z1 - k; k++) g.box(x0 + k, deck + 3 + 2 * k, z0 + k, x1 - k, deck + 4 + 2 * k, z1 - k, k === 0 ? C.signWhite : rc);
-    const top = deck + 4 + 2 * (k - 1);
-    g.box(mx, top + 1, mz, mx, top + 5, mz, C.signWhite);
-    g.box(mx + 1, top + 3, mz, mx + 3, top + 5, mz, rc === roofA ? roofB : roofA);
-    return { mx, mz };
-  };
-  tower(8, 14, 16, 22, y + 9, roofA);                               // main keep
-  tower(20, 19, 26, 25, y + 12, roofB);                             // little tower
-  // rope bridge between the decks
-  for (let x = 17; x <= 19; x++) { const dy = y + 9 + Math.round((x - 16) * 1); g.box(x, dy, 20, x, dy, 22, C.wood); g.set(x, dy + 3, 20, C.darkGray); g.set(x, dy + 3, 22, C.darkGray); }
-  // climbing wall up the keep's left side
-  g.box(7, y, 16, 7, y + 8, 20, C.civPanel);
-  [[17, 2], [19, 4], [16, 5], [18, 7], [20, 1], [17, 8]].forEach(([hz, hy], i) => g.set(6, y + hy, hz, [C.red, C.yellow, C.roofGreen, C.civSeat][i % 4]));
-  // wide wave slide off the keep's front, down toward the road
-  for (let i = 0; i <= 9; i++) {
-    const zz = 13 - i, sy = y + 9 - i + (i > 6 ? 1 : 0) - (i > 8 ? 1 : 0);
-    g.box(10, Math.max(y, sy - 1), zz, 14, Math.max(y, sy), zz, post);
-    g.box(10, sy + 1, zz, 10, sy + 2, zz, C.signWhite); g.box(14, sy + 1, zz, 14, sy + 2, zz, C.signWhite);
+  const pad = C.civPlaza;                                            // tan bark/soft surface
+  const acc = [C.yellow, C.civSeat, C.yellow][vi];
+  const roofC = [C.roofBlue, C.civCornice, C.roofBlue][vi];
+  const post = C.signWhite, HG = C.civHedge != null ? C.civHedge : V.bush;
+  // neat low hedge along the two back edges (authored back + left)
+  for (let x = 1; x <= 29; x++) if (x < 12 || x > 17) g.box(x, y, 28, x, y + 1, 29, HG);   // gate gap 12..17
+  for (let z = 1; z <= 27; z++) g.box(1, y, z, 2, y + 1, z, HG);
+  // soft-surface pad with a pale kerb
+  g.box(7, y - 1, 4, 26, y - 1, 25, pad);
+  g.walls(6, y - 1, 3, 27, y - 1, 26, C.lotRim);
+  // play frame: 4 posts, plank deck at y+5, low rail, small hip roof
+  const X0 = 16, X1 = 23, Z0 = 13, Z1 = 20, DY = y + 5;
+  for (const [px, pz] of [[X0, Z0], [X1, Z0], [X0, Z1], [X1, Z1]]) g.box(px, y, pz, px, DY + 4, pz, post);
+  g.box(X0, DY, Z0, X1, DY, Z1, C.plank);
+  g.box(X0, DY - 1, Z0, X1, DY - 1, Z0, acc); g.box(X0, DY - 1, Z1, X1, DY - 1, Z1, acc);
+  for (let x = X0 + 1; x < X1; x++) { if (x < 18 || x > 21) g.set(x, DY + 2, Z0, post); g.set(x, DY + 2, Z1, post); }
+  for (let z = Z0 + 1; z < Z1; z++) { g.set(X0, DY + 2, z, post); g.set(X1, DY + 2, z, post); }
+  hipRoof(g, X0 - 1, Z0 - 1, X1 + 1, Z1 + 1, DY + 5, 3, roofC);
+  // straight slide off the front, white rails
+  for (let i = 0; i <= 6; i++) {
+    const zz = Z0 - 1 - i, sy = DY - 1 - Math.round(i * 0.75);
+    g.box(18, Math.max(y, sy), zz, 21, Math.max(y, sy), zz, acc);
+    g.set(18, Math.max(y, sy) + 1, zz, post); g.set(21, Math.max(y, sy) + 1, zz, post);
   }
-  g.box(11, y + 9, 13, 13, y + 9, 13, C.plank);
-  // striped tube slide from the little tower down the right side
-  for (let i = 0; i <= 13; i++) {
-    const zz = 18 - i, ty = y + 12 - Math.round(i * 0.85);
-    g.box(26, Math.max(y, ty - 1), zz, 28, ty + 1, zz, (i >> 1) & 1 ? C.signWhite : roofB);
-  }
-  g.box(26, y, 4, 28, y, 5, C.sand);
-  // swing set on the front-left
-  for (const px of [2, 7]) { g.box(px, y, 2, px, y + 10, 2, panel); g.box(px, y, 6, px, y + 10, 6, panel); g.box(px, y + 11, 2, px, y + 11, 6, panel); }
-  g.box(2, y + 12, 4, 7, y + 12, 4, panel);
-  for (const [sx, c] of [[3, C.red], [5, C.yellow]]) { g.box(sx, y + 4, 4, sx, y + 11, 4, C.darkGray); g.box(sx, y + 3, 3, sx + 1, y + 3, 5, c); }
-  // sandpit + springy duck at the back, benches, a shade tree, a low fence
-  g.walls(19, y, 4, 24, y, 10, C.wood); g.box(20, y, 5, 23, y, 9, C.sand); g.box(21, y + 1, 6, 22, y + 2, 7, C.red);
-  g.box(3, y, 25, 3, y + 2, 25, C.metal); g.box(2, y + 3, 24, 5, y + 5, 26, C.yellow); g.set(5, y + 5, 25, C.orange);
-  benchS(g, 22, y, 27, 'x', 4, { seat: C.wood, flip: false });
-  tree(g, 3, y, 13, { w: 5, h: 5, trunk: 5, tier: false });
-  for (const [a, b, c, d] of [[1, 29, 29, 29], [29, 1, 29, 29], [1, 9, 1, 29]]) fenceRun(g, a, b, c, d, y, { post: C.signWhite, rail: panel, h: 3, step: 4 });
-  crowd(g, [[2, 2, 28, 28]], y, 10, 41 + vi, { shirts: [C.red, C.yellow, C.civSeat, C.pink, C.roofGreen, C.orange] });
+  for (let k = 0; k < 5; k++) g.box(19, y + k, Z1 + 1 + (4 - k), 20, y + k, Z1 + 1 + (4 - k), C.wood);
+  // slim swing frame on the pad (left)
+  for (const px of [8, 13]) { g.box(px, y, 7, px, y + 7, 7, C.civHallDk); g.box(px, y, 11, px, y + 7, 11, C.civHallDk); g.box(px, y + 8, 7, px, y + 8, 11, C.civHallDk); }
+  g.box(8, y + 8, 9, 13, y + 8, 9, C.civHallDk);
+  for (const sx of [10, 11]) { g.box(sx, y + 3, 9, sx, y + 7, 9, C.darkGray); g.set(sx, y + 2, 9, acc); }
+  // one shade tree in the back-left corner, one bench facing the pad
+  tree(g, 4, y, 25, { w: 5, h: 5, trunk: 4, tier: false });
+  benchS(g, 20, y, 27, 'x', 5, { seat: C.wood });
+  crowd(g, [[7, 4, 26, 12]], y, 4, 41 + vi, { shirts: [C.red, C.yellow, C.civSeat] });
   return doneHi(g);
 }
 
@@ -223,9 +206,11 @@ function bSwimmingPool(rng, v) {
     // (w4r3) critic w4r2: the hall read as a red slab striped by pilasters
     // round dark window holes. Pilasters only every 8 (white stone between
     // window pairs) and glassy blue windows with a reflection streak.
-    for (let u = u0 + 8; u < u1; u += 8) F.box(u, G2, 1, u, RT - 2, 1, band);
-    for (const u of [u0, u1]) F.box(u, G2, 1, u, RT - 2, 1, band);
-    for (const fy of [G2 + 1, G2 + 7]) for (let u = u0 + 1; u + 2 < u1; u += 4) fineWin(g, side, pl, u, fy, 3, 5, { frame: C.signWhite, trim: C.signWhite, surround: band, glass: C.dtGlass, hood: false, mullion: false });
+    // (w4r12) critic w4r11 / coordinator: "facades read flat … build
+    // outward". Pilasters two deep, windows recessed one voxel into the wall.
+    for (let u = u0 + 8; u < u1; u += 8) F.box(u, G2, 1, u, RT - 2, 2, band);
+    for (const u of [u0, u1]) F.box(u, G2, 1, u, RT - 2, 2, band);
+    for (const fy of [G2 + 1, G2 + 7]) for (let u = u0 + 1; u + 2 < u1; u += 4) fineWin(g, side, pl, u, fy, 3, 5, { frame: C.signWhite, trim: C.signWhite, surround: band, glass: C.dtGlass, hood: false, mullion: false, recess: true });
     E.box(2 * u0 - 2, 2 * (G2 + 6), 0, 2 * u1 + 3, 2 * (G2 + 6), 2, C.signWhite);    // floor ledge
     E.box(2 * u0 - 2, 2 * (G2 + 6) - 1, 0, 2 * u1 + 3, 2 * (G2 + 6) - 1, 0, ink);
   }
@@ -280,9 +265,9 @@ function bSwimmingPool(rng, v) {
   g.box(41 + KX, y, 48 + KZ, 42 + KX, y + 3, 49 + KZ, C.signWhite); g.box(39 + KX, y + 4, 46 + KZ, 44 + KX, y + 4, 51 + KZ, C.red); g.box(40 + KX, y + 5, 47 + KZ, 43 + KX, y + 5, 50 + KZ, C.red);
   for (const [dx, dz] of [[40, 47], [43, 50]]) g.set(dx + KX, y + 5, dz + KZ, C.signWhite);
   // ---- sun deck on the right: umbrellas over pairs of loungers
-  for (const [ux, uz, k] of [[50, 3, 1], [57, 3, 0], [50, 13, 0], [57, 13, 1], [50, 23, 1], [57, 23, 0], [50, 33, 0], [57, 33, 1]]) {
+  for (const [ux, uz, k] of [[50, 3, 1], [57, 13, 0], [50, 23, 1], [57, 33, 0]]) {   // (w4r10) 4 umbrellas (were 8): a field of red dots
     fineUmbrella(g, ux, y, uz + 2, umb[k], umb[1 - k], 5, 5);        // (r9) fine umbrellas + loungers
-    fineLounger(g, ux - 3, y, uz, 'z', C.signWhite, umb[k]); fineLounger(g, ux + 2, y, uz, 'z', C.signWhite, C.civSeat);
+    fineLounger(g, ux - 3, y, uz, 'z', C.signWhite, C.civPoolLt); fineLounger(g, ux + 2, y, uz, 'z', C.signWhite, C.civPoolLt);   // (w4r10) pale towels: red/blue towels + red umbrellas read as a field of saturated dots
   }
   // ---- clipped hedge beds (ref05) along the front and the deck edges
   for (const [x0, z0, x1, z1] of [[2, 1, 12, 1], [16, 1, 30, 1], [34, 1, 46, 1], [19, 24, 26, 25]])
@@ -811,34 +796,33 @@ function bWaterSlide(rng, v) {
   const g = grid(31, 56, 31, R4);
   const y = lotPlinth(g, 0, 0, 30, 30, { fill: C.sand });
   const vi = mod(v, 3);
-  const cA = [C.civSeat, C.roofGreen, C.purple][vi], cB = [C.yellow, C.orange, C.pink][vi];
+  // (w4r9) calmer pairs (the purple/pink v2 was the loudest thing in the
+  // gallery filler) and a tower 17 high (was 26 + a 12-high canopy)
+  const cA = [C.civSeat, C.teal, C.civSeat][vi], cB = [C.yellow, C.orange, C.signWhite][vi];
   // pool
   g.walls(1, y, 1, 24, y, 14, C.signWhite);
   g.box(2, y - 1, 2, 23, y - 1, 13, C.civPool);
   g.box(20, y - 1, 2, 23, y - 1, 5, C.civPoolLt); g.box(4, y - 1, 5, 6, y - 1, 8, C.civPoolLt);   // splash foam
   // tower x 16..27, z 17..28, deck at H
-  const H = y + 26, tx0 = 17, tx1 = 27, tz0 = 17, tz1 = 28;
-  for (const [px, pz] of [[tx0, tz0], [tx1 - 1, tz0], [tx0, tz1 - 1], [tx1 - 1, tz1 - 1]]) { g.box(px, y, pz, px + 1, H, pz + 1, cB); g.box(px, H + 1, pz, px, H + 11, pz, C.signWhite); }
-  for (const yy of [y + 9, y + 18]) { g.walls(tx0, yy, tz0, tx1, yy, tz1, C.signWhite); }
-  for (let k = 0; k < 9; k++) { g.set(tx0 + 1 + k, y + k, tz0, C.signWhite); g.set(tx0 + 1 + k, y + 9 + k, tz0, C.signWhite); g.set(tx1, y + k, tz0 + 1 + k, C.signWhite); g.set(tx1, y + 9 + k, tz0 + 1 + k, C.signWhite); }   // cross braces
+  const H = y + 17, tx0 = 17, tx1 = 27, tz0 = 17, tz1 = 28;
+  const legC = vi === 2 ? C.civSeat : cB;
+  for (const [px, pz] of [[tx0, tz0], [tx1 - 1, tz0], [tx0, tz1 - 1], [tx1 - 1, tz1 - 1]]) { g.box(px, y, pz, px + 1, H, pz + 1, legC); g.box(px, H + 1, pz, px, H + 6, pz, C.signWhite); }
+  g.walls(tx0, y + 8, tz0, tx1, y + 8, tz1, C.signWhite);
+  for (let k = 0; k < 8; k++) { g.set(tx0 + 1 + k, y + k, tz0, C.signWhite); g.set(tx0 + 1 + k, y + 9 + k, tz0, C.signWhite); g.set(tx1, y + k, tz0 + 1 + k, C.signWhite); g.set(tx1, y + 9 + k, tz0 + 1 + k, C.signWhite); }   // cross braces
   g.box(tx0, H, tz0, tx1, H, tz1, cA);
   g.walls(tx0, H + 1, tz0, tx1, H + 3, tz1, C.signWhite);
   for (let x = tx0 + 1; x < tx1; x++) for (let z = tz0 + 1; z < tz1; z++) g.del(x, H + 2, z);
   for (let x = tx0 + 1; x < tx1; x++) for (let z = tz0 + 1; z < tz1; z++) g.del(x, H + 1, z);
   gclr(g, tx0, H + 1, tz0, tx0 + 3, H + 3, tz0);
-  for (let x = tx0 - 1; x <= tx1 + 1; x++) for (let z = tz0 - 1; z <= tz1 + 1; z++) g.set(x, H + 12, z, ((x + z) >> 1) & 1 ? cB : C.signWhite);
-  g.box(tx0 + 2, H + 13, tz0 + 2, tx1 - 2, H + 13, tz1 - 2, cB);
-  g.box(22, H + 14, 22, 22, H + 16, 22, C.red);
-  // zig-zag stair up the right side (x 28..29)
-  for (let i = 0; i < 26; i++) {
-    const z = i < 13 ? 28 - i : 16 + (i - 13);
-    g.box(28, y + i, z, 29, y + i, z, C.signWhite);
-    if (i === 12) g.box(28, y + i, 15, 29, y + i + 1, 16, C.signWhite);
-  }
-  g.box(29, y, 16, 29, y + 26, 16, cB); g.box(29, y, 28, 29, y + 26, 28, cB);
+  for (let x = tx0 - 1; x <= tx1 + 1; x++) for (let z = tz0 - 1; z <= tz1 + 1; z++) g.set(x, H + 7, z, (x === tx0 - 1 || x === tx1 + 1 || z === tz0 - 1 || z === tz1 + 1) ? cA : C.signWhite);   // (w4r9) plain white canopy, colour edge (the checker read loud)
+  g.box(tx0 + 2, H + 8, tz0 + 2, tx1 - 2, H + 8, tz1 - 2, C.signWhite);
+  g.box(22, H + 9, 22, 22, H + 10, 22, C.red);
+  // straight stair up the right side (x 28..29), arriving at the deck
+  for (let i = 0; i < 17; i++) g.box(28, y + i, 12 + i, 29, y + i, 12 + i, C.signWhite);
+  g.box(29, y, 28, 29, y + 17, 28, legC);
   // slide A (straight steep drop, runs -z into the pool)
   const pa = [];
-  for (let i = 0; i <= 14; i++) pa.push([22, Math.max(y - 1, H - 1 - Math.round(i * 1.9)), tz0 - 1 - i, 'z']);
+  for (let i = 0; i <= 11; i++) pa.push([22, Math.max(y - 1, H - 1 - Math.round(i * 1.6)), tz0 - 1 - i, 'z']);
   for (let i = 0; i < pa.length; i++) { const [x, yy, z] = pa[i]; if (i < pa.length - 1) g.box(x - 1, yy - 1, z, x + 1, yy - 1, z, cA); }
   slideSeg(g, pa, cA);
   // slide B: out of the tower's left face along -x, then turn and run -z
@@ -850,7 +834,7 @@ function bWaterSlide(rng, v) {
   for (const [x, y2, z] of pb) if (y2 > y + 1 && ((x + z) % 6 === 0)) g.box(x, y, z, x, y2 - 1, z, C.metal);   // support legs
   g.box(5, yy + 14, 22, 5, yy + 14, 22, cB);
   // loungers, umbrella, splash
-  for (const lz of [2, 8]) { lounger(g, 26, y, lz, 'z', C.red); lounger(g, 28, y, lz, 'z', C.civSeat); }
+  for (const lz of [1, 6]) { lounger(g, 26, y, lz, 'z', C.red); lounger(g, 28, y, lz, 'z', C.civSeat); }
   umbrella(g, 27, y, 14, C.red, C.signWhite, 6, 2);
   // snack hut under slide B's run, a lifeguard chair, palms + hedge
   g.box(7, y, 25, 14, y + 6, 29, C.signWhite); g.box(7, y, 25, 14, y, 29, cA);
@@ -869,59 +853,44 @@ function bWaterSlide(rng, v) {
 // a castle-gate hole, an island green and a pond hole with a bridge — plus a
 // striped lighthouse, a little clubhouse with an awning and sand paths.
 function bMiniGolf(rng, v) {
-  const g = grid(31, 44, 31, R4);
-  const y = lotPlinth(g, 0, 0, 30, 30, { fill: C.civPlaza });
+  const g = grid(31, 24, 31, R4);
+  const y = lotPlinth(g, 0, 0, 30, 30, { fill: 'pave' });
   const vi = mod(v, 3);
-  const felt = C.civPitchA, feltDk = C.civPitchB, kerb = [C.wood, C.signWhite, C.civBrick][vi];
-  const fair = (x0, z0, x1, z1) => { g.box(x0, y - 1, z0, x1, y - 1, z1, felt); g.walls(x0 - 1, y, z0 - 1, x1 + 1, y, z1 + 1, kerb); };
+  // (civic w4r14) critic w4r13 + coherence: the 1×1 fun lots were "noisy
+  // confetti of tiny multicolour props with no hierarchy — pale paving, neat
+  // hedge border, 2-3 purposeful props". Now ONE green felt course inside a
+  // single pale kerb (the dominant surface), three flags, and three props: a
+  // small white windmill, a pond with a plank bridge, and a plain white
+  // clubhouse on the back edge. Lighthouse, awning, flag, log, island hole,
+  // trees and the second pond are gone.
+  const felt = C.civPitchA, feltDk = C.civPitchB, kerb = C.lotRim;
+  g.box(2, y - 1, 2, 28, y - 1, 21, felt);
+  g.walls(1, y, 1, 29, y, 22, kerb);
+  // two inner kerbs split it into three lanes (reads as holes, not a maze)
+  g.box(2, y, 8, 20, y, 8, kerb); g.box(10, y, 15, 28, y, 15, kerb);
   const cup = (x, z, fc) => { g.set(x, y - 1, z, C.black); g.box(x, y, z, x, y + 5, z, C.signWhite); g.box(x + 1, y + 4, z, x + 2, y + 5, z, fc); };
-  const tee = (x, z) => { g.set(x, y - 1, z, feltDk); g.set(x, y, z, C.signWhite); };
-  // grass verges between the holes
-  g.box(1, y - 1, 23, 29, y - 1, 29, C.lotGrass);
-  // hole A (front): long run with a windmill straddling it
-  fair(2, 2, 16, 6); tee(3, 4); cup(15, 4, C.red);
-  const wx = 10;
-  g.box(wx - 2, y, 1, wx + 2, y + 9, 1, C.red); g.box(wx - 2, y, 7, wx + 2, y + 9, 7, C.red);
-  g.box(wx - 2, y + 3, 2, wx + 2, y + 9, 6, C.red); g.box(wx - 2, y + 3, 2, wx + 2, y + 3, 6, C.signWhite);
-  hipRootLike(g, wx - 3, 0, wx + 3, 8, y + 10, C.signWhite);
-  g.set(wx, y + 7, 0, C.darkGray);
-  for (let k = -5; k <= 5; k++) { g.set(wx + k, y + 7, 0, C.signWhite); g.set(wx, y + 7 + k, 0, C.signWhite); }
-  g.set(wx, y + 7, 0, C.yellow);
-  // hole B (front-right): wide green with a pond + bridge
-  fair(19, 2, 28, 12); tee(20, 3); cup(27, 11, C.yellow);
-  g.box(22, y - 1, 5, 26, y - 1, 8, C.civPool); g.walls(21, y - 1, 4, 27, y - 1, 9, V.rock);
-  g.box(23, y, 6, 23, y, 7, V.rockLight);
-  for (let z = 4; z <= 9; z++) g.box(20, y, z, 20, y, z, C.wood);
-  g.box(24, y, 4, 24, y + 1, 9, C.woodDark); g.box(24, y + 2, 4, 24, y + 2, 9, C.wood);
-  // hole C (left): through a little castle gate
-  fair(2, 9, 7, 21); tee(4, 10); cup(5, 20, C.civSeat);
-  g.box(1, y, 14, 3, y + 7, 16, C.stone); g.box(6, y, 14, 8, y + 7, 16, C.stone);
-  g.box(1, y + 5, 14, 8, y + 7, 16, C.stone);
-  for (let x = 1; x <= 8; x += 2) { g.set(x, y + 8, 14, C.stone); g.set(x, y + 8, 16, C.stone); }
-  g.box(4, y + 8, 15, 4, y + 11, 15, C.woodDark); g.box(5, y + 10, 15, 6, y + 11, 15, C.red);
-  // hole D (middle): island green in a pond with a plank bridge
-  g.box(10, y - 1, 10, 17, y - 1, 20, C.civPool); g.walls(9, y, 9, 18, y, 21, V.rock);
-  g.box(12, y - 1, 13, 15, y - 1, 18, felt); g.walls(11, y, 12, 16, y, 19, kerb);
-  g.box(13, y, 9, 14, y, 12, C.plank);
-  cup(14, 16, C.orange);
-  // lighthouse (back-left) — tall red/white landmark
-  for (let yy = y; yy <= y + 20; yy++) disc(g, 5, yy, 26, yy > y + 14 ? 1.6 : 2.2, ((yy - y) >> 2) & 1 ? C.signWhite : C.red);
-  disc(g, 5, y + 21, 26, 2.6, C.darkGray); g.box(4, y + 22, 25, 6, y + 23, 27, C.lamp); g.box(4, y + 24, 25, 6, y + 24, 27, C.red); g.set(5, y + 25, 26, C.red);
-  // clubhouse (back-right): white hut, green awning, rooftop rail, putters rack
-  g.box(19, y, 23, 29, y + 7, 29, C.signWhite); g.box(19, y, 23, 29, y, 29, C.roofGreen);
-  g.box(19, y + 8, 23, 29, y + 8, 29, C.roofGreen);
-  const F = facade(g, 'front', 23);
-  door(F, 21, y, 2, 5, { color: C.woodDark, frame: C.roofGreen, step: null });
-  F.box(24, y + 2, 0, 27, y + 4, 0, C.civGlass); F.box(24, y + 1, 1, 27, y + 1, 1, C.wood);
-  awning(F, 19, 29, y + 7, 2, { colors: [C.roofGreen, C.signWhite] });
-  acBox(g, 26, y + 9, 26, { w: 3, d: 3, h: 2 });
-  flagPole(g, 21, y + 9, 27, 6, [C.red, C.signWhite], { w: 3, fh: 2 });
-  for (let x = 20; x <= 22; x++) g.box(x, y, 20, x, y + 3, 20, C.metal);
-  // trees + flowers + bench on the verges
-  tree(g, 11, y, 26, { w: 5, h: 5, trunk: 4, tier: false }); tree(g, 16, y, 27, { w: 5, h: 4, trunk: 3, tier: false });
-  for (let x = 9; x <= 17; x += 2) flower(g, x, y, 23, V.petals[x % V.petals.length]);
-  benchS(g, 19, y, 16, 'z', 4, { seat: C.wood });
-  crowd(g, [[1, 1, 29, 29]], y, 8, 9 + vi);
+  const tee = (x, z) => { g.set(x, y - 1, z, feltDk); g.set(x, y - 1, z + 1, feltDk); };
+  const fc = [C.red, C.yellow, C.red][vi];
+  tee(3, 4); cup(26, 5, fc);
+  tee(26, 11); cup(4, 12, fc);
+  tee(3, 18); cup(26, 19, fc);
+  // windmill straddling lane 1
+  const wx = 14, wmc = [C.roofBlue, C.civCornice, C.roofBlue][vi];
+  g.box(wx - 1, y, 2, wx + 1, y + 5, 2, C.signWhite); g.box(wx - 1, y, 7, wx + 1, y + 5, 7, C.signWhite);
+  g.box(wx - 1, y + 3, 3, wx + 1, y + 5, 6, C.signWhite);
+  hipRootLike(g, wx - 2, 1, wx + 2, 8, y + 6, wmc);
+  for (let k = -3; k <= 3; k++) { g.set(wx + k, y + 5, 1, C.woodDark); g.set(wx, y + 5 + k, 1, C.woodDark); }
+  // pond in lane 2 with a plank bridge
+  g.box(14, y - 1, 10, 19, y - 1, 13, C.civPool); g.walls(13, y - 1, 9, 20, y - 1, 14, V.rock);
+  g.box(16, y, 9, 17, y, 14, C.plank);
+  // plain white clubhouse on the back edge, flat roof, one window + door
+  g.box(18, y, 24, 29, y + 5, 29, C.signWhite); g.box(18, y, 24, 29, y, 29, C.lotRim);
+  g.box(17, y + 6, 23, 30, y + 6, 30, C.civCornice);
+  const F = facade(g, 'front', 24);
+  door(F, 20, y, 2, 4, { color: C.woodDark, frame: C.civCornice, step: null });
+  F.box(24, y + 2, 0, 27, y + 3, 0, C.civGlass);
+  benchS(g, 4, y, 26, 'x', 5, { seat: C.wood });
+  crowd(g, [[2, 2, 28, 21]], y, 3, 9 + vi);
   return doneHi(g);
 }
 // Small solid hip used for the windmill cap.
@@ -934,8 +903,10 @@ function bSkatePark(rng, v) {
   const g = grid(31, 36, 31, R4);
   const y = lotPlinth(g, 0, 0, 30, 30, { fill: C.lotPaveDark });
   const vi = mod(v, 3);
-  const graf = [[C.pink, C.teal, C.yellow], [C.orange, C.civSeat, C.roofGreen], [C.purple, C.yellow, C.red]][vi];
+  // (w4r14) coherence [civic]: "noisy confetti of tiny multicolour props" —
+  // one surface colour + white per variant (was three graffiti hues each)
   const surf = [C.civSeat, C.teal, C.orange][vi];
+  const graf = [surf, C.signWhite, surf];
   const deckC = C.civPanel;
   // painted floor graphics
   ringH(g, 15, y - 1, 10, 3, 4.2, graf[0]); disc(g, 15, y - 1, 10, 1.6, graf[2]);
@@ -1171,26 +1142,104 @@ function dFlowerBed(rng, v) {
   // clutter, let the landmarks stand alone"). Now: a lawn filling the whole
   // tile inside a pale kerb (neighbours join into one calm parterre), one
   // low round bed of clipped shrub + blooms in the middle. Only the flower colours change per variant.
-  const g = grid(31, 6, 31, R4);
+  // (civic w4r11) critic w4r10: "the school's lot is mostly plain grass with
+  // generic paving … give each civic lot a designed apron or plaza instead of
+  // filler grass" — the tiles beside the landmarks are this model. A small
+  // formal garden now: pale paved walks from each edge centre (they line up
+  // tile to tile) meet a round paved court round the shrub bed, four lawn
+  // quadrants, two benches facing the bed and one park lamp. Still low.
+  // (civic w4r13) critics w4r11 + w4r12 agree: the gallery strips beside the
+  // landmarks read as "one generic tile repeated over and over: a green plaza
+  // with benches and a small planter". The four variants were the SAME garden
+  // in four bloom colours. Now four different gardens (the sim picks a
+  // variant per tile, so neighbours differ): v0 the formal court, v1 striped
+  // cutting-garden beds with a little glasshouse, v2 a warm paved fountain
+  // court with corner planters, v3 a lawn with a cuboid tree, a picnic table
+  // and a clipped box-hedge edge. All low; only v3's one tree rises.
   const vi = mod(v, 4);
-  const edge = [C.lotRim, C.lotRim, C.civMarble, C.lotRim][vi];
-  const sets = [[C.red, C.yellow, C.signWhite], [C.pink, C.purple, C.signWhite], [C.civSeat, C.yellow, C.signWhite], [C.red, C.pink, C.yellow]][vi];
+  const g = grid(31, vi === 3 ? 20 : 8, 31, R4);
+  const LAWN = C.civLawn != null ? C.civLawn : C.lotGrass;
+  if (vi === 1) {
+    // ---- (w4r14) critic w4r13: the filler lots were "a scatter of tiny red,
+    // green and orange kiosks, hedges and props with no hierarchy". The
+    // five-colour cutting beds + glasshouse are now ONE calm border garden:
+    // lawn inside a pale kerb, a pale walk down the middle (lines up with v0's
+    // walk), and two long low flower borders flanking it in ONE bloom colour.
+    g.box(0, 0, 0, 30, 0, 30, LAWN);
+    g.walls(0, 0, 0, 30, 0, 30, C.lotRim);
+    g.box(13, 0, 0, 17, 0, 30, C.lotPave);
+    const bc = [C.signWhite, C.yellow, C.red][mod(v >> 2, 3)];
+    for (const [x0, x1] of [[8, 11], [19, 22]]) {
+      g.box(x0, 1, 4, x1, 1, 26, V.bushDark); g.box(x0, 1, 4, x1, 1, 4, C.lotRim); g.box(x0, 1, 26, x1, 1, 26, C.lotRim);
+      g.box(x0 + 1, 2, 5, x1 - 1, 2, 25, V.bush);
+      fineBlooms(g, x0 + 1, 5, x1 - 1, 25, 3, [bc], 3);
+    }
+    benchS(g, 2, 1, 13, 'z', 5, { seat: C.wood, flip: true });
+    return doneHi(g);
+  }
+  if (vi === 2) {
+    // ---- fountain court: warm plaza paving framed by a pale border and a
+    // darker edge course, a round white basin with a two-bowl jet, four
+    // corner planters with clipped shrubs, benches facing the water
+    g.box(0, 0, 0, 30, 0, 30, C.civPlaza);
+    g.walls(0, 0, 0, 30, 0, 30, C.lotRim);
+    g.walls(2, 0, 2, 28, 0, 28, C.lotPave); g.walls(3, 0, 3, 27, 0, 27, C.lotPaveDark);
+    for (let x = 6; x <= 24; x++) for (let z = 6; z <= 24; z++) {
+      const r = Math.hypot(x - 15, z - 15);
+      if (r < 8.6 && r >= 6.7) { g.set(x, 0, z, C.lotPave); g.set(x, 1, z, C.civMarble); if (r < 7.4) g.set(x, 2, z, C.signWhite); }
+      else if (r < 6.7) { g.set(x, 0, z, C.civPool); g.set(x, 1, z, r < 2.2 ? C.civMarble : (r > 5.6 ? C.civPoolLt : C.civPool)); }
+    }
+    g.box(14, 2, 14, 16, 3, 16, C.civMarble); g.box(13, 4, 13, 17, 4, 17, C.signWhite);   // lower bowl
+    g.box(14, 5, 14, 16, 5, 16, C.civPoolLt); g.set(15, 6, 15, C.civMarble); g.set(15, 7, 15, C.civPoolLt);
+    // (w4r14) corner planters + paving bands gone: one calm paved court
+    benchS(g, 13, 1, 3, 'x', 5, { seat: C.wood, flip: true });
+    benchS(g, 13, 1, 26, 'x', 5, { seat: C.wood });
+    return doneHi(g);
+  }
+  if (vi === 3) {
+    // ---- lawn corner: open grass, a gravel path on the diagonal, one
+    // cuboid tree (ref05 field trees), a picnic table, a clipped shrub edge
+    g.box(0, 0, 0, 30, 0, 30, LAWN);
+    g.walls(0, 0, 0, 30, 0, 30, C.lotRim);
+    // a row of separate clipped cube bushes along two edges (authored back +
+    // left), like ref05's bush rows; a continuous row read as a green wall
+    // (w4r14) just the tree and the picnic pad: the bush rows, flower strip
+    // and rock read as confetti (critic w4r13)
+    tree(g, 23, 1, 8, { w: 7, h: 6, trunk: 4 });
+    // picnic table + two benches, on its own little gravel pad
+    g.box(6, 0, 5, 16, 0, 14, C.lotPave); g.walls(6, 0, 5, 16, 0, 14, C.lotPaveDark);
+    g.box(9, 1, 9, 9, 2, 9, C.wood); g.box(13, 1, 9, 13, 2, 9, C.wood); g.box(8, 3, 8, 14, 3, 10, C.plank);
+    g.box(8, 1, 7, 14, 1, 7, C.plank); g.box(8, 1, 11, 14, 1, 11, C.plank);
+    return doneHi(g);
+  }
+  const edge = C.lotRim;
+  const sets = [C.red, C.yellow, C.signWhite];
   // (civLawn: lotGrass rendered neon (199,245,61) across the whole fill strip;
   // civLawn lands near the terrain field grass (~157,218,89))
-  g.box(0, 0, 0, 30, 0, 30, C.civLawn != null ? C.civLawn : C.lotGrass);
+  g.box(0, 0, 0, 30, 0, 30, LAWN);
+  const pave = C.lotPave;
+  g.box(13, 0, 0, 17, 0, 30, pave); g.box(0, 0, 13, 30, 0, 17, pave);
+  g.box(6, 0, 6, 24, 0, 24, C.lotPaveDark); g.box(7, 0, 7, 23, 0, 23, pave);   // square court, darker edge course
+  for (const [cx, cz] of [[6, 6], [6, 24], [24, 6], [24, 24]]) g.set(cx, 0, cz, LAWN);
   g.walls(0, 0, 0, 30, 0, 30, edge);
-  for (let x = 7; x <= 23; x++) for (let z = 7; z <= 23; z++) {
+  for (let x = 9; x <= 21; x++) for (let z = 9; z <= 21; z++) {
     const r = Math.hypot(x - 15, z - 15);
-    if (r < 7.0) g.set(x, 0, z, C.dirtDark);                       // soil ring (a pale kerb ring read as white donuts)
-    if (r < 6.2) g.set(x, 1, z, r < 3.4 ? V.bushDark : V.bush);
-    if (r < 3.4) { g.set(x, 2, z, V.bush); if (r < 2.2) g.set(x, 3, z, V.bush); }
+    if (r < 5.6 && r >= 4.8) g.set(x, 1, z, C.lotRim);              // low kerb round the bed
+    else if (r < 4.8) {
+      g.set(x, 0, z, C.dirtDark); g.set(x, 1, z, r < 2.6 ? V.bushDark : V.bush);
+      if (r < 2.6) { g.set(x, 2, z, V.bush); if (r < 1.5) g.set(x, 3, z, V.bush); }
+    }
   }
   { const H = hiGrid(g); let i = 0;                                   // blooms on the bed's outer ring
-    for (let X = 17; X <= 44; X += 3) for (let Z = 17 + ((X >> 1) % 2); Z <= 44; Z += 3) {
+    for (let X = 19; X <= 42; X += 3) for (let Z = 19 + ((X >> 1) % 2); Z <= 42; Z += 3) {
       const r = Math.hypot((X + 0.5) / 2 - 15.5, (Z + 0.5) / 2 - 15.5);
-      if (r < 3.8 || r > 6.0) continue;
+      if (r < 2.8 || r > 4.4) continue;
       H.set(X, 4, Z, sets[(i++ * 7 + (X ^ Z)) % 3]);
     } }
+  // two benches facing the bed from either side (symmetric, so any gallery
+  // snap reads the same)
+  benchS(g, 8, 1, 13, 'z', 5, { seat: C.wood, flip: true });
+  benchS(g, 21, 1, 13, 'z', 5, { seat: C.wood });
   return doneHi(g);
 }
 function dBench(rng, v) {
@@ -1317,7 +1366,7 @@ function dStatue(rng, v) {
   // v0 hero figure, v1 obelisk, v2 victory column.
   const vi = mod(v, 3);
   const g = grid(31, 60, 31, R4);
-  const cx = 15, cz = 15, mb = C.civMarble, mbDk = C.civPanel, bz = vi === 0 ? C.civBronze : C.gold;
+  const cx = 15, cz = 15, mb = C.civMarble, mbDk = C.civPanel, bz = vi === 0 ? C.civHallDk : C.gold;
   g.box(0, 0, 0, 30, 0, 30, C.civPlaza); g.walls(0, 0, 0, 30, 0, 30, C.lotRim);
   for (let x = 1; x < 30; x += 6) g.box(x, 0, 1, x, 0, 29, C.lotPave);
   for (const [a, b, h0] of [[4, 26, 1], [7, 23, 3], [10, 20, 5]]) {
@@ -1343,8 +1392,8 @@ function dStatue(rng, v) {
   // pedestal with cornices + plaques on all four faces
   const P = 7;
   g.box(12, P, 12, 18, P, 18, mbDk); g.box(13, P + 1, 13, 17, P + 7, 17, mb); g.box(12, P + 8, 12, 18, P + 8, 18, mb);
-  g.box(14, P + 3, 12, 16, P + 5, 12, C.civBronze); g.box(14, P + 3, 18, 16, P + 5, 18, C.civBronze);
-  g.box(12, P + 3, 14, 12, P + 5, 16, C.civBronze); g.box(18, P + 3, 14, 18, P + 5, 16, C.civBronze);
+  g.box(14, P + 3, 12, 16, P + 5, 12, C.civHallDk); g.box(14, P + 3, 18, 16, P + 5, 18, C.civHallDk);
+  g.box(12, P + 3, 14, 12, P + 5, 16, C.civHallDk); g.box(18, P + 3, 14, 18, P + 5, 16, C.civHallDk);
   const T = P + 9;
   if (vi === 1) {                                                       // obelisk + gilt tip
     for (let yy = T; yy < T + 30; yy++) { const i = yy < T + 16 ? 0 : 1; g.box(13 + i, yy, 13 + i, 17 - i, yy, 17 - i, mb); }

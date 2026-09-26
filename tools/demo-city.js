@@ -600,9 +600,13 @@
     // flower-mound on every tile"). Fill with the category's own varied 1×1
     // attractions instead (like the factories page), rotating, so the district
     // reads dense and bespoke.
-    const FUN1 = (BV.models.CATALOG.fun || []).filter((e) => e.tw === 1 && e.td === 1 && e.id !== 'wind-power').map((e) => e.id);   // turbines cut through the frame
+    // (coordinator 04:55, civic w4r9) FROZEN. Six filler variants each lost for
+    // the opposite reason (empty → asphalt islands, parks → tree carpet, paving →
+    // slabs, flower beds → repetitive, attractions → crammed). Calm low mix:
+    // flower beds with the odd low playground / mini-golf; nothing tall.
+    const CALM = ['flower-bed', 'flower-bed', 'playground', 'flower-bed', 'mini-golf'];
     let funK = 0;
-    const civicFill = () => FUN1.length ? FUN1[(funK++) % FUN1.length] : 'park';
+    const civicFill = () => CALM[(funK++) % CALM.length];
     // (coordinator, res w4r1-w4r4) Homes: a 1-tile garden plot (flower bed /
     // hedge) between neighbouring houses, so each house reads as its own lot
     // with a yard (ref01) instead of one merged mass; rows stay back to back.
@@ -712,6 +716,23 @@
         const i = z * N + x;
         if (s.map[i] !== T.GRASS || (s.occ && s.occ[i])) continue;
         try { BV.paint(civicFill(), x, z); } catch (err) {}
+      }
+    }
+    // (coordinator 03:55, downtown w4r11) Towers stood in an open meadow ("a big
+    // empty grass field instead of dense neighbouring lots"). Ring the downtown
+    // showroom with 2 tiles of low shops/homes outside its outer roads so it
+    // sits in city fabric; low buildings don't hide the towers.
+    if (!one && catM && catM[1] === 'downtown') {
+      const ring = SHOPS.concat(HOMES.filter((h) => h !== 'tall-apartment'));
+      let rk = 0;
+      const xa = x0 - 4, xb = x0 + W + 3, za = z0 - 2, zb = z0 + rowZ[2] + 2;
+      for (let z = za; z <= zb; z++) for (let x = xa; x <= xb; x++) {
+        if (x < 0 || z < 0 || x >= N || z >= N) continue;
+        const inner = x > x0 - 3 && x < x0 + W + 2 && z > z0 - 1 && z < z0 + rowZ[2] + 1;
+        if (inner) continue;
+        const i = z * N + x;
+        if (s.map[i] !== T.GRASS || (s.occ && s.occ[i])) continue;
+        try { BV.paint(ring[(rk++ * 7) % ring.length], x, z); } catch (err) {}
       }
     }
     BV.ff(40);

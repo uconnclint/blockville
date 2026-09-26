@@ -967,38 +967,52 @@ function hotelLot(g, P, rng, o = {}) {
   const Y = 2, W = g.sx, D = g.sz, xc = o.xc != null ? o.xc : W >> 1, hw = o.hw || 6;
   const [pv, pl] = g.pave || [C.lotPave, C.lotPaveDark];
   const fz = o.fz != null ? o.fz : P.z0 - 8;
-  const lawn = (x0, z0, x1, z1, tr) => {
+  // (w4r13) critics w4r10-w4r12: "tower lots are thin rims with green cube
+  // bushes … the reference uses PAVED forecourts with planters, benches and
+  // steps on a clearly bounded lot". The lawn panels in hedge rims are now
+  // stone-kerbed PAVED courts in the lot's own paving, each with a tree in a
+  // stone pit, a long flower planter and a bench — the lot reads as one light
+  // plinth against the black roads instead of green blobs on green grass.
+  const court = (x0, z0, x1, z1, tr) => {
     if (x1 - x0 < 3 || z1 - z0 < 3) return;
-    g.box(x0, 1, z0, x1, 1, z1, C.lotGrass);
-    g.walls(x0, Y, z0, x1, Y, z1, C.bush);
-    g.walls(x0, 1, z0, x1, 1, z1, C.leafMid);
-    for (const [tx, tz] of tr || []) tree(g, tx, Y, tz, 6);
-    for (let k = 0; k < Math.max(2, ((x1 - x0) * (z1 - z0)) / 40); k++) {
-      const fx = x0 + 2 + ((rng() * (x1 - x0 - 3)) | 0), fz2 = z0 + 2 + ((rng() * (z1 - z0 - 3)) | 0);
-      if (g.map.get(fx + ',' + Y + ',' + fz2) == null) g.set(fx, Y, fz2, pk(rng, [C.pink, C.yellow, C.signWhite, C.red]));
+    g.box(x0, 1, z0, x1, 1, z1, pv);
+    tiles(g, x0 + 1, z0 + 1, x1 - 1, z1 - 1, 1, pl, 5);
+    g.walls(x0, 1, z0, x1, 1, z1, C.dtStone);
+    for (const [tx, tz] of tr || []) {
+      g.box(tx - 2, Y, tz - 2, tx + 3, Y, tz + 3, C.stoneDark); g.box(tx - 1, Y, tz - 1, tx + 2, Y, tz + 2, C.dirtDark);
+      tree(g, tx, Y + 1, tz, 6);
+    }
+    const w = x1 - x0, d = z1 - z0;
+    if (w >= 12 && d >= 6) {
+      const px0 = tr && tr.length && tr[0][0] < ((x0 + x1) >> 1) ? x1 - 9 : x0 + 3;
+      planter(g, px0, z1 - 4, px0 + 6, z1 - 2, Y, { box: C.dtStone, flowers: [C.pink, C.yellow, C.signWhite, C.red], rng });
+      bench(g, px0, Y, z0 + 3, 'x', 5);
     }
   };
   // the walk: darker paving from the kerb to the steps, kerb-edged
   g.box(xc - hw, 1, 1, xc + hw, 1, fz, pl);
   g.box(xc - hw - 1, 1, 1, xc - hw - 1, 1, fz, C.dtStone); g.box(xc + hw + 1, 1, 1, xc + hw + 1, 1, fz, C.dtStone);
-  // front lawns either side of the walk (a paved margin to the walk + kerb)
+  // front courts either side of the walk (a paved margin to the walk + kerb)
   const la = xc - hw - 4, lb = xc + hw + 4, lz0 = 4, lz1 = fz - 2;
   if (lz1 - lz0 >= 4) {
-    lawn(4, lz0, la, lz1, o.trees === false ? [] : [[6, lz0 + 2]]);
-    lawn(lb, lz0, W - 5, lz1, o.trees === false ? [] : [[W - 8, lz0 + 2]]);
+    court(4, lz0, la, lz1, o.trees === false ? [] : [[7, lz0 + 3]]);
+    court(lb, lz0, W - 5, lz1, o.trees === false ? [] : [[W - 9, lz0 + 3]]);
   }
-  // lamp pairs + benches along the walk
-  // L-shaped clipped hedges on the two front corners of the lot
-  for (const [x0, x1] of [[1, 12], [W - 13, W - 2]]) hedge(g, x0, Y, 1, x1, 1, 2);
-  // side strips: lawn + trees where there is room, a hedge where there isn't
+  // bollards (not hedge blobs) along the front kerb corners
+  bollards(g, 2, 12, 1, Y, 3); bollards(g, W - 13, W - 3, 1, Y, 3);
+  // side strips: paving with trees in stone pits where there is room
   for (const [x0, x1] of [[1, P.x0 - 2], [P.x1 + 2, W - 2]]) {
     const w = x1 - x0 + 1;
     if (w >= 7) {
-      const z0 = Math.max(fz + 1, P.z0 - 2), z1 = D - 4;
-      lawn(x0 + 1, z0, x1 - 1, z1, []);
-      for (let z = z0 + 3; z + 4 <= z1; z += 12) tree(g, ((x0 + x1) >> 1) - 1, Y, z, 5);
-    } else if (w >= 2) hedge(g, x0, Y, P.z0, x1, D - 3, 2);
-    hedge(g, x0 <= 1 ? 1 : W - 2, Y, 2, x0 <= 1 ? 1 : W - 2, 12, 2);
+      const z0 = Math.max(fz + 1, P.z0 - 2), z1 = D - 4, tx = ((x0 + x1) >> 1) - 1;
+      for (let z = z0 + 3; z + 4 <= z1; z += 12) {
+        g.box(tx - 2, Y, z - 2, tx + 3, Y, z + 3, C.stoneDark); g.box(tx - 1, Y, z - 1, tx + 2, Y, z + 2, C.dirtDark);
+        tree(g, tx, Y + 1, z, 5);
+      }
+    } else if (w >= 3) {
+      // (w4r13) narrow strip: stone flower boxes on paving, not a hedge wall
+      for (let z = P.z0; z + 5 <= D - 3; z += 9) planter(g, x0, z, x1, z + 5, Y, { box: C.dtStone, flowers: [C.pink, C.yellow, C.signWhite], rng });
+    }
   }
   // back: a clipped hedge line along the rear edge + a service corner
   hedge(g, 2, Y, D - 2, W - 3, D - 2, 2);
@@ -1295,7 +1309,7 @@ function bikeRack(g, x0, y, z, n = 3) { for (let i = 0; i < n; i++) { const x = 
 // Call BEFORE anything that should run through it (spines, lift cores).
 function skyGarden(g, B, ys, ye, o = {}) {
   const d = o.d || 3, col = o.col != null ? o.col : C.dtFrame, slab = o.slab != null ? o.slab : col;
-  const glass = o.glass != null ? o.glass : C.dtGlassDark, I = ins(B, d), out = o.out || 4;
+  const glass = o.glass != null ? o.glass : C.dtGlassDark, I = ins(B, d), out = o.out != null ? o.out : 4;
   for (let y = ys; y <= ye; y++) for (let x = B.x0 - out; x <= B.x1 + out; x++) for (let z = B.z0 - out; z <= B.z1 + out; z++)
     if (!(x >= I.x0 && x <= I.x1 && z >= I.z0 && z <= I.z1)) g.del(x, y, z);
   // slabs: the floor ledge and the soffit fill the ring out to 1 proud
@@ -1975,7 +1989,7 @@ function bSmallOffice(rng, v) {
 function bGlassOffice(rng, v) {
   const glass = pk(rng, [[C.dtGlassDeep, C.dtGlass, C.dtGlassHi], [C.dtGlassDark, C.dtGlassTeal, C.dtGlassHi], [C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi]]);
   const wall = [C.dtLimeShade, C.dtTerra, C.dtGlassTeal][v % 3];   // (w4r10) v1 terracotta piers, not blue-on-blue (w4r9: every tower the same blue glass)   // w10: a teal-clad tower (brief: brick / terracotta / teal / dark glass)   // r9: warmer shafts (critic r8: monochrome blue/grey)
-  const nf = 5 + v;
+  const nf = 4 + v;   // (w4r12) one storey off the repeated middle (critic w4r11)
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
   const B = box(6, 10, 25, 28), P = box(2, 8, 28, 29);
@@ -2018,7 +2032,7 @@ function bGlassOffice(rng, v) {
 function bBrickHighrise(rng, v) {
   const brick = [C.brick, C.dtTerra, C.brickDark][v % 3];
   const stone = pk(rng, [C.dtLime, C.cream, C.dtStone]);
-  const nf = 5 + v;
+  const nf = 4 + v;   // (w4r12) one storey off the repeated middle (critic w4r11)
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
   const B = box(5, 10, 25, 27), O = ins(B, -1), P = box(3, 8, 27, 29);
@@ -2075,7 +2089,7 @@ function bDecoTower(rng, v) {
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
   g.box(12, 1, 1, 18, 1, 6, C.lotPaveDark);
-  const stages = [[box(5, 10, 25, 28), Y + 72 + v * 4], [box(8, 13, 22, 25), Y + 98 + v * 4], [box(10, 15, 20, 23), Y + 114 + v * 4]];
+  const stages = [[box(5, 10, 25, 28), Y + 62 + v * 4], [box(8, 13, 22, 25), Y + 86 + v * 4], [box(10, 15, 20, 23), Y + 102 + v * 4]];
   // (r9) street podium in a contrasting material under stage one
   const [pw0, pp0, pf0] = [POD.teal, POD.brick, POD.deepBrick][v % 3]();
   const P = box(3, 8, 27, 29);
@@ -2125,7 +2139,7 @@ function bGreenGlassTower(rng, v) {
   // (w4r10) critic w4r9: every tower was the same blue glass. The Green Tower
   // is GREEN glass in every variant (its own material family downtown)
   const glass = pk(rng, [[C.dtGlassGreen, C.dtGlassGreen, C.dtGlassHi], [C.dtGlassGreen, C.dtGlassTeal, C.dtGlassHi], [C.dtPad, C.dtGlassGreen, C.dtGlassHi]]);
-  const nf = 5 + v;
+  const nf = 4 + v;   // (w4r12) one storey off the repeated middle (critic w4r11)
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30, { fill: 'grass' });
   g.box(4, 1, 1, 26, 1, 7, C.lotPave);
@@ -2248,7 +2262,7 @@ function bRoundTower(rng, v) {
   // (w10) per-variant slab colour: white / terracotta / cream (the drum was
   // one blue-and-white stripe in every variant, repeated 4x in iso-mid)
   const slabC = [C.dtFrame, C.resTerracotta, C.cream][v % 3];
-  const nf = 6 + v;
+  const nf = 5 + v;   // (w4r12) one storey off the repeated middle (critic w4r11)
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
   const cx = 15, cz = 17;
@@ -2477,14 +2491,24 @@ function bShoppingOffice(rng, v) {
   // notches at both front corners, a glass stair tower on the front, a band
   // every two storeys, heavy cornice
   const O = box(8, 13, 54, 26);
-  const nf = 5 + v;
-  const top = pt + 2 + FL * nf;
-  shell(g, O, pt + 1, top, slabC, C.roofGray);
-  framedBays(g, O, 'fblr', { y0: pt + 1, y1: top - 1, bw: 7, pw: 2, cw: 3, pd: 1, cpd: 2, pierC: slabC, spand: spand, frameC: C.dtFrame, sillC: null, sill: 2, wh: 8, deep: false,
+  // (w4r12) critic w4r11: "tall stacks of identical window-band floors, the
+  // shaft nearly all of the height". The slab is 3-4 framed storeys under a
+  // main cornice, then a glass ATTIC storey set back 3 behind a railed
+  // terrace (a change of material at the top), then the roof kit.
+  const nf = 3 + v, yF = pt + 2 + FL * nf;
+  shell(g, O, pt + 1, yF, slabC, C.roofGray);
+  framedBays(g, O, 'fblr', { y0: pt + 1, y1: yF - 1, bw: 7, pw: 2, cw: 3, pd: 1, cpd: 2, pierC: slabC, spand: spand, frameC: C.dtFrame, sillC: null, sill: 2, wh: 8, deep: false,
     ledgeC: C.dtFrame, ledgeOut: 1,
     glassFn: skyGlass([C.dtGlass, glass, C.dtGlassHi], nf, 6), sheen: C.dtGlassHi, hi: C.winCool, bandEvery: 3, bandC: slabC, bandOut: 2,
     balc: (S, k, r) => S.s === 'f' && r % 2 === 1 && k % 2 === 0, balcC: C.dtFrame, ac: (S, k, r) => S.s !== 'f' && ((k * 3 + r * 5) % 6) === 2 });
-  for (const x0 of [O.x0, O.x1 - 6]) notch(g, O, box(x0, O.z0, x0 + 6, O.z0 + 4), pt + 1, top - 1, { floor: FL, back: C.dtGlass, slab: C.dtFrame, plants: true });
+  for (const x0 of [O.x0, O.x1 - 6]) notch(g, O, box(x0, O.z0, x0 + 6, O.z0 + 4), pt + 1, yF - 1, { floor: FL, back: C.dtGlass, slab: C.dtFrame, plants: true });
+  dentils(g, O, yF, C.dtFrame);
+  const cy = roofCornice(g, O, yF + 1, slabC, spand, 2, 0);
+  railing(g, O.x0 - 2, O.z0 - 2, O.x1 + 2, O.z1 + 2, cy, C.metal);
+  const Oc = box(O.x0 + 3, O.z0 + 3, O.x1 - 3, O.z1 - 3), top = cy + FL;
+  shell(g, Oc, cy - 1, top, C.dtFrame, C.roofGray);
+  curtain(g, Oc, 'fblr', { y0: cy, y1: top - 1, cw: 2, cornerC: slabC, cornerOut: 1, pitch: 5, mullC: C.dtFrame, transC: C.dtFrame, seed: 2 + v });
+  for (const [x0, x1] of [[O.x0, Oc.x0 - 2], [Oc.x1 + 2, O.x1]]) planter(g, x0, O.z0, x1, O.z0 + 1, cy, { box: C.dtFrame });
   // service core standing proud of the back
   // (r9) in the podium colour with a stair-window column + a ledge every two
   // storeys (it was a flat spandrel-coloured slab: a big blue stripe up the back)
@@ -2496,11 +2520,10 @@ function bShoppingOffice(rng, v) {
   shell(g, Ts, pt + 1, top + 6, slabC, C.roofGray);
   ribbons(g, Ts, 'flr', { y0: pt + 2, y1: top + 4, floor: FL, sill: 1, wh: 10, d: 1, cw: 1, pitch: 3, glass: C.dtGlassTeal, hiRows: 1, mullC: slabC });
   cornice(g, Ts, top + 6, slabC, spand, 1, 0);
-  dentils(g, O, top, C.dtFrame);
-  const ct = roofCornice(g, O, top + 1, slabC, spand, 2, 0);
-  parapetOn(g, O, ct, 1, slabC, null);
-  roofCrowd(g, 12, 16, 36, 24, ct, rng, { ac: 3, vents: 2 });
-  penthouse(g, 40, ct, 16, 50, 23, 8, C.dtFrame, C.roofGray, C.metalDark);
+  const ct = roofCornice(g, Oc, top + 1, slabC, spand, 2, 0);
+  parapetOn(g, Oc, ct, 1, slabC, null);
+  roofCrowd(g, Oc.x0 + 1, Oc.z0 + 1, 36, Oc.z1 - 1, ct, rng, { ac: 3, vents: 2 });
+  penthouse(g, 40, ct, Oc.z0 + 1, 48, Oc.z1 - 1, 7, C.dtFrame, C.roofGray, C.metalDark);
   // podium roof terrace (front strip)
   for (const x of [13, 22, 41, 50]) umbrella(g, x, pt + 1, 8, C.red, C.signWhite);
   planter(g, 4, 7, 7, 27, pt + 1, { box: C.dtFrame });
@@ -2561,87 +2584,54 @@ function bGlassSkyscraper(rng, v) {
   // terrace — no longer the same cream/white as the shaft's frames.
   const P = box(9, 22, 53, 60);
   const [pw0, pp0, pf0] = [POD.brick, POD.terra][v % 2]();
-  const pt = streetPodium(g, P, Y, { ground: 'colonnade', wall: pw0, colC: pp0, cornerC: pw0, pier: pp0, fascia: pf0, skipF: [22, 40], seed: v }) - 1;
+  const pt = streetPodium(g, P, Y, { ground: 'colonnade', wall: pw0, colC: pp0, cornerC: pw0, pier: pp0, fascia: pf0, skipF: [22, 40], seed: v, h: 40 }) - 1;
   portico(g, P.z0, { Y, xc: 31, w: 15, depth: 7, kind: 'glass', cols: 4, colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: C.dtNavyPanel, sign: 'letters', text: 'SKY', textC: C.yellow, planters: false });
   // shaft
-  const T = box(15, 27, 47, 57), nf = 7 + v;
-  const y0 = pt + 1, top = y0 + FL * nf;
-  shell(g, T, y0, top, pierS, C.roofGray);
-  // glass fins between continuous glass slots (curtain wall), dark-glass
-  // corner piers standing 2 proud, a white sky-lobby band every four storeys
-  // (r8) critic r7: "tall slabs of flat colour … each bay one repeated window
-  // strip, nothing marks the floors". Now: silver-stone pilasters standing 1
-  // proud between white-framed windows, a white ledge on EVERY floor (lit top
-  // + shadow line), light corner piers (no navy mass), bright glass.
-  { const skyB = { y0, y1: top - 1, pw: 1, cw: 1, pd: 1, cpd: 2, pierC: pierS, cornerC: fin, spand: spandG, inset: 0, sillC: null, frameC: C.dtGlassHi, mullC: pierS,
-    sill: 2, wh: 8, glassFn: skyGlass(tones, nf, 9), sheen: C.dtGlassHi, hi: C.winCool, bandEvery: 4, bandH: 2, bandOut: 3, bandC: wall, deep: false,
-    ledgeC: wall, ledgeOut: 1,
-    balc: (S, k, r) => r % 4 !== 3 && (k === 0 || k === 3) && r % 2 === 0, balcC: wall, railC: C.dtGlassHi,
-    ac: (S, k, r) => k > 0 && k < 3 && ((k * 3 + r * 5 + S.u0) % 9) === 0 };
-  void skyB;
-  // (w4r4) critic w4r3: "SKY … a uniform grid of small dark recessed
-  // windows". Now a curtain wall of TALL 2-storey glass bays between slim
-  // pilasters 1 proud (white transoms + mullions), tied by a white band
-  // every 2 storeys: big reflective panes with diagonal streaks.
-  const gb = { y0, y1: top - 1, pw: 2, cw: 2, pd: 1, cpd: 1, pierC: pierS, cornerC: fin, span: 2, bandC: wall, capC: wall, bandH: 2, transC: wall, mullC: wall,
-    tones: v % 2 ? [C.dtGlassDark, C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi] : GTONES };
-  void gb; void GTONES;
-  // (w4r5) critic w4r4: "SKY's mid-shaft reads as big flat slabs of colour
-  // with a few chunky dark window blocks; ref05 has a dense grid of small
-  // framed windows with sills, pilasters and cornices on every floor". A
-  // FINE grid: paired 3-wide windows in white frames (shared mullion) set 1
-  // back, silver pilasters 1 proud between the pairs, a white sill ledge on
-  // every floor and a bold white band + cap every 4 storeys.
-  // (w4r6) the tower is a ~1-tile block now (33 x 31): six windows a face
-  // in three pairs between slim pilasters, narrow corner piers
-  // (w4r9) critic w4r8: "pale, low-contrast glass, flat printed grid": the
-  // white frame ring round every pane read as a grey lattice. Frames are the
-  // pilaster stone now, each window gets a white hood 2 proud + a lug sill,
-  // panes 8 tall; the per-floor ledge is dropped (the hoods mark the floors)
-  const gg = { y0, y1: top - 1, ww: 3, wh: 8, sill: 2, gap: -1, recess: 0, frameOut: 0, pw: 1, pd: 2, cpd: 2, wallC: SKYWALL[v % 2], pierC: pierS, cornerC: fin, frameC: C.dtStone,
+  // (w4r12) critic w4r11: "the shaft is nearly all of each building's
+  // height … shorten the repeated middle, a bolder base, a clear crown, a
+  // change of material part-way up". SKY is now THREE parts, like the ref05
+  // hotel: the tall brick base (above), a SHORT stone-and-glass shaft of
+  // three framed storeys under a cornice, then a SETBACK TERRACE (hedges,
+  // trees, railing) and a 2-3 storey all-glass CROWN set back 4 on every
+  // side, capped by its own cornice and the helipad. The teal glass spine
+  // runs through the setback and ties base to crown.
+  const T = box(15, 27, 47, 57), nS = 3, nC = 2 + v;
+  const y0 = pt + 1, yS = y0 + FL * nS, tt = yS + 4;
+  shell(g, T, y0, tt - 1, pierS, C.roofGray);
+  const gg = { y0, y1: yS - 1, ww: 3, wh: 8, sill: 2, gap: -1, recess: 1, frameOut: 0, pw: 1, pd: 2, cpd: 2, wallC: SKYWALL[v % 2], pierC: pierS, cornerC: fin, frameC: C.dtStone,
     hoodC: wall, hoodOut: 2, lugC: pierS, lugOut: 1,
     // (w4r8) critics w4r5-r7 all: "flat grids, no depth". Pilasters 2 proud and
     // the per-floor ledge kept inside the bays (ledgeIn): unbroken vertical
     // ribs over recessed window strips, like the ref05 bank's order
-    glassFn: glint(v % 2 ? C.dtGlassTeal : C.dtGlassDeep, C.dtGlassHi, 7, v), bandEvery: 4, bandC: wall, capC: wall, bandH: 2 };
-  // (w4r11) critic w4r10: "one stamped window grid on every floor; zone it".
-  // The framed grid is the lower SHAFT (4 storeys, up to the sky garden);
-  // above the garden the tower turns into a CROWN BAND of curtain-wall glass
-  // (bright cyan, near-white glints, white transoms) between its corner piers
-  const gTop = y0 + 4 * FL - 1;
-  gridBays(g, T, 'fb', { ...gg, y1: gTop, per: 2, cw: 2 }); gridBays(g, T, 'lr', { ...gg, y1: gTop, per: 2, cw: 1 });
-  curtain(g, T, 'fblr', { y0: y0 + 5 * FL, y1: top - 1, cw: 2, cornerC: fin, cornerOut: 2, pitch: 6, mullC: wall, transC: wall, seed: 3 + v }); }
-  // (w4r7) two balcony floors (glass balustrade on a white slab 3 out) break
-  // the stacked grid: floor 2 and the top floor
-  for (const r of [2, nf - 1]) balconyFloor(g, T, y0 + r * FL + 1, wall);
-  // r7: a sky garden splits the shaft (lower 4 storeys / upper storeys)
-  skyGarden(g, T, y0 + 4 * FL, y0 + 5 * FL - 4, { col: wall, glass: C.dtGlassDark, trim: C.dtNavyPanel });
-  // r5: a teal glass spine stands 3 proud up the middle of the front and back
-  // and rises past the roof (the ref05 hospital's glass stair core), so the
-  // curtain wall is not one uniform grid
-  for (const [za, zb] of [[T.z0 - 3, T.z0], [T.z1, T.z1 + 3]]) {
+    glassFn: glint(v % 2 ? C.dtGlassTeal : C.dtGlass, C.dtGlassHi, 7, v), bandEvery: 4, bandC: wall, capC: wall, bandH: 2 };
+  gridBays(g, T, 'fb', { ...gg, y1: yS - 1, per: 2, cw: 2 }); gridBays(g, T, 'lr', { ...gg, y1: yS - 1, per: 2, cw: 1 });
+  // shaft top: a frieze row, dentils, a 3-out stepped cornice, then a parapet
+  // + planted terrace round the crown (the podium terrace kit, one size up)
+  const Tc = ins(T, 4), top = tt + FL * nC;
+  g.walls(T.x0, tt, T.z0, T.x1, tt, T.z1, pierS);
+  g.walls(T.x0, tt + 1, T.z0, T.x1, tt + 1, T.z1, wall);
+  podiumTerrace(g, T, Tc, tt, rng, { trim: wall, cornC: C.dtNavyPanel });
+  // the CROWN: a different material - one bright cyan curtain wall (white
+  // mullions, near-white glints) between slim corner piers in the fin colour
+  shell(g, Tc, tt - 1, top, wall, C.roofGray);
+  curtain(g, Tc, 'fblr', { y0: tt, y1: top - 1, cw: 2, cornerC: fin, cornerOut: 1, pitch: 6, mullC: wall, transC: wall, seed: 3 + v });
+  // the teal glass spine: 3 proud of the shaft, 7 proud of the crown, rising
+  // past the roof (the ref05 hospital's glass stair core)
+  for (const [za, zb, w] of [[T.z0 - 3, Tc.z0, 'flr'], [Tc.z1, T.z1 + 3, 'blr']]) {
     const Sp = box(27, za, 35, zb);
     shell(g, Sp, y0 - 2, top + 5, wall, C.roofGray);
-    ribbons(g, Sp, za < T.z0 ? 'flr' : 'blr', { y0, y1: top + 3, floor: FL, sill: 1, wh: 10, d: 1, cw: 1, pitch: 3,
-      glassFn: skyGlass(v % 2 ? [C.dtGlass, C.dtGlass, C.dtGlassHi] : [C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi], nf + 1), hiRows: 1, mullC: wall });
+    ribbons(g, Sp, w, { y0, y1: top + 3, floor: FL, sill: 1, wh: 10, d: 1, cw: 1, pitch: 3,
+      glassFn: skyGlass(v % 2 ? [C.dtGlass, C.dtGlass, C.dtGlassHi] : [C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi], nS + nC + 1), hiRows: 1, mullC: wall });
     course(g, Sp, top + 5, C.dtNavyPanel, 1, 1, 0);
   }
-  // crown (w4r2): a DEEP overhanging cornice (4 out over a navy frieze) caps
-  // the shaft; a plant-room lantern sits on the BACK half of the roof so the
-  // front half is crowded with HVAC (ref05 bank roof), and the name stands on
-  // the lantern in big 2x lit letters (the ref05 HOTEL sign) as the top of
-  // the silhouette. Critic w4r1: "nothing breaks the shaft … rooftops carry
-  // only a few items … make the signs large and readable".
-  course(g, T, top, C.dtNavyPanel, 1, 2, 0);
-  const ct = cornice(g, T, top + 2, wall, C.dtNavyPanel, 4, 0);
-  deck(g, ins(T, -4), ct - 1);
-  railing(g, T.x0 - 3, T.z0 - 3, T.x1 + 3, T.z1 + 3, ct, C.metal);
-  // (w4r10) critic w4r9: "every roof reuses one grey kit (column pavilion,
-  // AC boxes, SKY billboard, water tank) - no landmark". SKY's own crown is a
-  // HELIPAD: a glass drum set back 6 carries a pad that overhangs it by 3
-  // (dark deck, yellow ring, white H, corner lights), a mast + beacon at the
-  // back corner. No billboard, no tank: the name stays on the portico.
-  const K = ins(T, 6), kt = ct + 9;
+  // crown cap: a navy frieze + a deep 4-out white cornice, a railed deck,
+  // then SKY's own landmark: a glass drum carrying an overhanging HELIPAD
+  // (dark deck, yellow ring, white H, lamps) and a mast + beacon
+  course(g, Tc, top, C.dtNavyPanel, 1, 2, 0);
+  const ct = cornice(g, Tc, top + 2, wall, C.dtNavyPanel, 4, 0);
+  deck(g, ins(Tc, -4), ct - 1);
+  railing(g, Tc.x0 - 3, Tc.z0 - 3, Tc.x1 + 3, Tc.z1 + 3, ct, C.metal);
+  const K = ins(Tc, 5), kt = ct + 9;
   shell(g, K, ct, kt, wall, C.roofGray);
   ribbons(g, K, 'fblr', { y0: ct, y1: kt - 1, floor: 9, sill: 1, wh: 7, d: 1, cw: 1, pitch: 3, glass: v % 2 ? C.dtGlassTeal : C.dtGlass, hiRows: 1, mullC: wall });
   const Hp = ins(K, -3);
@@ -2649,8 +2639,8 @@ function bGlassSkyscraper(rng, v) {
   ring(g, Hp, kt, C.dtNavyPanel, 1, 1);
   helipad(g, Hp.x0, Hp.z0, Hp.x1, Hp.z1, kt + 1);
   for (let z = Hp.z0 + 2; z <= Hp.z1 - 2; z += 4) { g.set(Hp.x0 - 1, kt - 1, z, C.lamp); g.set(Hp.x1 + 1, kt - 1, z, C.lamp); }
-  mast(g, T.x1 - 1, T.z1 - 1, ct, 22, C.red);
-  for (const [x, z] of [[T.x0 + 1, T.z0 + 1], [T.x1 - 5, T.z0 + 1]]) acBox(g, x, ct, z, { w: 4, d: 3, h: 3 });
+  mast(g, Tc.x1 - 1, Tc.z1 - 1, ct, 22, C.red);
+  for (const [x, z] of [[Tc.x0 + 1, Tc.z0 + 1], [Tc.x1 - 4, Tc.z0 + 1]]) acBox(g, x, ct, z, { w: 3, d: 3, h: 3 });
   // podium roof terrace (w4r7: the podium is a setback base again)
   podiumTerrace(g, P, T, pt + 1, rng, { trim: pp0 });
   // lot: plaza trees + benches, taxis at the kerb, parking lanes on 3 sides
@@ -2671,7 +2661,13 @@ function bDarkSkyscraper(rng, v) {
   // (w4r6) a ~1-tile tower set back on a light stone plaza (the ref05 bank
   // lot): lawns, hedges and the marquee entry in front, not a kerb-to-kerb mass
   const Y = plazaLot(g, C.lotPave, C.lotPaveDark);
-  const stages = [[box(15, 27, 47, 57), Y + 92], [box(19, 31, 43, 53), Y + 124 + v * 6], [box(23, 35, 39, 49), Y + 156 + v * 6]];
+  // (w4r12) critic w4r11: "the shaft is nearly all of each building's
+  // height". Stages cut from 5.5 / 2.7 / 2.7 storeys to 4 / 2 / 2 (and the
+  // crown gets its own material: see the stage loop)
+  // (w4r14) critics w4r11 + w4r13 (towers fill the frame, lots don't read;
+  // ref05 hotel ~115 voxels): stages 3 / 2 / 2 storeys -> 2 / 2 / 2 storeys,
+  // body 154 -> ~133
+  const stages = [[box(15, 27, 47, 57), Y + 74], [box(19, 31, 43, 53), Y + 98 + v * 6], [box(23, 35, 39, 49), Y + 122 + v * 6]];
   // (r9) an art-deco street podium: cream (v1 limestone) with gold trim,
   // arched windows, black fascia with shop boards, a gold-framed portico
   // (w4r7) critic w4r6: "a separate, heavily detailed base … a setback base".
@@ -2682,7 +2678,7 @@ function bDarkSkyscraper(rng, v) {
   // (SKY beside it is brick: ONYX v0 is warm SANDSTONE with white trim and a
   // gold cornice lip, v1 terracotta)
   const [ow, ot] = v % 2 ? [C.dtTerra, C.cream] : [C.dtLimeShade, C.dtFrame];
-  let y0 = streetPodium(g, P, Y, { ground: 'shop', wall: ow, pier: ot, fascia: C.black, skipF: [22, 40], seed: 2 + v, cornC: C.gold });
+  let y0 = streetPodium(g, P, Y, { ground: 'shop', wall: ow, pier: ot, fascia: C.black, skipF: [22, 40], seed: 2 + v, cornC: C.gold, h: 40 });
   podiumTerrace(g, P, stages[0][0], y0, rng, { trim: ot, cornC: C.gold });
   for (let i = 0; i < stages.length; i++) {
     const [B, yt] = stages[i];
@@ -2704,9 +2700,13 @@ function bDarkSkyscraper(rng, v) {
     // (w4r11) the top stage is a CROWN BAND of curtain glass on gold
     // mullions (critic w4r10: zone the grid into base / shaft / crown)
     if (i === 2) curtain(g, B, 'fblr', { y0: ya, y1: yt - 6, cw: 2, cornerC: C.dtPad, cornerOut: 2, pitch: 5, mullC: fin, transC: fin, seed: 1 + v });
-    else if (i < 3) gridBays(g, B, 'fblr', { y0: ya, y1: yt - 6, ww: i === 0 ? 3 : 2, wh: 8, sill: 2, gap: -1, recess: 0, frameOut: 0, per: 2, pw: 1, cw: 1, pd: 2, cpd: 3, pierC: C.dtPad, frameC: C.dtPad,
+    // (w4r12) a CHANGE OF MATERIAL part-way up (critic w4r11): stage 2 is
+    // warm cream ribbon glazing (cream spandrels, gold mullions) between jade
+    // corner piers - the jade framed grid below, the glass crown above
+    else if (i === 1) curtain(g, B, 'fblr', { y0: ya, y1: yt - 6, cw: 3, cornerC: C.dtPad, cornerOut: 2, pitch: 4, mullC: fin, transC: C.cream, spandC: C.cream, spandH: 4, seed: 5 + v });
+    else if (i < 3) gridBays(g, B, 'fblr', { y0: ya, y1: yt - 6, ww: i === 0 ? 3 : 2, wh: 8, sill: 2, gap: -1, recess: 1, frameOut: 0, per: 2, pw: 1, cw: 1, pd: 2, cpd: 3, pierC: C.dtPad, frameC: C.dtPad,
       hoodC: C.cream, hoodOut: 2, lugC: C.cream, lugOut: 1,
-      glassFn: glint(C.dtGlassDeep, C.dtGlassHi, 6, i), bandEvery: 3, bandC: C.dtPad, capC: fin, bandH: 2 });
+      glassFn: glint(C.dtGlass, C.dtGlassHi, 6, i), bandEvery: 3, bandC: C.dtPad, capC: fin, bandH: 2 });
     else framedBays(g, B, 'fblr', { y0: ya, y1: yt - 6, bw: [7, 6, 5][i], pw: 2, cw: 3, pd: 1, cpd: 2, pierC: C.dtPad, spand: C.dtGlassDeep, frameC: fin, sillC: null, deep: false, inset: 0, jambs: false,
       sill: 2, wh: 8, glassFn: skyGlass([C.dtGlassDeep, C.dtGlass, C.dtGlassHi], n, 7), sheen: C.dtGlassHi, hi: C.winCool, bandEvery: 3, bandC: fin, bandOut: 2,
       // (w4r2) critic w4r1: "the gold trim on the green tower reads as noisy
@@ -2780,10 +2780,12 @@ function bCorporateHQ(rng, v) {
   // (w4r9) critics w4r7 + w4r8: BLOX "flat ... pale, low-contrast glass". The
   // ref05 hospital is WHITE with SATURATED blue glass bands: the ribbons are
   // now deep glass painted with the pane ramp (dark foot, lit teal, streak)
-  const band = [[C.dtGlassDeep, C.dtGlassDeep, C.dtGlassHi], [C.dtGlass, C.dtGlass, C.dtGlassHi]][v % 2];
+  // (w4r14) v0 glass was dtGlassDeep throughout: the "blue-grey slab behind
+  // BANK" (w4r12). Pane bodies are now teal/blue (coordinator 02:50)
+  const band = [[C.dtGlassTeal, C.dtGlass, C.dtGlassHi], [C.dtGlass, C.dtGlass, C.dtGlassHi]][v % 2];
   const g = grid(63, 256, 63, R);
   const Y = lotPlinth(g, 0, 0, 62, 62);
-  const nf = 8 + v;
+  const nf = 7 + v;   // (w4r14) one storey off (w4r13: towers fill the frame)
   const L = box(6, 14, 47, 57), Wf = box(6, 14, 47, 28), Wl = box(6, 28, 19, 57), T = box(19, 28, 47, 57);
   // (r9) the front wing IS the street podium now: terracotta with a glass
   // ribbon (v1: sandstone arcade), shop signs + awnings, a columned portico
@@ -2800,18 +2802,24 @@ function bCorporateHQ(rng, v) {
   framedBays(g, Wl, 'lbf', { ...wing, y0: fTop + 2, y1: wTop - 1, bandEvery: 3 });
   // main tower: banded glass ribbons behind proud white floor slabs, deep
   // white corner piers; the top storey is all glass (the crown tier)
-  const gl = skyGlass(band, nf, 8);
-  ribbons(g, T, 'fblr', { y0: fTop + 2, y1: tTop - FL, floor: FL, sill: 3, wh: 8, d: 1, cw: 3, pitch: 5, glassFn: gl, hi: C.winCool, hiRows: 1, mullC: slab });
+  // (w4r13) critics w4r10-w4r12: "the blue-grey slab behind BANK repeats one
+  // identical window grid for 10+ floors … split each shaft into base,
+  // middle and crown, change the bay rhythm, add recessed glass bands". BLOX
+  // is now: glass podium / THREE banded storeys (glass ribbons behind proud
+  // white slabs, teal-faced fins) / a recessed sky-garden LOGGIA storey / a
+  // PUNCHED upper shaft (paired framed windows under white hoods between
+  // pilasters — the ref05 hospital) / the all-glass crown storey.
+  const gl = skyGlass(band, nf, 8), yA = fTop + 2 + 2 * FL, yU = fTop + 2 + 3 * FL;   // (w4r14) two banded storeys
+  ribbons(g, T, 'fblr', { y0: fTop + 2, y1: yA - 1, floor: FL, sill: 3, wh: 8, d: 1, cw: 3, pitch: 5, glassFn: gl, hi: C.winCool, hiRows: 1, mullC: slab });
   // (r7) slabs stand 2 proud: each casts a real shadow line over the ribbon below
-  for (let y = fTop + 2 + FL; y < tTop - FL; y += FL) course(g, T, y, slab, 2, 1, 0);
-  // (w4r8) critic w4r7: "BLOX … flat, evenly repeating window grids with almost
-  // no depth". Two white fins per face stand 3 proud through the slabs, so the
-  // banded shaft becomes a deep egg-crate of three glass bays that throws
-  // shadow bands on the dark face.
+  for (let y = fTop + 2 + FL; y < yA; y += FL) course(g, T, y, slab, 2, 1, 0);
+  // (w4r8) two white fins per face stand 3 proud through the slabs (egg-crate)
   for (const S of sides(g, T)) {
     const span = S.u1 - S.u0;
-    for (const t of [1 / 3, 2 / 3]) { const u = S.u0 + Math.round(span * t); S.f.box(u - 1, fTop + 2, 1, u, tTop - FL, 3, pier); S.f.box(u - 1, fTop + 2, 3, u, tTop - FL, 3, C.dtGlassTeal); }   // (w4r9) teal-glass fin faces: white-on-white fins vanished
+    for (const t of [1 / 3, 2 / 3]) { const u = S.u0 + Math.round(span * t); S.f.box(u - 1, fTop + 2, 1, u, yA - 1, 3, pier); S.f.box(u - 1, fTop + 2, 3, u, yA - 1, 3, C.dtGlassTeal); }   // (w4r9) teal-glass fin faces
   }
+  if (tTop - FL - 1 > yU + 10) gridBays(g, T, 'fblr', { y0: yU, y1: tTop - FL - 1, ww: 2, wh: 9, sill: 2, gap: -1, recess: 0, frameOut: 0, per: 3, pw: 1, cw: 3, pd: 1, cpd: 0,
+    wallC: slab, pierC: pier, frameC: C.dtStone, hoodC: slab, hoodOut: 2, lugC: C.dtStone, lugOut: 1, glassFn: glint(band[0], C.dtGlassHi, 7, v) });
   for (const S of sides(g, T)) {
     S.f.box(S.u0 - 2, fTop + 2, 1, S.u0 + 2, tTop, 2, pier);
     S.f.box(S.u1 - 2, fTop + 2, 1, S.u1 + 2, tTop, 2, pier);
@@ -2823,7 +2831,7 @@ function bCorporateHQ(rng, v) {
   parapetOn(g, Wl, wTop + 2, 1, slab, null);
   mechCrown(g, Wl.x0 + 1, Wl.z0 + 1, Wl.x1 - 1, Wl.z1 - 1, wTop + 1, rng, { rail: false, plant: false, cool: 2, ac: 2, vents: 2 });
   // r7: a sky garden five storeys up splits the banded shaft
-  { const ys = fTop + 3 + 5 * FL; skyGarden(g, T, ys, ys + FL - 4, { col: pier, glass: C.dtGlassDark, trim: C.dtNavyPanel }); }
+  { const ys = yA + 1; skyGarden(g, T, ys, ys + FL - 4, { col: pier, glass: C.dtGlassDeep, trim: C.dtNavyPanel }); }   // (w4r13) storey 4: the break between the banded and punched zones
   // deep-blue glass lift core on the tower front, rising past the roof
   const G = box(22, 24, 30, 28), gt = tTop + 6;      // r6: ends under the BLOX sign (it hid the L)
   shell(g, G, fTop + 1, gt, pier, C.roofGray);
@@ -2887,7 +2895,7 @@ function bTwinSetback(rng, v) {
   const P = box(7, 21, 55, 60);
   const pt = streetPodium(g, P, Y, { h: 34, ground: 'arcade', wall: stone, pier: C.gold, fascia: C.black, skipF: [18, 44], seed: 1 + v, cornC: stone }) - 1;
   portico(g, P.z0, { Y, xc: 31, w: 13, depth: 5, kind: 'arch', w: 15, colC: stone, frame: C.gold, stone: C.dtLimeShade, text: 'TWINS', textC: C.gold, mat: C.brickDark, planters: false });
-  const top = pt + 96 + v * 8;
+  const top = pt + 76 + v * 8;   // (w4r12) one storey off tier 1 (critic w4r11: shorten the repeated middle); (w4r14) one more (w4r13: towers fill the frame)
   for (const [x0, x1] of [[7, 28], [34, 55]]) {
     const T1 = box(x0, 23, x1, 57), T2 = ins(T1, 3), T3 = ins(T2, 3);
     const y1 = top - 40, y2 = top - 16;
@@ -2909,16 +2917,19 @@ function bTwinSetback(rng, v) {
     // no depth … push the bays in behind thicker pilasters". The ref05 hotel:
     // CREAM pilasters standing 2 proud of RED brick bays (the shadow band on
     // the dark face is the depth cue), windows with a reflection glint.
-    gridBays(g, T1, 'fblr', { y0: pt + 2, y1: y1 - 5, floor: 10, ww: 3, wh: 6, sill: 2, gap: -1, per: 2, pw: 2, cw: 1, pd: 2, cpd: 2, pierC: stone, cornerC: stone, frameC: C.dtFrame, jambs: false, recess: 0,
-      glassFn: glint(C.dtGlassDeep, C.dtGlassHi, 5, 1 + v), bandEvery: 3, bandC: stone, capC: C.gold, bandH: 2 });
+    gridBays(g, T1, 'fblr', { y0: pt + 2, y1: y1 - 5, floor: 10, ww: 3, wh: 6, sill: 2, gap: -1, per: 2, pw: 2, cw: 1, pd: 2, cpd: 2, pierC: stone, cornerC: stone, frameC: C.dtFrame, jambs: false, recess: 1,
+      glassFn: glint(C.dtGlass, C.dtGlassHi, 5, 1 + v), bandEvery: 3, bandC: stone, capC: C.gold, bandH: 2 });
     for (const xa of [T1.x0, T1.x1 - 3]) notch(g, T1, box(xa, 37, xa + 3, 43), pt + 2, y1 - 5, { floor: 10, back: C.dtGlassDeep, slab: stone, rail: C.dtGlassHi, mull: stone });
     course(g, T1, y1 - 4, C.gold, 1, 1, 0);
     cornice(g, T1, y1 - 3, stone, brick, 2, 0);
     // tier 2: cream stone, brick spandrels, a checker of gold-railed balconies
     shell(g, T2, y1 + 1, y2, stone, C.roofGray);
-    framedBays(g, T2, 'fblr', { y0: y1 + 2, y1: y2 - 5, bw: 5, pw: 2, cw: 2, pd: 0, cpd: 2, pierC: stone, spand: brick, inset: 0, deep: false, frameC: C.dtFrame, sillC: stone, sillOut: -1,
-      glassFn: skyGlass(SKY, 10), sheen: C.dtGlassHi, hi: C.win, floor: 10, sill: 2, wh: 6,
-      balc: (S, k, r) => (k + r) % 2 === 0, balcC: stone, railC: C.gold });
+    // (w4r13) critics w4r11 + w4r12: "TWINS repeat one window-and-pier grid
+    // for 10+ floors" — the cream-over-brick balcony tier read as more of the
+    // same shaft. Tier 2 is now a double-height recessed LOGGIA: cream columns
+    // standing before shadowed glass, gold soffit, a planted lip — a clear
+    // break between the brick shaft and the gold glass crown.
+    skyGarden(g, T2, y1 + 2, y2 - 6, { col: stone, slab: stone, trim: C.gold, glass: C.dtGlassDeep, planter: stone, out: 0, d: 3 });
     course(g, T2, y2 - 4, C.gold, 1, 1, 0);
     cornice(g, T2, y2 - 3, stone, brick, 2, 0);
     // tier 3 (crown): cream with tall gold-framed windows, two storeys high
@@ -2946,7 +2957,7 @@ function bTwinSetback(rng, v) {
     acBox(g, T3.x0 + 1, tc, T3.z0 + 12, { w: 4, d: 3, h: 3 }); acBox(g, T3.x1 - 4, tc, T3.z1 - 4, { w: 4, d: 3, h: 3 });
   }
   // skybridge
-  const sy = pt + 44;
+  const sy = pt + 20;   // (w4r14) inside tier 1 now that the shaft is shorter
   g.box(28, sy, 36, 34, sy + 9, 44, C.dtGlass);
   g.box(27, sy, 35, 35, sy, 45, stone); g.box(27, sy + 9, 35, 35, sy + 9, 45, stone);
   g.box(28, sy + 7, 36, 34, sy + 8, 44, C.win);
@@ -2991,11 +3002,22 @@ function bSpireTower(rng, v) {
   // (r9) brick (v1 sandstone) street podium with an arcade + shop fascia and
   // a temple portico carrying SPIRE (critic r8: no real podium or entrance)
   const [pw0, pp0, pf0] = [POD.brick, POD.sand][v % 2]();
-  const st = [[box(15, 26, 47, 58), Y + 100], [box(19, 30, 43, 54), Y + 138 + v * 4], [box(22, 33, 40, 51), Y + 166 + v * 4]];
+  // (w4r13) critics w4r10-w4r12: "SPIRE repeats one identical window-and-pier
+  // grid for 10+ floors … split the shaft into base, middle and crown, change
+  // the bay rhythm, add recessed glass bands and setback terraces". Tier 1 is
+  // now THREE framed storeys topped by a double-height recessed LOGGIA (stone
+  // columns before shadowed glass, a planted lip) under its cornice; tier 2 is
+  // two storeys of ribbon glazing; tier 3 the glass crown cage. 18 voxels lower.
+  // (w4r14) critics w4r11 + w4r13: "at ref05 scale the towers fill the whole
+  // frame … the lots barely read". Measured, the ref05 hotel is ~115 fine
+  // voxels tall on a 2x2 lot; SPIRE's body stood at 162. Tier 1 is now two
+  // framed storeys + the loggia, tiers 2/3 a little shorter: body ~144 (it
+  // stays the tallest landmark; the mast keeps its length).
+  const st = [[box(15, 26, 47, 58), Y + 74], [box(19, 30, 43, 54), Y + 97 + v * 4], [box(22, 33, 40, 51), Y + 118 + v * 4]];
   const ptop = streetPodium(g, P, Y, { ground: 'colonnade', wall: pw0, colC: v % 2 ? C.dtFrame : C.cream, cornerC: pw0, pier: pp0, fascia: pf0, skipF: [17, 45], seed: 2 + v });
   podiumTerrace(g, P, st[0][0], ptop, rng, { trim: pp0 });
   let y0 = ptop + 1, row0 = 0;
-  const nAll = Math.floor((Y + 166 - y0) / FL);
+  const nAll = Math.floor((Y + 118 - y0) / FL);
   for (let i = 0; i < st.length; i++) {
     const [B, yt] = st[i];
     shell(g, B, y0, yt, stone, C.roofGray);
@@ -3012,18 +3034,20 @@ function bSpireTower(rng, v) {
     // lattice (frames + stone were ~80% of the face, glass 11%; ref05 hotel
     // 19%). Frames are now the STONE itself (a proud surround), each window
     // gets a hood moulding 2 proud and a lug sill 1 proud, panes are 8 tall.
-    if (i === 0) gridBays(g, B, 'fblr', { y0, y1: yt - 9, ww: 3, wh: 8, sill: 2, gap: -1, recess: 0, frameOut: 0, per: 2, pw: 2, cw: 1, pd: 2, cpd: 3, pierC: stone, frameC: stone,
+    if (i === 0) gridBays(g, B, 'fblr', { y0, y1: yt - 9, ww: 3, wh: 8, sill: 2, gap: -1, recess: 1, frameOut: 0, per: 2, pw: 2, cw: 1, pd: 2, cpd: 3, pierC: stone, frameC: stone,
       spandC: C.dtGlassDeep,   // (w4r8) glass + petrol spandrel strips recessed 2 behind the stone pilasters (critics w4r5-r7: "no depth")
-      hoodC: C.dtFrame, hoodOut: 2, lugC: stone, lugOut: 1,
-      glassFn: glint(v % 2 ? C.dtGlassTeal : C.dtGlassDeep, C.dtGlassHi, 7, 3), bandEvery: 3, bandC: stone, capC: C.dtFrame, bandH: 2 });
+      hoodC: C.dtFrame, hoodOut: 1, lugC: stone, lugOut: 1,   // (w4r14) hood 1 proud: at 2 it shaded the now-recessed panes to navy slots
+      glassFn: glint(C.dtGlassTeal, C.dtGlassHi, 5, 3), bandEvery: 3, bandC: stone, capC: C.dtFrame, bandH: 2 });
     // (w4r11) critic w4r10: "SPIRE glass = flat dark-blue slots stamped on
     // every floor; break the grid into zones". Tier 1 keeps the fine framed
     // grid (the shaft); tier 2 is RIBBON glazing (bright cyan bands between
     // stone spandrels, glints across them); tier 3 is an all-glass CROWN cage.
     else if (i === 1) curtain(g, B, 'fblr', { y0, y1: yt - 9, cw: 3, cornerC: stone, cornerOut: 2, pitch: 7, mullC: C.dtFrame, transC: C.dtFrame, spandC: stone, spandH: 3, seed: 5 + v });
     else curtain(g, B, 'fblr', { y0, y1: yt - 9, cw: 2, cornerC: stone, cornerOut: 1, pitch: 6, mullC: C.dtFrame, seed: 2 + v });
-    // sky-lobby glass band under each setback's cornice
-    for (const S of sides(g, B)) { S.f.clear(S.u0 + 3, yt - 7, 0, S.u1 - 3, yt - 3, 0); S.f.box(S.u0 + 3, yt - 7, -1, S.u1 - 3, yt - 3, -1, C.dtGlassHi); for (let u = S.u0 + 5; u < S.u1 - 3; u += 4) S.f.box(u, yt - 7, -1, u, yt - 3, -1, C.dtFrame); }
+    // (w4r13) tier 1's top storey: a recessed double-height loggia
+    if (i === 0) skyGarden(g, B, y0 + 2 * FL + 1, yt - 5, { col: stone, slab: C.dtFrame, trim: C.dtFrame, glass: C.dtGlassDeep, planter: stone, out: 4 });
+    // sky-lobby glass band under each upper setback's cornice
+    else for (const S of sides(g, B)) { S.f.clear(S.u0 + 3, yt - 7, 0, S.u1 - 3, yt - 3, 0); S.f.box(S.u0 + 3, yt - 7, -1, S.u1 - 3, yt - 3, -1, C.dtGlassHi); for (let u = S.u0 + 5; u < S.u1 - 3; u += 4) S.f.box(u, yt - 7, -1, u, yt - 3, -1, C.dtFrame); }
     cornice(g, B, yt - 2, C.dtFrame, spandC, 2, 0);
     if (i < 2) {
       const Bn = st[i + 1][0];
@@ -3040,8 +3064,9 @@ function bSpireTower(rng, v) {
   ribbons(g, L, 'fblr', { y0: top + 1, y1: top + 10, floor: 10, sill: 0, wh: 10, d: 1, cw: 1, pitch: 3, glass: C.winCool, hiRows: 0 });
   const L2 = ins(L, 3);
   for (let k = 0; k < 5; k++) g.box(L2.x0 + k, top + 13 + k, L2.z0 + k, L2.x1 - k, top + 13 + k, L2.z1 - k, C.dtFrame);
-  for (let y = top + 18; y < 255; y++) g.set(31, y, 42, y % 8 < 4 ? C.red : C.dtFrame);
-  g.set(31, 255, 42, C.neon);
+  const mt = Math.min(255, top + 84);   // (w4r13) same mast length as before the tiers came down
+  for (let y = top + 18; y < mt; y++) g.set(31, y, 42, y % 8 < 4 ? C.red : C.dtFrame);
+  g.set(31, mt, 42, C.neon);
   acBox(g, Bt.x0 + 1, top, Bt.z0 + 1, { w: 4, d: 2, h: 3 }); acBox(g, Bt.x1 - 4, top, Bt.z1 - 2, { w: 4, d: 2, h: 3 });
   // entrance: glass lobby, stepped terrace, glass canopy with SPIRE, planters
   portico(g, P.z0, { Y, xc: 31, w: 19, depth: 12, kind: 'cochere', cols: 4, colC: C.dtFrame, stone: C.dtLimeShade, glassTop: C.dtGlassTeal, fascia: v % 2 ? C.dtNavyPanel : C.brickDark, text: 'SPIRE', textC: C.signWhite, planters: false });

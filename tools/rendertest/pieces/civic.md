@@ -537,3 +537,110 @@ Gallery filler is now low flower-bed garden lots instead of parks (w4r7 "carpete
 
 ### Coordinator note (2026-09-27 03:40) — gallery filler is now the category's own 1×1 attractions
 w4r8: "civic buildings are strong but float in lots stamped with an identical flower-mound on every tile". gal-fun-* gaps are now filled with rotating 1×1 fun ids (playground, water-slide, mini-golf, skate-park, park…; no wind turbines) so the district reads dense and bespoke (scratchpad galfix8). Those 1×1 models are also yours and now carry weight in the frame: make sure they read cleanly (the water-slide towers are tall and loud).
+
+## 2026-09-26 — wave 4 round 9 (builder)
+**Critic gap (w4r8 lost):** empty lime lots with a repeated flower mound (the old gallery filler), and the monument plaza was "pale" where ref05's sits on warm brown earth inside a dark green hedge ring. By the time I started, the coordinator had already switched the filler to rotating 1×1 fun attractions and dropped wind-power from it (demo-city). Those 1×1 attractions are my models, and they now made the frame loud (tall striped towers and spires).
+**Measured (PIL, ref05 monument):** the earth is ~(240,188,124) and the hedge is very dark olive (~32,48,16). Our obelisk stood ~0.88 lot widths over the plaza on screen (ref ~0.6), with twice ref's girth.
+**Changed:**
+- **Monument (civic.js):** the base shrank (tier 1 ±18.5 → ±16, tier 2 ±14.5 → ±12.5, stairs/pools/statues moved in to match) so the earth plaza shows all round. The corner lawn squares are gone; each corner is now a statue plinth among dark clipped shrubs on the earth. The hedge ring is a new dark olive **civHedge** 0x2e420a (it repurposes the civBronze slot; the 3 fun.js deco-statue uses → civHallDk). `lumpHedge` gained optional `col`/`foot` args. Obelisk: drum 30 → 16 fine, shaft 16 → 12 fine wide and 74 → 50 tall, smaller pyramidion, garland replaced by a small tablet.
+- **civPlaza** 0xdcad7a → 0xdbb27e (slightly less orange, nearer the ref earth).
+- **Filler 1×1s (fun.js):** playground roofs are squat (1 voxel per step, was 2). The water-slide tower is 17 high (was 26 plus a 12-high canopy), with a straight stair, a plain white canopy with a colour edge, and calmer colour pairs (no purple/pink). The mini-golf lighthouse is 13 high (was 25).
+**Measured:** all 6 shots have 0 console errors. FPS under load: gal-fun-1 26, gal-fun-2 38, gal-fun-3 27, gal-deco-1 61, one-stadium 45, one-school 37. gal-fun-1 has 623k tris (unchanged).
+**Self-judged:** the monument now reads like ref05's: a slim needle on a white stepped base, pools at the stair feet, warm earth, dark hedge frame. gal-fun-1 is dense with no bare lime lots.
+**Next (only if a critic loses us the round):** gal-fun-2 is still very busy (the rides plus the filler). If "cluttered" comes back, trim the crowds and props on the 1×1 fillers rather than touching the landmarks. The school's cornice/pilaster rhythm is the other open w4r8 remark.
+
+### Coordinator note (2026-09-27 05:00) — gallery FROZEN; critics told filler is context
+Six gallery filler variants each lost for the opposite reason. gal-fun-* is now frozen at a calm, low mix (lawn flower-bed plots, the odd playground/mini-golf; nothing tall — scratchpad galfix9), and ART-DIRECTION.md now tells critics that gallery filler is context, not the subject. From here every civic round should go into the landmarks and their own lots: w4r9's ideal is "each building alone on a calm paved lot with open space, a few trees and parked vehicles framing a crisp silhouette" — so dress your lots calmer (fewer, deliberate props), and fix FISE → FIRE if not done.
+
+## 2026-09-26 — wave 4 round 10 (builder)
+**Critic gap (w4r9 lost; agrees with w4r7):** the landmarks were strong, but the fun lots next to them were loud: slide towers, dense hedges and small saturated props. The monument was "boxed in", and the school and fire station pressed against their neighbours. By now the coordinator's frozen filler is flower-bed ×3, playground and mini-golf, so the playground and mini-golf models are the neighbours (the playground appears 4× in gal-fun-1).
+**Changed:**
+- **Playground (fun.js), rebuilt LOW:** a paved lot with one clean rectangular soft-surface pad (rounded pads stair-stepped), and ONE play frame (white posts, plank deck at y+5, small hip roof, max y+12) with a straight slide and a back ladder. Also a slim grey-teal swing set, a sandpit, a spring rider, a lawn corner with one tree, 2 benches, and a crowd of 6. The two-keep castle, rope bridge, tube slide, climbing wall and fence are gone. Each variant is one pad colour, one accent and white; a blue pad read as pool water. Grid height 44 → 28.
+- **Mini-golf:** lotRim kerbs on every variant (white/brick kerbs drew a bright maze). A small white windmill with a coloured cap replaces the tall red block. The castle gate is now a low log. The lighthouse is 9 high (was 13). The flower row is gone and the crowd is 5 (was 8).
+- **Pool:** 4 umbrellas (was 8), and loungers use pale civPoolLt towels (the red/blue towels were a field of saturated dots).
+- **Monument:** hedge corner lumps capped at 5, and corner shrub clumps cut from 4 to 2 low cubes.
+**Measured:** 6 shots, 0 console errors. FPS under load: gal-fun-1 27–44, gal-fun-2 42, gal-fun-3 53, gal-deco-1 61, one-stadium 61, one-school 31. gal-fun-1 has 559k tris (was 622k).
+**Self-judged:** in gal-fun-1 the landmarks now read on their own. Their neighbours are low, pale, paved lots, and nothing next to the monument rises above its base tier.
+**Next (only if a critic loses us the round):** the mini-golf lighthouse and clubhouse are still the busiest filler. Park v0/v1 still carry 3 big trees. The w4r9 remark that lots should be "raised plinths with a light rim and dark side band" belongs to core `lotPlinth` (a shared surface), not to this piece.
+
+### Coordinator note (2026-09-27 05:50) — w4r10 judged the buildings (good): roofs + purpose-built forecourts
+Now concrete: (1) fire station roof is a big flat mint slab with a few grey boxes — break it with structure: a parapet with coping, roof hatch, drill tower top, rows of vents/AC, solar or skylight bands, a darker edge line; (2) forecourts must be purpose-built per building: fire station = striped red/white engine apron in front of the bay doors with 1-2 engines; hospital-like/school = drop-off loop with bus bay; monument = paved plaza with benches and statues; pool = deck with loungers. Paved, marked, specific — not plain grass or generic paving.
+
+## 2026-09-26 — wave 4 round 11 (builder)
+**Critic gap (w4r10 lost; agrees with w4r8/w4r9):** civic roofs and lots were under-designed. The fire-station roof was "a big flat mint-green slab with a few grey boxes and solar panels"; the monument's hedges and pools looked like loose blocks; the school's surroundings were plain grass. ref05 has dense roof kit, railings and colour changes.
+**Measured first (PIL):** the ref05 fire deck is ~(100,136,98) and ours rendered (120,191,136). The ref05 monument hedge median is (87,130,23); our civHedge rendered blue-green (88,135,96).
+**Changed:**
+- **Fire roof (civic.js), fully re-zoned:**
+  - civFireRoof 0x44674f → 0x3a4b3a. The mint paver grid is gone.
+  - A cream plant-room penthouse (res 4) beside the tower. It has its own coping, ink lines, a door with a canopy, louvres, and 3 AC units plus a vent stack on top.
+  - A fine metal guard rail on the coping along the front and right edges.
+  - A grey condenser pad with 2×5 white units (grey caps, fan grilles, small red badges). Full red caps read as a field of red squares, so they were dropped.
+  - A glazed ridge skylight, a gravel solar pad with 4 framed rows, the water tank moved to the front-right, a duct run on stands, a hatch, vents and a mast. Grey paver walks connect everything.
+- **Monument hedge:** new exported `shrubRow()`. It is one continuous 3-high body with 3-wide clipped lumps of varied height and a one-fine inset crown (two crown layers read as lego studs). civHedge was retuned to 0x587810 and now renders a median of (102,134,13).
+- **Monument pools:** the twin basins now butt against the tier-1 plinth (a 32..50, was 35..51), so they read as part of the base instead of loose tiles.
+- **flower-bed (fun.js)**, which is the gallery filler beside the school and fire station: it is now a small formal garden. Pale walks run from each edge centre (they line up tile to tile) to a square court, around a kerbed round shrub bed with blooms. Two symmetric benches face the bed. I tried a lamp and dropped it (it read as a black pole in front).
+**Measured:** 6 shots, 0 console errors. FPS under load: gal-fun-1 20 (45 in the solo run), gal-fun-2 46, gal-fun-3 55, gal-deco-1 61, one-stadium 54, one-school 61. gal-fun-1 has 558k tris (559k before).
+**Next (only if a critic loses us the round):**
+- The school facade was called "soft/busy". Thin the window hoods and keys and add a crisp dark cornice line.
+- Lower the monument's near-side hedge runs if "boxed in" comes back.
+- The repeated flower-bed gardens tile visibly across gal-fun-2 (harness filler).
+
+### Coordinator note (2026-09-27 06:35) — w4r11: facade RELIEF (build outward)
+w4r11 (filler aside — frozen): school, fire station and swim club facades read flat; ref05 civic has deep relief. Build outward like downtown's 23:05 note: projecting cornices (2-3 voxels out), window reveals via PROUD frames/pilasters rather than recessed slits, a pediment/portico on the school, brick belt courses as raised bands, a heavier base. Plus the purposeful lots (engine apron with fire trucks, ambulance/parking bays) from 05:50.
+
+## 2026-09-26 — wave 4 round 12 (builder)
+**Critic gap (w4r11 lost; the coordinator's 06:35 note agrees):** civic facades were shallow. The school's window grid and the fire station's brick walls read flat, where ref05 has projecting cornices, recessed window reveals and deep piers. A secondary note: the obelisk was squat and its base was cluttered with pools.
+**Changed:**
+- **`fineWin` has a new `recess` option.** It clears the wall voxel and sets the glass one res-4 voxel back, and the bars and glint move onto the glass. The proud frame ring then sits around a real 2-fine reveal. The school, fire station and swim club all use it.
+- **School:**
+  - The wings have proud L-shaped corner pilasters (1 out, with a dark plinth block).
+  - The pilaster between the bays is 2 deep, with a base and a capital.
+  - Every cornice is a three-step corbel: a res-4 bed 1 out, fine dentils under it, a slab 3 out (was 2), and an ink drip line under the lip.
+  - Window rings are now cream trim.
+- **Fire station:**
+  - The long-face piers are 2 proud (was 1) on stone plinth blocks, with their bands and capital moved out to match.
+  - The right end wall has 4 new proud piers.
+  - The cornice slab is 3 out, with an ink drip under it.
+- **Swim club (fun.js):** pilasters are 2 deep and the windows are recessed.
+- **Monument:**
+  - One pool per face in a pinwheel (was twin pools on every face, 8 in all), so the lens sees 2 pools, as in ref05.
+  - The pedestal is lower and slimmer (stages 22/18/16 fine wide, 26 fine tall; was 30/28/24/22 wide and 33 tall).
+  - The drum is 14 fine wide (was 18). The shaft is 10 wide (was 12) and 70 tall (was 50), so the overall height is about the same and the needle is about 1:7.
+  - The fountain spinner has 8 low jets (was 16 tall ones).
+**Measured:** all 6 shots have 0 console errors. FPS: gal-fun-1 43, gal-fun-2 23 (under load), gal-fun-3 51, gal-deco-1 61, one-stadium 61, one-school 36. gal-fun-1 has 558k tris (unchanged).
+**Not ours (again):** the flat white stepped blob now covers the school's SCHOOL pediment in gal-fun-1 and sits on the meadow in one-school. It is not in the model. **Coordinator:** please trace it (life.js puff / terrain placeholder?).
+**Next (only if a critic loses us the round):**
+- If "too teal" comes up, tone down the v2 school's proud corner pilasters (quoin = civHall renders saturated teal; ref05's pilasters are mint-grey #709080).
+- The fire station's frieze sign could sit on a proud panel.
+
+## 2026-09-26 — wave 4 round 13 (builder)
+**Critic gap (w4r12 lost; agrees with w4r11):** the strips beside the civic lots were "one generic tile repeated over and over: a green plaza with benches and a small planter". That tile is our `flower-bed` model (the frozen gallery filler), and all 4 variants were the same garden in different bloom colours. Secondary: the monument lot was "flat pale beige and grey paving" and needed colour variety.
+**Changed:**
+- **flower-bed (fun.js): four different gardens**, one per variant (the sim picks a variant per tile, so neighbours differ):
+  - v0 is the formal court, unchanged.
+  - v1 is a cutting garden: 5 timber raised beds, each with a single colour of fine blooms (red, yellow, white, pink, purple), on gravel, with a white-framed glasshouse and a bench.
+  - v2 is a warm civPlaza fountain court with pale paving bands. It has a round white basin with a two-bowl jet, four corner planters with blooms, and two benches.
+  - v3 is a lawn corner: one cuboid tree, a picnic table on a gravel pad, separate clipped cube bushes along 2 edges, a kerbed flower strip and a rock. I tried a continuous `shrubRow` and dropped it because it read as a green wall. A diagonal path read as a jaggy stair.
+- **Monument (civic.js):** a processional walk from each hedge gap to its stair: warm civStone slabs, tan joints every 3, and a brick-red edge course. Grey lotPave walks added to the "grey" read, so I switched to stone.
+**Measured:** 6 shots, 0 console errors. FPS: gal-fun-1 44, gal-fun-2 41, gal-fun-3 27 (under load), gal-deco-1 61, one-stadium 61, one-school 61. gal-fun-1 has 561k tris (was 558k).
+**Self-judged:** the left third of gal-fun-1 and all of gal-fun-2 now read as varied bespoke gardens: fountain courts, cutting beds, lawns with a tree. The landmarks are unchanged.
+**Next (only if a critic loses us the round):**
+- gal-fun-2 is now busier. If "cluttered" comes back, drop v1's glasshouse or v2's corner planters first.
+- ref05's monument hedge is a row of small rounded bushes. Ours is a continuous clipped row.
+
+## 2026-09-26 — wave 4 round 14 (builder)
+**Critic gap (w4r13 lost; agrees with w4r12 on the lots and with coherence [civic]):** the small fun and park lots were "a scatter of tiny red, green and orange kiosks, hedges and props with no hierarchy". Each lot should have one dominant surface, a clear edge and 2-3 purposeful props; the monument plaza should be symmetric paving and water. Secondary: the fire station was "a flat, oversaturated red block".
+**Changed:**
+- **Playground (fun.js):** a pale paved lot with a clipped civHedge edge on the two back sides (gate gap). ONE tan civPlaza pad with a pale kerb carries the play frame (roof roofBlue/civCornice, one accent) and a slim swing frame. There is one tree and one bench, and the crowd is 4. Removed: the red rubber pads, sandpit, spring rider, lamp and bin.
+- **Mini-golf:** one green felt course inside one pale kerb, split into 3 lanes by 2 inner kerbs, with 3 flags. The only props are a small white windmill, a pond with a plank bridge, and a plain white clubhouse with a sage roof. Removed: the lighthouse, striped awning, flag, trees, island hole and log.
+- **flower-bed:** v1 is now a border garden (lawn, a central walk that lines up with v0's, two long low borders in one bloom colour, a bench); the five-colour beds and the glasshouse are gone. v2 lost its corner planters and paving bands. v3 lost its bush rows, flower strip and rock.
+- **Park (civic.js):** v0 lost its planter and lamps. v2 is down to the fountain, 2 benches and one column tree. The bin is gone and the crowd is 4 (was 9).
+- **Skate park:** one surface colour plus white per variant (it had 3 graffiti hues).
+- **Monument:** the pinwheel pools and the corner statue/shrub groups are replaced by 4 square reflecting pools, one in each plaza corner between the stairs (fine 33..53), each with a small jet. The plaza now looks the same from every snap. The walk edge course is lotRim (was brick red).
+- **Fire station brick:** civBrick 0xc23d25 → 0xb0603e (ref05 orange-red). Piers and coursing are now `shingle` (brown-red), where crimson/brickDark had rendered neon crimson. Measured lit face median: (249,38,41) → (235,82,55). The ref05 lit face is around (215,116,77). civBrick also tints the school v1 and the swim-club v2 band.
+**Measured:** 6 shots, 0 console errors. FPS: gal-fun-1 43, gal-fun-2 42, gal-fun-3 52, gal-deco-1 60, one-stadium 61, one-school 61. gal-fun-1 has 551k tris (was 561k).
+**Self-judged:** gal-fun-1's left third is now calm: lawns and paved lots with one feature each. The monument reads like ref05's symmetric plaza with pools, and the fire station is orange-red brick with darker piers.
+**Next (only if a critic loses us the round):**
+- School/swim-club facades are still called "soft". Try a heavier dark cornice line and fewer window hoods.
+- The fire station's roll-up doors could go white like ref05's.
+- The white ghost box shows up again above the carousel in gal-fun-2 (not ours).

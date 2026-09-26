@@ -381,3 +381,103 @@ Action (you own this now; surgical change to lighting.js, note it in pieces/ligh
 
 ### Coordinator note (2026-09-27 03:20) — worldAO is now OFF (done by coordinator)
 res w4r9 hit the same smudges, so I flipped lighting.js worldAO default to false myself (line ~1812). faceratio after: 1:0.90:0.63. Don't re-enable it; judge your baked crease AO on renders from now on.
+
+### Coordinator note (2026-09-27 04:20) — after worldAO off: re-balance the BAKE (res w4r10)
+With worldAO off the blotches are gone (good) but res w4r10 now says "flat single-tone walls, weak inside-corner AO, no soft gradient at the ground line". worldAO was supplying the wall-foot gradient. Unfreeze AO for this one adjustment, on VERTICAL faces only: a soft ground-line gradient on walls (~0.65-0.7 at the foot → 1.0 by ~1/3 storey), and under cornices/quoin steps ~0.65-0.7 fading over ~2-3 voxels. Horizontal open faces (roof decks, plinth tops) stay clean except the tight pool at wall contacts. Measure one-small-house + one-bakery wall-foot profiles vs the ref04 numbers from 22:35 and log.
+
+## 2026-09-27 — wave 4 round 10 (builder)
+Critic w4r9 picked the reference. The gap was "blotchy light-dark AO mottling on the flat roof slab, streaky smudges on the plinth". w4r7 said the same thing, and w4r8 said "faint". Coordinator 02:30 froze the AO STRENGTH, so this round fixes the SHAPE and leaves every strength value alone.
+**Diagnosed** (rounds/surface/w4r10; D1 = in-page toggles; OLD/NEW = `--pre setVoxelDefaults({aoAtlasCont})`):
+- The mottling is voxel AO. With the voxel AO off (world AO and shadows still on), the slab is clean. World AO and cast shadows only add the jagged parapet shadow edge, which belongs to light.
+- The root cause is QUANTISATION. The bake stores AO as L=15 lattice levels (0.052 light per step) for the old 4-bit merge key. materials then raise up-faces to the power 3 (aoTop), so one level step became a ~12% brightness terrace. The ray field's ±1-level jitter, plus the AO-tolerant bilinear stamping into the atlas, read as blotches. Note that scratchpad aomap*.mjs bakes with aoAtlas:false (the quantised per-vertex path), not what the game shows.
+**Changed** (voxel.js only; no AO strength parameter touched)
+- CONTINUOUS ATLAS AO: in atlas mode, each lattice vertex keeps its unquantised light factor (`vtxA`), and the atlas (R8) stores that. The AO-tolerant sweep is skipped in atlas mode because the colour-only sweep emits the quads. The per-vertex fallback keeps its levels. `aoAtlasCont:false` restores the old path for A/B.
+- `aoAtlasSnap 0.03`: darkness below this is stored as exactly 1.0 (materials aoToe hides it anyway).
+- Budget: new `_aoSegs`. Each region axis is stored as the fewest equal linear segments (a divisor of its length) that reproduce every lattice value within `aoAtlasLinTol` = 2 (8-bit units). Flat axes also accept ends within the tolerance and store their mean.
+**Measured**
+- Slab: the blotchy dark patch by the chimney and the AC is gone, and the pools are smooth monotonic ramps along the parapets (w4r10/on_deck.png old vs new, cmp_roof.png critic vs now). Rendered AO/no-AO on one-bakery is unchanged: bldg p5 0.53, open median 1.00. The chimney-foot profile is the same within 0.02.
+- Atlas at iso-mid (demo city): 11.9M -> 14.4M of 16.8M texels (85%), no fallbacks (338 atlas geos before and after). aoAtlasLinTol 3 gives 13.8M.
+- voxel selfTest passes (node) and check.sh is clean. Verification shoot w4r10-builder: 0 console errors, iso-mid tris 1.95M, buildMs 45 s, fps 13/39/48 (dpr 2, under load).
+**Not mine (still visible)**: the jagged stair-step shadow edge of the rear parapet on the deck, and the diagonal lamp-post shadow on the plinth step are light's (present with voxel AO off). The dark lot footing band is light/ground's.
+**Next**: AO strength stays frozen. If a critic still calls the deck pools wide or grey, tighten the SHAPE with aoToe (e.g. [0.06, 0.3], variant T in E1: open-wall median 0.94 -> 0.97) rather than the exponents. If the atlas overflows in bigger cities, set aoAtlasLinTol to 3, or teach AoAtlas.place a tighter block fit. The pow2 block padding, not the texel count, is most of the use.
+
+### Coordinator note (2026-09-27 04:45) — w4r10: the "dark comb" and the serrated parapet shadow
+Looked at rounds/surface/w4r10-critic/one-bakery.png (crop x36-64%, y20-50%). Roof deck is now clean (worldAO off worked). Two remaining artefacts:
+1. "Dark comb of vertical stripes under the cornice" = the bakery's row of 1-voxel dentils under the cornice; the stronger crease AO now darkens every 1-voxel GAP between dentils to near-black, so it reads as a comb. Fix in the bake: cap AO darkening inside narrow slots (openings ≤ ~2 voxels wide between thin protrusions) — they should read as a soft band under the cornice, not per-gap stripes. (Shops is a won piece; don't edit the model — fix the shading.)
+2. The parapet's cast shadow on the roof deck has a stair-stepped, serrated edge (shadow-map texel aliasing at close zoom). You may make a surgical change in lighting.js (light is won; note it in pieces/light.md): a slightly wider PCF/penumbra floor at close zoom or finer cascade texel density for cascade 0 — A/B against the old res-4 acne before keeping it.
+
+## 2026-09-27 — wave 4 round 11 (builder)
+Critic w4r10 picked the reference. Its biggest gap was a "dark comb of vertical stripes under the cornice above every window", plus AO that was "nearly flat" at the parapet corners, the cornice undersides and the plinth contact, and a shaded red band that "goes dull and brownish". w4r8 said the AO was too faint and tight. w4r9's blotches were worldAO plus quantisation, and both are fixed now.
+**Diagnosed** (rounds/surface/w4r11; new in-page A/B tool w4r11/remesh.js: `__remesh(voxPatch)` rebuilds every voxel mesh in the camera frustum with new voxel defaults inside ONE run, so the sun and framing match; pass its text to ab2 as `--eval`):
+- The COMB is authored geometry, not AO. commercial.js:1816 `S.dentil` sets a 1-on-1-off dentil course under the top cornice. The no-AO render shows the same comb (w4r11/comb_NB.png). The only AO part was per-voxel notches under each dentil in the ratio map. That is routed to shops in coherence.md.
+- Exponents on the bake meant the bake-space caps never bounded the screen. A baked 0.3 became 0.3^3 of the indirect light, so the lot strip beside the wall foot (in cast shadow) rendered near-black (rendered/no-AO p2 0.16).
+- The shade-side desaturation came from the additive grey RIM. It only took 60% of the AO, so it sat on top of every darkened saturated face. Bakery right red panel: S 0.71 with no AO, 0.54 with AO, 0.89 with rim 0 (A7). Post's floor lift also desaturates it a little (0.53 -> 0.67 with floor.amount 0). That part is post's.
+**Changed**
+- materials.js: new `aoFloor [0.3, 0.15, 0.15]` (uAOFloor), a soft floor on the FINAL indirect and direct AO multipliers (walls x, tops y, knee z). Darkness passes untouched until the last knee. My first try was an exp knee over the whole range (F/G variants), and it compressed every pool (rendered p5 0.85), so do not use that.
+- materials.js: new `rimAO [0.6, 0]` (uRimAO). By day the rim carries the albedo's peak-normalised hue, so creases and shade faces stay saturated (right red panel S 0.54 -> 0.84, lit red S 0.74 -> 0.82). The .y slot is an AO exponent on the rim. 1-2 made shade faces too dark (C4/D3), so it is left at 0. Night keeps the legacy rim.
+- AO widened now that the blotch causes are gone. voxel.js: aoDist 2.25 -> 3, aoBroad 0.4 -> 0.6, aoBroadDist 4 -> 4.5, aoBroadTop 1.0 -> 1.4. materials: ao 2.3 -> 2.6, aoDirect 2.5 -> 2.8, aoTop [3.0,3.2] -> [3.3,3.5], aoToe [0.03,0.2] -> [0.01,0.08] (the continuous atlas removed the terraces the toe was hiding).
+- voxel.js: new `aoBlur 0.25`, a masked in-plane triangle blur of the combined darkness per face layer (building scale, before the floor/stamp). It is mean-preserving, unlike aoSpread's max-dilation. It turns the per-voxel notches under dentils and notched lips into one soft band.
+**Measured**: one-bakery rendered/no-AO building p2/p5/p25/p50 0.40/0.53/0.78/1.00 -> 0.40/0.50/0.75/0.94 (wider pools, and the crease bottom is no deeper). Plinth region p2 0.16 -> ~0.3, so the lot strip is slate, not black. Chimney and AC pools on the deck are smooth and wide (A10). Node mesh time: bakery 94 -> 133 ms, stadium 248 -> 266 ms, mall 569 -> 634 ms. Per-vertex tris -10..-14%. Atlas texels (8-model sample, pow2-padded) 1.02M -> 0.79M, because the smoother field packs better. The voxel selfTest passes and check.sh is clean. Verification shoot w4r11-builder: 0 console errors, iso-mid tris 1.91M, buildMs 47 s, fps 27/38/61. iso-night has 0 errors. iso-mid towers are not brown (A10/im_B_D2.png). Pair: w4r11/final_pair.png.
+**Not mine**: (1) The dentil comb is geometry (shops, coherence.md). (2) The post floor lift greys dark saturated shades a little (post). (3) The awning white stripes still grey on their stair-step treads (geometry plus AO; an earlier round gated near-white tops out of aoTop).
+**Next**: if "muddy/dark creases", raise aoFloor to [0.35, 0.18] first. If "still faint", lower aoFloor.x to 0.25 or raise aoBroad to 0.7. Keep aoBlur <= 0.25 (0.5 flattened the red panels, KB2). Keep the rim hue carry.
+
+### Coordinator note (2026-09-27 06:15) — w4r11: glass colour is NOT the gap (measured)
+Blue-glass luminance quartiles (dark→bright): ref04 #182d58 #254170 #30507e #335584 #355887; ref02 #0d1b57 #12225d #313c8a #6174b4 #7f8bc0; ours one-bakery #23427f #2d5498 #356bb4 #6e95bd #9dbdf4 — ours is already BRIGHTER than both refs. Don't brighten glass further. If you touch glass at all: pane CRISPNESS (hard-edged highlight top row, clean frames) — never the base colour.
+worldAO confirmed still off (lighting.js:1812). Remaining gap per w4r11: patchy crease AO and smudges on the forecourt paving — check the lot-paving AO near the wall foot and lamp/bench bases on one-bakery (thin props: exclude from ground AO, or cap their contact pool to ~1 voxel).
+
+### Coordinator note (2026-09-27 06:25) — res w4r12: my 04:20 wall-foot gradient overshot
+res w4r12: "blotchy dark-orange smudge gradients on the walls (right/shaded facade, around the penthouse base) — each face should read as one confident colour with only a thin soft AO in inside corners". So on VERTICAL faces: shrink the ground-line gradient to a thin band (~0.8 at the foot → 1.0 within ~2 voxels, not 1/3 storey), keep cornice/quoin creases to ~2 voxels, and no gradient mid-wall. Open faces = one flat colour. This is the final AO setting for the wave — freeze it and log the numbers; critics have now pulled both ways on every AO dimension.
+
+## 2026-09-27 — wave 4 round 12 (builder)
+Critic w4r11 picked the reference. Its gaps were: the glass reads as "flat dark navy slabs, no sky reflection, no lighter pane tone"; the AO is "weak and uneven"; and the forecourt paving has "smudgy dark blotches". w4r9 said the same about big faces not being clean, and w4r10 called the AO uneven.
+**Diagnosed** (rounds/surface/w4r12 A1-A3, C; B vs N = no AO in one run):
+- The forecourt and deck greying is VOXEL AO. With AO off the paving is clean cream. The broad cone on tops (aoBroadTop 1.4, reach 4.5 u) plus the aoTop exponent 3.3 dimmed the whole forecourt and deck (roof median 0.88 of no-AO, 52% < 0.9).
+- The "uneven" look: the recessed right red panel's inside corners went to near-black maroon (floor 0.3), while the long pools stayed faint.
+- Glass: the head band was PAINT, so on the shaded face it got indirect light only and vanished. The right-face panes were navy (#23427f).
+**Changed**
+- materials.js: aoTop [3.3,3.5] -> [3.0,3.2], aoToe [0.01,0.08] -> [0.06,0.2], aoFloor [0.3,0.15,0.15] -> [0.42,0.25,0.2]. voxel.js: aoBroadTop 1.4 -> 0.4, aoBroad 0.6 -> 0.5, aoBlur 0.25 -> 0.35. aoDist, the ray terms and the wall exponents are unchanged.
+- materials.js GLASS: new `glassSkyTop [0.6, 0.5, 0.62, 0]` (uGlassSkyTop, voxSkyTopV). The upper part of each pane (per row) adds uGlassHi as LIGHT, the same on both faces and off at night, so each pane is two-tone: a light sky-blue top over the azure body. glassHiP.x 0.55 -> 0.3 (the paint band plus the light paled lit panes), glassSheen 0.30 -> 0.38, glassGlintFrac 0.7 -> 0.85. The base tint is unchanged (coordinator 16:40).
+**Measured** (one-bakery, rendered vs no-AO):
+- Roof p5/p50: 0.63/0.88 -> 0.74/0.98. Building p5 0.57 -> 0.69, open median 1.00. Right wall p5 0.50 -> 0.61.
+- Forecourt and deck are clean. The pools stay at the parapets, the wall feet and under the sills.
+- Glass p50 (lit / shaded / ground floor): #276bc2/#23427f/#2e4c83 -> #3474c7/#244483/#516899. p90 of the shaded face #406292 -> #8dbfdb (the sky band).
+- iso-mid towers are not brown or pale (w4r12/cm.png). voxel selfTest passes and check.sh is clean.
+- Verification shoot w4r12-builder: 0 console errors, fps 28/36/61, iso-mid tris 1.89M. Pair: w4r12/final_pair.png.
+**Not mine (still visible)**: the lamp-post's diagonal grey cast shadow on the forecourt (light). The dark terrain footing band (light/ground). The dentil comb (shops). The authored light checker voxels in the shop glass show as small darker squares inside the new sky band (shops).
+**Next**: if "glass pale", set glassSkyTop.x to 0.45. If "navy" again, set glassSkyTop.w (body share) to 0.08. If "AO weak", lower aoFloor.x to 0.36 before touching the tops. Do NOT raise aoBroadTop again: it is the forecourt smudge.
+
+## 2026-09-27 — wave 4 round 13 (builder)
+Critic w4r12 picked the reference. Its gap was "almost no contact AO": the parapet-to-deck edge, the ledge and cornice undersides and the plinth joint all read flat, and the roof slab had no falloff toward the parapet. w4r10 and w4r11 said the same thing, so this is the agreed gap.
+**Diagnosed** (rounds/surface/w4r13 A1-A8; prof.py = rendered/no-AO ratio along lines out from the rear parapets; rm2.py = ratio maps):
+- The deck pool was a FLAT 0.78 PLATEAU about 8 samples wide (48 px), not a gradient. Along the parapet the pool sits in the parapet's cast shadow, where only indirect light shows. Top floor 0.25 plus the 0.2 knee pinned every pixel there. With the floor off (F0) the same bake gives a gradient from about 0.5.
+- Hard-edged dark patches: tops' indirect exponent 3.0 made shadowed pools much darker than lit ones, so pools that cross a cast-shadow edge get a hard edge (G1: forecourt p2 0.17). That is the likely mechanism behind the w4r9/w4r11 "smudges".
+- Walls: open tan walls under the upper storey and under the sills had no AO at all (ratio 1.0). aoSkyShadow 0.3 was too weak to lay a band under overhangs.
+**Changed**
+- materials.js: aoFloor is now a vec4 [wall, top, wall knee, TOP knee]. It is backward compatible, because a missing w falls back to z. aoFloor [0.42,0.25,0.2] -> [0.42,0.12,0.2,0.3]. aoTop [3.0,3.2] -> [2.4,3.6] (softer indirect, stronger direct).
+- voxel.js: aoSkyShadow 0.3 -> 1.0, aoSkyReach 0.8 -> 1.0, aoBroadTop 0.4 -> 2.0 (effective 1.0).
+**Measured** (one-bakery, rendered/no-AO, same run):
+- Deck from the rear-right parapet: 0.79 0.77 0.80 0.81 0.78 0.79 0.80 0.82 0.84 0.89 0.94 0.98 1.0 -> 0.73 0.72 0.75 0.75 0.73 0.74 0.75 0.76 0.78 0.80 0.83 0.86 0.93 0.97 0.99 1.0. That is deeper at the contact and a real ramp about 50% wider.
+- Right wall p25/p50 0.78/0.89 -> 0.73/0.84, and p2 is still 0.52 (the ~0.65 wall cap holds).
+- Forecourt p2 0.55 -> 0.31 (creases only, with no shadow-edge blotches; G1 had 0.17).
+- A soft band now falls under the upper storey, the sills and the cornice, and the red recessed panels shade evenly (the lit-centre "glow" is gone).
+- iso-mid towers are not brown or dirty (w4r13/im_cmp.png). voxel selfTest passes and check.sh is clean.
+- Verification shoot w4r13-builder: 0 console errors, fps 28/38/61.
+**Not mine**: post's shade floor (grade.floor.amount 0.18) still lifts the shadowed deck contact. No top exponent or floor variant got the shadowed-deck contact below ~0.7, while the lit parts respond. ref04's deck contact is ~0.2-0.25. Post owner: an AO-aware floor would let decks pool like ref04.
+**Next**: if "dirty forecourt", set aoFloor.y back to 0.18 (keep the 0.3 top knee). If "still weak", set aoTop.y to 4.0 (direct only; it does not blotch across shadow edges). Do NOT raise aoTop.x again (shadow-edge patches). Glass, ghost (#8) and bridge (#1) are unchanged this round.
+
+## 2026-09-27 — wave 4 round 14 (builder)
+Critics w4r11, w4r12 and w4r13 all picked the reference with the same gap: the faces under the cornice, sills and awnings, and at the plinth, "stay flat and evenly lit". w4r13 also saw a "milky haze" over the forecourt paving.
+**Diagnosed** (rounds/surface/w4r14 A1-A7; prof.py and rcrop.py = rendered/no-AO profiles and ratio maps; the forecourt pick raycast hits only the opaque voxel lot top, so the "haze" is shading, not a transparent mesh):
+- The AO is not missing. It is a PLATEAU. The tan wall under the storey ledge sat at a flat 0.82-0.83 of no-AO with no gradient. The recessed red panels were a flat ~0.65, the right lower storey a flat 0.84, and the forecourt was one grey-khaki tone (B vs N). The sky-shadow, broad and long-ray terms stack into a uniform level across short faces. The materials exponents then turn that into a darker paint colour, not a read of depth.
+**Changed**
+- voxel.js: new PLATEAU LIFT, `aoTopHat [1.0, 1.5]` (wall/top radius in world units) with `aoPlateauKeep [0.65, 0.4]`. It is a masked, separable grey-scale opening (erode, then dilate) of each face layer's combined darkness, box-smoothed. The opening is scaled to `keep`, and the crease ramp above it stays at full depth. It is gated to building scale and applied before aoBlur and the floor. `aoSkyReach 1.0 -> 1.5` and `aoWallFloor 0.48 -> 0.40`.
+- materials.js: `ao 2.6 -> 3.2`, `aoDirect 2.8 -> 3.6`, `aoFloor.x 0.42 -> 0.30`, `aoWallCap 0.57 -> 0.62`. The creases go deeper because the open faces no longer carry a plateau.
+- Night branches, glass (coordinator 16:40 and 06:15), ghost #8 and bridge #1 are unchanged. The coherence item "[surface][ground] lot plinth side band near-black on house lots" is not addressed this round.
+**Measured** (one-bakery, rendered/no-AO, same run):
+- Tan wall under the ledge: flat 0.82 -> a ramp 0.77 -> 0.85.
+- Building p2 0.61 -> 0.57, p5 0.69 (unchanged), open median 1.00.
+- The forecourt is clean cream with contact only at the storefront foot and the rim (A6_fore.png).
+- Wall keep: 0.4 lit small recessed red panels into a round "glow" spot (A7 Y1), 0.2 was worse, and 0.65-0.7 is clean.
+- voxel selfTest passes (node) and check.sh is clean.
+- Verification shoot w4r14-builder: 0 console errors, fps 16-27/39/61 (load), iso-mid tris 1.89M, and iso-mid towers are not brown.
+**Next**: if a critic still calls the AO "flat", lower the wall keep toward 0.55 (not below, or the glow spots come back) and/or aoFloor.x toward 0.25. If "blotchy/spotty panels", raise the wall keep to 0.8. If "haze/grey decks", lower the top keep to 0.3. The top-hat radius sets the widest ramp that survives. Do not go below 0.75 on walls: at 0.5 only 1-2 voxel creases survived (W3, "faint and tight").

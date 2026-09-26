@@ -144,11 +144,13 @@ const _colors = {
   // (r10) critic r9: fire station "red and teal run together", city hall
   // "pale blue washes out" -> deeper brick, darker sage trim/deck, cream hall
   // walls with strong grey-teal pilasters and a dark teal slate (ref05)
-  civBrick: 0xc23d25, civCornice: 0x4f806a, civApron: 0x243a35, civPool: 0x2ea3ee,
-  civPoolLt: 0x86d4f7, civPlaza: 0xdcad7a, civMarble: 0xefece5, civRubber: 0xe4644c,
-  civFireRoof: 0x44674f,
+  civBrick: 0xb0603e, civCornice: 0x4f806a, civApron: 0x243a35, civPool: 0x2ea3ee,
+  civPoolLt: 0x86d4f7, civPlaza: 0xdbb27e, civMarble: 0xefece5, civRubber: 0xe4644c,
+  civFireRoof: 0x3a4b3a,
   civHall: 0xb3cfbf, civHallDk: 0x5f8f8e, civConcourse: 0x4b535f, civConcourseLt: 0x6d7682,
-  civLawn: 0x6f8a3c, civBronze: 0x6f8f86, civSlate: 0x3f6269, civStone: 0xd9d3c3,
+  // (civic w4r9) civBronze (3 uses) → civHedge: ref05's monument hedge ring is a
+  // DARK olive (~55,73,24 avg); vegLeafBand rendered lime next to it.
+  civLawn: 0x6f8a3c, civHedge: 0x587810, civSlate: 0x3f6269, civStone: 0xd9d3c3,
   // [industrial]
   // r12 (critic r11: "almost all of our industrial district is pale white or
   // light grey … no sense of heavy material"; ref05: dark charcoal + steel
@@ -171,7 +173,7 @@ const _colors = {
   // roof equipment): steel / navy are LIGHT bodies again (cool grey / pale
   // blue) whose Dk tones are real blues for pilasters + bands; indYard (every
   // roof deck) is a mid grey so the charcoal plant reads off it
-  indSteel: 0xbfcad8, indSteelDk: 0x7f95ad, indNavy: 0xc8d6e6, indTarmac: 0x0b1c24,   // w4 r8: ex indNavyDk slot → blue-slate truck-yard asphalt (ref05 yard renders ~#3f5d6c)
+  indSteel: 0xbfcad8, indSteelDk: 0x7f95ad, indNavy: 0xc8d6e6, indTarmac: 0x1f3740,   // w4 r8: ex indNavyDk slot → blue-slate truck-yard asphalt (ref05 yard renders ~#3f5d6c)
   // w4 r1b (ref05 district crop measured again: roof decks render #50555c–
   // #8a9096 under charcoal / navy plant; 0x8a929c rendered a pale #c8ccd4 and
   // the light walls + light roofs read as one white mass): a blue slate deck

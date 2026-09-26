@@ -756,3 +756,161 @@ The blotchy deck and the hazy wall patches are surface/post artefacts (routed to
 
 ### Coordinator note (2026-09-27 03:20)
 w4r9's "smudgy AO blotches, dark smear at the door step and lot rim" came from lighting's screen-space worldAO, now switched off globally. Re-render before changing anything for that point.
+
+## 2026-09-26 — wave 4, round 10 (builder)
+
+**Critic (w4r9):** the reference won. The biggest gap was soft, hazy shading: "smudgy AO smears at the front door step and along the lot rim", a "muddy, low-contrast" right face, and a patchy gradient on the roof terrace. ref04 has clean AO lines only in inside corners and under trim.
+**Consensus w4r7-w4r9:** all three critics called the small house smeared or muddy (deck, walls, ground). It is the same fault each time: wide AO terms on fine-voxel homes.
+
+**Changed** (residential.js only; no palette, engine or layout change):
+1. **Tight AO on every res ≥ 8 home.** `RES_VOX` is now `{aoSpread: 0, aoBroad: 0, aoSkyShadow: 0, aoDist: 1.2}`, up from `{aoSpread: 0}`.
+   - A/B on one-small-house via a temporary `globalThis` hook (`rounds/res/w4r10-xa..xf`; `w4r10-ab1..3.png`). With AO fully off the house is flat. aoBroad 0 alone still leaves the door-step pool. aoDist 2.25 without broad or sky still greys the step. aoDist 1.2 with broad and sky at 0 is clean: the step and the plinth front are free of smears, the deck is one cream (243,214,162) with no dark patch, and the quoin necks are no longer olive. The crease, cornice, sill and ground-contact lines all stay.
+   - Gallery A/B (`w4r10-ab4.png`): the houses and roofs are brighter and cleaner. Res-4 shops keep the global recipe.
+2. **v1 wall: peach → civPlaza** (the ref04 homage; measured, `w4r10-wa..wd`).
+   - On today's grade, peach rendered lit (247,178,124) and shade (189,112,67), a pale pastel.
+   - civPlaza renders lit (242,166,100) and shade (184,103,54). That matches ref04's hue and saturation on both faces: ref04 measures (201,131,70) lit and (165,88,45) shade.
+   - Rejected: resTile and skin3 went red, and comConeDk went orange.
+3. **`bigLamp`** is a chunky 3×5×3 amber lantern with a cap (ref04's lanterns). It was a 3-cube lamp that vanished.
+4. **Coherence #7:** re-verified with every building at scale 0.35 (`w4r10-grow`). The lot stays full height and the house squashes above it. `_growLot` still holds, so no change was needed.
+
+**Measured.** All modules parse, and every shot had 0 console errors.
+- Tris: gal-homes-1 431-472k, gal-homes-2 704k, one-small-house 295k, one-apartment 387k.
+- FPS: 53 / 53 / 61 / 48.
+- The ref04 pair is `w4r10-builder/pair.png`. The start file is `rounds/res/w4r10-start.js`.
+
+**Not mine, still in the pair:**
+- The grey scatter rock behind the lot (ground/veg).
+- The near-black terrain footing under the plinth (light/ground).
+- A transient white "+" flyer over the lot (life?).
+
+**Next:**
+1. If a critic now calls the house flat or "pasted on", raise `aoDist` to 1.5 before touching broad or sky.
+2. The lanterns are partly hidden by the door topiaries. Move the topiaries out 2 voxels if they need to read.
+3. Gallery roofs are still stepped stripes (a `run 2` course is still the lever).
+
+### Coordinator note (2026-09-27 04:35)
+Fixed globally: natural scatter now keeps 1 tile off building lots, so no more rocks/trees clipping behind your roofs (verified one-small-house). The weak-wall-AO point is with surface (04:20 note).
+
+## 2026-09-26 — wave 4, round 11 (builder)
+
+**Critic (w4r10):** the reference won. The AO on the house was too weak: the walls read as flat single-tone slabs, with no soft AO under the cornice, inside the quoin stacks or at the ground line, so the house looked "pasted onto its lot". It asked for wide soft AO plus a gentle gradient on the walls.
+**Consensus w4r8-w4r10:** this is the swing. w4r8 and w4r9 said "smeared/muddy"; w4r10 says "too weak". Between them the coordinator switched lighting's screen-space worldAO off globally (03:20), and my w4r10 `RES_VOX` (broad 0, sky 0, rays 1.2) had already stripped the voxel AO. Together that left almost nothing. The fix is the midpoint.
+
+**Changed** (residential.js only; no palette, engine or layout change):
+1. **`RES_VOX` → `{aoSpread: 0, aoDist: 1.8, aoBroad: 0.6, aoBroadTop: 0.3, aoBroadGround: 0.8, aoSkyShadow: 0.5}`.**
+   - I A/B'd on one-small-house through a temporary `globalThis.__resVoxAB` hook, now removed (`rounds/res/w4r11-xa..xf`, comparisons in `w4r11-abc*.png`, `w4r11-aef.png` and `w4r11-ef-ref.png`).
+   - The global recipe with aoSpread 0 (xc) laid a near-black pool at the door step.
+   - xf gives soft pools under the cornice, down the inside of the quoin stacks, round the frames and in a dark band at the ground line, plus a top-to-bottom wall gradient, like ref04.
+   - aoBroadTop 0.3 keeps the broad cone off decks and paving (the w4r7/w4r8 "smudged deck"). aoSpread stays 0 (the w4r8 glow patches).
+2. The scatter rock and the tree behind the one-small-house roofline are gone in today's renders (the ground/demo fix), so no action was needed.
+3. **Coherence #7:** re-verified at scale 0.35 (`w4r11-grow`). The lot stays flat at full height and the house squashes above it. `_growLot` still holds.
+
+**Measured.** All modules parse, 0 console errors on all four shots.
+- Tris: gal-homes-1 431k, gal-homes-2 658k, one-small-house 299k, one-apartment 380k. That is the same as w4r10.
+- FPS: 28 (under load) / 53 / 61 / 61.
+- Shots are in `rounds/res/w4r11-builder`. The start file is `rounds/res/w4r11-start.js`.
+
+**Next:**
+1. If a critic calls it smeared again, step aoSkyShadow 0.5 → 0.35 first, and keep broad.
+2. If it is still "too weak", raise aoBroad to 0.7 before touching aoDist.
+
+### Coordinator note (2026-09-27 05:40) — w4r11: calm it down
+Consistent direction across r7-r11: SIMPLIFY. Small house: quoins as chunky blocks in ONE tone (no hard alternating stripe banding), one clear door with two wall lamps, at most one planter each side set back from the door, a legible rooftop AC (a clean box with a grille face, lighter grey), calm smooth wall faces. The red-brown right face is the shared shade-chroma issue (surface). Fewer elements, each crisp.
+
+## 2026-09-27 — wave 4, round 12 (builder)
+
+**Critic (w4r11):** the reference won. The small house read "busy and heavy": every quoin block had "hard light and dark stripes", the planters were jammed against the door with a hard stoop shadow, the AC was a grey blob, there were no wall lamps, and the right face drifted red-brown.
+**Consensus w4r9-w4r11, plus the coordinator's 05:40 note:** calm it down. That means soft even quoins, a clear door, readable rooftop kit and warm faces.
+
+**Changed** (residential.js only; core.js ends the round unchanged):
+1. **The quoin stripes were the SUN's cast shadow, not AO.** A/B on one-small-house (`rounds/res/w4r12-b..e`, compared in `w4r12-bcd.png` and `w4r12-be.png`):
+   - aoSkyShadow 0.2 and aoDist 1.2 barely move the neck band.
+   - With the shadow map off (`--post` uCsmMisc.x = 0), the necks turn into ref04's soft even shading.
+   - The cause: each block overhangs its 1-proud neck by 1 voxel, so its shadow fills the 3-tall neck with a sawtooth grey band. It measured (79,79,64) against the (230,199,131) block, where ref04's neck is about 85% of its block.
+   - Fix: `refQuoins` has a new `o.alt` option (long/short arms that alternate course by course and swap between the two faces). The v1 body now uses `{ca 4, bh 5, per 6, alt [8,5]}`, so the neck is ONE voxel tall and the shadow reads as a thin mortar joint. The rooftop room uses `{bh 4, per 5, alt [7,5]}`.
+   - Rejected (`w4r12-a`): coplanar core and blocks with no overhang. The corners became flat cream slabs.
+   - Other homes: the apartment's bigQuoins courses went from 4 to 6 tall, the tall apartment's from 4 to 6 and the townhouse's from 4 to 5. There are fewer joint lines, and the apartment corners are calm (`w4r12-builder/apt.png`).
+2. **Door (v1):**
+   - `bigDoor` takes `o.sw` (surround width). v1 uses sw 2 with the door at dm 47, so each lamp keeps a wall gap.
+   - `bigLamp` has a dark bracket and cap and a gold lantern. It used to be an amber lantern with an orange arm that merged into the surround.
+   - The planters are free-standing, flanking the path 8 voxels out, and shorter (h 8).
+   - The red mat is restamped after the path. The path had been paving over it, which left only a red sliver and a dark wedge.
+3. **Rooftop:**
+   - `refAC` is a clean 12×8 white box with 3 dark louvre slats and a recessed dark fan grille with a light hub.
+   - The AC and the room door (sw 2) now have clear wall round them.
+   - The topiary moved off the AC to the open deck by the room's front-left corner.
+4. **Right face red-brown:** tried `resTileOrangeDk` → 0x9c4c16 as the v1 frame (`w4r12-g`). It rendered MORE red (lit 238,87,54 / shade 151,61,52), and the blue channel did not drop. The shade-face blue (B ≈ 51 against ref04's 18) comes from the fill light, not the albedo. Reverted, so core.js is untouched. This stays with surface/light.
+5. **Coherence #7:** re-verified through the real path (main.js growAnims → `engine.updateBuildingScale` → `_growLot`). With all buildings at 0.35 (`w4r12-grow/c.png`), the lot stays flat at full height and the house squashes above it. No change needed.
+
+**Measured.** All modules parse, all 48 home variants build in node, and there were 0 console errors on every shot.
+- Tris: gal-homes-1 428k, gal-homes-2 602k, one-small-house 301k, one-apartment 374k (the start was 450k / 650k / 296k / 378k).
+- FPS: 54 / 54 / 61 / 61.
+- Shots are in `rounds/res/w4r12-builder`, with the ref04 pair in `pair.png`. The start file is `rounds/res/w4r12-start.js`.
+
+**Next:**
+1. Light owner: a 1-voxel overhang throws a hard sawtooth sun shadow onto the face below on every fine res-10 detail (quoin necks, frame heads). Softer PCF, or a shadow-strength floor near overhangs, would let ref04's necked quoins come back.
+2. Gallery roofs are still per-step stripes (the w4r11 other note). The lever is `rise 2, run 2` with `lip` = the tile tone, which gives half the crease lines at the same 45° pitch.
+3. If a critic calls the small house plain now, give the deck ref04's post-and-rail (a rail on 2 posts) rather than the flush curb.
+
+### Coordinator note (2026-09-27 06:25)
+w4r12's wall smudges are the shared wall AO (surface; my 04:20 ask overshot — now narrowed to a thin crease). Not yours to fix in the model.
+
+## 2026-09-27 — wave 4, round 13 (builder)
+
+**Critic (w4r12):** the reference won. The walls had "blotchy, smeared darker-orange gradients", worst on the shade face round the upper windows, under the parapet and at the foot of the rooftop room. ref04 keeps each face one clean tone, with a thin soft AO band only in inside corners and under ledges. The critic also called the forecourt crowded and the gallery roof stripes a little noisy.
+**Consensus w4r10-w4r12:** the right answer is AO that is soft but TIGHT to the corners, not wide. w4r10 said "too weak" and w4r12 "smeared"; w4r11 praised the soft corners but saw stripes. The gallery roofs were called stripey twice (w4r11, w4r12).
+
+**Changed** (residential.js only; core.js and engine untouched):
+1. **The wall smears were mesher AO; now tight.** A/B on one-small-house through a temporary `globalThis.__resVoxAB` hook, now removed (`rounds/res/w4r13-x*`, sheets `w4r13-ab1..5.png`, `w4r13-base.png`):
+   - `ao:false` gives perfectly clean faces, so the smears come from the mesher, not materials, light or post.
+   - The w4r11 recipe's 1.8-unit rays (18 voxels) haloed every 2-proud frame. The 4.5-unit broad cone plus the 0.5 sky term laid storey-sized gradients, and the vertex ramps smeared them diagonally. The worst case was the rooftop room's shade wall.
+   - `RES_VOX` is now `{aoSpread 0, aoDist 0.7, aoBroad 0.35, aoBroadDist 1.2, aoBroadTop 0.3, aoBroadGround 1.0, aoSkyShadow 0.25}`. 0.7 units is about 7 voxels, the size of ref04's corner pools at matched scale.
+   - Measured on an open patch of the shade face (luma): 74-96 at the old setting, 106-109 now, 109 with AO off, so the face is one tone. There is still a soft band at the ground line and in the quoin inside corners, plus a thin ring round each frame.
+   - Faces now: lit (217,149,80) against ref04's (205,131,73); shade (184,105,38) against ref04's (165,90,46).
+2. **Calmer forecourt on the ref04 homage (v1):** removed the front-corner shrub (the green blob by the door). The path, mat, two free-standing planters and lamps remain.
+3. **Roofs:**
+   - `gableRoof` and `hipRoof` default to 2×2 courses at the same 45°, and their lip now defaults to the tile tone. That halves the step lines, and each course is one solid tone.
+   - The small house's pitched variants use 2×2 too.
+   - The cabin porch lean-to and the mansion gazebo alternated two tile tones course by course; both are now one tone. The cabin porch was the stripiest plane on gal-homes-1.
+   - Heights: ±1 voxel, nothing new at the ceiling (apartment1 was already there, and it has a flat roof).
+4. **Coherence #7:** re-verified through `engine.updateBuildingScale(…, 0.35)` (`rounds/res/w4r13-grow`). The lot stays full height and the house squashes above it. `_growLot`/`_lotInfo` are still in engine.js, so no change was needed.
+
+**Measured.** All modules parse, all 48 home variants build in node, and there were 0 console errors on every shot.
+- Tris: gal-homes-1 427k, gal-homes-2 715k, one-small-house 300k, one-apartment 387k (the start was 430k / – / 298k / 371k).
+- FPS: 29* / 45 / 61 / 38*. The starred readings ran alongside a second Chrome.
+- Shots are in `rounds/res/w4r13-builder`, with iterations `w4r13-a..c`. The start state is `w4r13-cur` and the start file `rounds/res/w4r13-start.js`.
+
+**Seen, not mine:** in the start run, a grey rock cluster and a big tree stood right behind the one-small-house roofline again. They were absent in every later run, so the scatter looks nondeterministic between runs (ground/props).
+
+**Next:**
+1. If a critic calls the house "flat / pasted on" again, raise `aoBroad` 0.35 → 0.45 at the SAME short 1.2-unit reach. Do not lengthen the rays; the length is what smears.
+2. A faint diagonal smear remains on the bottom quoin block (broad ground term × vertex interpolation). If it gets noticed, try aoBroadGround 0.7.
+3. If critics still want the deck dressed, give it ref04's post-and-rail rather than the flush curb.
+
+## 2026-09-27 — wave 4, round 14 (builder)
+
+**Critic (w4r13):** the reference won. The walls were flat single tones with no soft contact darkening under the cornice, round the quoins or at the roof-to-wall joins, so the house looked "pasted on". The critic asked for a subtle wall gradient. It also called the lot side band a near-black slab.
+**Root cause (my w4r13 change):** in voxel.js, every building-scale AO term is gated on `aoDist >= 1`: the broad cone, the sky shadow, the wall/top floors and `lotGroundDrop`. My w4r13 `aoDist 0.7` silently switched ALL of them off, which left only 7-voxel rays.
+
+**Changed** (residential.js only):
+1. **`RES_VOX` → `{aoSpread 0, aoDist 1.0, aoRayFall 2, aoBroad 0.6, aoBroadDist 4.5, aoBroadTop 0.3, aoBroadGround 1.0, aoSkyShadow 0}`.**
+   - A/B on one-small-house through a temporary `globalThis.__resVoxAB` hook, now removed (`rounds/res/w4r14-xb..xj`; sheets `w4r14-ab1..5.png`).
+   - Measured on a column of open right-face wall between the window stacks (luma, top to bottom):
+     - start: flat 121
+     - any `aoSkyShadow > 0`, even 0.12 with skyMin 0.2: 121 → 94 pools under every window head, with a light 119 diamond between them. **This is the w4r12 "smear".**
+     - sky 0 with broad 0.6 / 4.5: flat 121 down to the lower quarter, then a soft ramp to 93 at the ground line.
+   - The result: a clean face, a ground-up gradient, darkened quoin feet, and soft pools where the roof room meets the deck.
+2. **Coherence #7:** `_growLot`/`_lotInfo` are still in engine.js (verified in earlier rounds), so no change was needed.
+
+**Measured.** All modules parse, and there were 0 console errors on all four shots.
+- Tris: gal-homes-1 427k, gal-homes-2 683k, one-small-house 300k, one-apartment 384k.
+- FPS: 55 / 24* / 61 / 61. The starred reading was taken under load.
+- Face colours: lit (238,170,100), shade (184,105,38), and shade at the ground (156,88,28).
+- The ref04 pair is `rounds/res/w4r14-builder/pair.png`. The start file is `rounds/res/w4r14-start.js`.
+
+**Not mine:** the near-black band below the plinth is terrain.js's LK_FOOT footing (a lotSide block that renders ~black on the shade side). It is on coherence under [surface][ground].
+
+**Next:**
+1. Never set `aoDist < 1` on homes again: it disables the whole building-scale AO stack.
+2. If the house is called "smeared" again, lower aoBroad to 0.5 first. Keep sky at 0.
+3. If it is called "weak" again, raise aoBroadGround or aoBroad before touching sky.
