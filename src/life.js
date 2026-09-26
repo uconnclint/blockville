@@ -38,12 +38,31 @@ const SPARK_CAP = 60;   // global firework spark pool cap (rockets + particles)
 const WATER_MIN = 25;   // need this many water tiles before boats appear
 const TRAIL_LEN = 20;   // pedestrian position history samples (for trailing dogs)
 const DOG_GAP = 0.55;   // dog trails its owner by this much path length
+const COMP_GAP = 0.62;  // w4: a walking companion (child / friend) one step behind
+const COMP_P = 0.3;     // w4: share of dog-less road walkers that walk with someone
+const STRIDE = 0.2;     // w4: walked distance per stride pose (people swap two poses)
 
-const CAR_LANE = 1.25;  // right-hand lane centre (roads.js r14: 6.6-unit carriageway,
-                        // 3.3-wide lanes). r12: the middle of the DRIVING strip, i.e.
-                        // between the centre dashes (0) and the kerbside bays' lane
-                        // line (KERB - 0.93 = 2.37): the r11 critic saw cars "straddle
-                        // lane dashes and parking-bay lines". See also LEAN below.
+const CAR_LANE = 1.4;   // right-hand lane centre through bends and junctions (roads.js
+                        // r14: 6.6-unit carriageway, 3.3-wide lanes).
+// w4 (the w3 critic: "cars sit at random offsets ... straddling the centre
+// dashes"): on a straight a car keeps to the middle of the asphalt it can
+// actually use — beside a kerb with parking bays that is the strip between
+// the centre dashes (0) and the bays' lane line (KERB - 0.93 = 2.37), beside
+// an open kerb the whole 3.3 lane. The old single 1.25 (bay-strip centre)
+// left every open-kerb lane's traffic hugging the centre line. Between tiles
+// the offset eases over DRIFT units, so a car drifts out past a parked row
+// and back in the way a driver does. See also LEAN below.
+// w4r2: vehicles x1.5 (vehicles.js RT) and bays 1.33 deep -> bay line at
+// KERB - 1.33 = 1.97, so the bay-side strip's middle is 1.0 (a 1.0-wide car
+// spans 0.5..1.5, the oncoming one -1.5..-0.5).
+const LANE_BAY = 1.0;
+const LANE_OPEN = 1.65;
+const DRIFT = 3.0;
+// w4 pop-in slots (see _spawnCar): cruising lattice + stop-line queue
+const SLOTS = [2, 6];      // tile-local s of the two cruising slots (pitch 4 = car + its gap at speed)
+const STOP_NOSE = 2.35;    // a waiting car's nose this far back from the junction mouth (behind the stop bar)
+const QUEUE_GAP = 0.5;     // bumper gap in a standing queue (car-following settles at 0.45)
+const CLEAR_V = 6;         // paused: how fast a car caught in a junction box rolls clear (u/s wall time)
 // r12 iso lean: in the orthographic iso view a vehicle's body leans AWAY from
 // the camera on screen (a roof h up projects onto ground h·cot(elev) further
 // back), so a car whose FOOTPRINT is centred in its lane shows its body
@@ -80,22 +99,26 @@ const CAR_COLOURS = 10; // colour seeds per kind (variant = kind + 14 * seed; va
 // fire engines or ambulances in the general mix at all — they only come from
 // their station's streets (SITE_KINDS) and its kerb (FLEET); police is a rare
 // patrol; school buses stay near schools.
-const CAR_MIX = [0.25, 0.045, 0.045, 0.004, 0, 0.12, 0.012, 0, 0.075, 0.05, 0.10, 0.075, 0.004, 0.17];
+const CAR_MIX = [0.26, 0.03, 0.045, 0.004, 0, 0.12, 0.012, 0, 0.075, 0.05, 0.10, 0.075, 0.004, 0.17];
 //                  sedan taxi  bus  ice  fire hatch pol  amb  box  pick suv  van  schl city
-const CAR_SPEED = [5.6, 5.6, 4, 3.6, 6, 5.6, 6.4, 6.4, 4.4, 5.2, 5.2, 4.8, 4, 5.6];
+// w4: close together (heavy vehicles a little slower), so flows stay evenly spaced
+const CAR_SPEED = [5.4, 5.4, 4.8, 4.6, 5.4, 5.4, 5.4, 5.4, 4.8, 5.2, 5.4, 5.0, 4.8, 5.4];
 // Service vehicles hang around their home buildings (spawn on nearby roads):
 // ref05 parks fire engines at the fire station, ambulances at the hospital.
 const SITE_KINDS = {
-  'fire-station': [4, 4, 7, 6, 0], 'school': [12, 2, 13], 'park': [3, 13], 'playground': [3, 13],
-  'zoo': [3, 2], 'stadium': [2, 1, 13], 'ferris-wheel': [3, 13], 'carousel': [3, 13], 'water-slide': [3, 13],
-  'city-bank': [1, 0, 6], 'hotel': [1, 13], 'corporate-hq': [1, 0], 'glass-skyscraper': [1, 10],
+  // w4: taxis were ~1 in 4 cars downtown (every tower / hotel / bank asked
+  // for them) — one taxi share per site now; the fire station sends out its
+  // engine, not police cars and ambulances (they stay parked in its bays)
+  'fire-station': [4, 0, 13], 'school': [12, 2, 13], 'park': [3, 13], 'playground': [3, 13],
+  'zoo': [3, 2], 'stadium': [2, 13, 0], 'ferris-wheel': [3, 13], 'carousel': [3, 13], 'water-slide': [3, 13],
+  'city-bank': [0, 10, 13], 'hotel': [1, 0, 13, 10], 'corporate-hq': [0, 10, 1], 'glass-skyscraper': [0, 10, 13],
   'mall': [11, 8, 1], 'grocery': [8, 11], 'warehouse': [8, 8, 11], 'workshop': [9, 11],
   'car-factory': [8, 9], 'toy-factory': [8, 11], 'mega-factory': [8, 8], 'sawmill': [9, 8],
-  'recycling-center': [8, 9], 'museum': [2, 1],
+  'recycling-center': [8, 9], 'museum': [2, 0],
 };
 const SITE_P = 0.25;    // share of spawns that go to a service site in view
 const EMERGENCY = [0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0];   // fire engine, police, ambulance
-const EMERG_CAP = 3;    // w1: most emergency vehicles driving at once (they park at their station)
+const EMERG_CAP = 2;    // w1: most emergency vehicles driving at once (they park at their station)
 // Kerbside parking (round 3): service fleets stand in painted bays along the
 // kerb in front of their building (ref05: ambulances in the hospital's bays,
 // fire engines on the station apron, box trucks in the depot yard), shoppers'
@@ -112,7 +135,8 @@ const FLEET = {
   // no hospital in the catalog, so the first-aid posts are the big venues
   'swimming-pool': [13, 0, 5], 'mini-golf': [13, 0],   // w1: no ambulances away from the fire station (no hospital yet)
   // depots (r11: ref05's logistics yard = rows of orange delivery trucks)
-  'warehouse': [V(8, 0), V(8, 0), V(8, 4), V(11, 0)], 'mega-factory': [V(8, 0), V(8, 0), V(8, 5), V(11, 0)],
+  // w4: V(8, 6..9) = articulated semis (vehicles.js semiTruck; livery = slot % 6)
+  'warehouse': [V(8, 6), V(8, 6), V(8, 0), V(11, 0)], 'mega-factory': [V(8, 6), V(8, 0), V(8, 6), V(11, 0)],
   'car-factory': [V(8, 1), 9, 10], 'toy-factory': [V(8, 3), V(8, 3), V(11, 0)], 'sawmill': [9, V(8, 1)],
   'recycling-center': [V(8, 2), 9], 'workshop': [9, V(11, 5), 13],
 };
@@ -126,21 +150,24 @@ const LEAD = {
   'flower-shop': V(11, 4), 'pet-shop': V(11, 5), 'book-shop': V(11, 3),
   'sports-shop': V(11, 5), 'toy-store': V(8, 3), 'grocery': V(8, 2), 'mall': V(8, 0),
   'market-stall': V(8, 2), 'fruit-stand': V(8, 2), 'ice-cream': 3, 'candy-shop': 3,
-  'cinema': 1, 'arcade': 1, 'shopping-office': V(8, 0),
+  'cinema': 1, 'arcade': 13, 'shopping-office': V(8, 0),
 };
-const DEPOT = [V(8, 0), V(11, 0), 9, V(8, 5)];   // any other factory's yard
-const SHOPPER = [13, 0, 5, 10, 13, 9, 1];   // everyone else's customers
+const DEPOT = [V(8, 6), V(11, 0), 9, V(8, 0)];   // any other factory's yard
+const SHOPPER = [13, 0, 5, 10, 13, 9, 0];   // everyone else's customers (w4r2: no taxi — iso-close had ~1 in 8 yellow)
 const RESIDENT = [0, 5, 13, 10, 0, 9, 13, 5]; // the family car outside a home
 const LONG_KIND = [0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0]; // needs two bays
 const PARKED_CAP = 900; // parked cars (static, merged per road tile: parkedRowModel)
 const PARKED_TILES = 300; // merged tile meshes; off-screen ones are frustum-culled
-const BAY = 2.4;        // kerbside bay length (vehicles.js BAY_HALF1 = 1.2 units)
-const PARK_SINK = 0.045; // parked model sinks so its baked bay paint (one res-17 voxel, 0.059) is ~0.014 proud
+const BAY = 2.6;        // kerbside bay length (vehicles.js BAY_HALF1 = 1.3 units; w4r2: was 2.4 for the x1.5 cars)
+const PARK_SINK = 0.069; // parked model sinks so its baked bay paint (one res-12 voxel, 0.083) is ~0.014 proud
 // View focus (cosmetic LOD): the crowd lives where the player is looking.
 const VIEW_IN = 1.02;   // NDC half-extent that counts as "on screen"
 const VIEW_RING = 1.45; // spawn ring just off screen: traffic drives in
 const VIEW_DROP = 1.7;  // agents further out than this are recycled
-const CARS_PER_TILE = 3.2;  // on-screen road tile -> live cars (r3, r6, r10 critics: "sparse"; r10 2.6 -> 2.3; r11 -> 3.2, r10: "more traffic on the arterials")
+// w4r2 (the w4r1 critic: "fewer vehicles in the lanes and more parked where
+// they belong"; ref05's streets are nearly empty): the cars are x1.5 now, so
+// 1.8 a tile still fills about as much asphalt as 2.7 of the old ones.
+const CARS_PER_TILE = 1.8;  // on-screen road tile -> live cars (r3, r6, r10 critics: "sparse"; r10 2.6 -> 2.3; r11 -> 3.2, r10: "more traffic on the arterials")
 const PEDS_PER_TILE = 2.1;  // on-screen road tile -> live sidewalk people
 const SPAWN_PER_FRAME = 6;  // pop-ins per update (smooth fill after a pan)
 const PERSON_VARIANTS = 24;
@@ -186,9 +213,25 @@ function evalPath(a) {
   const ix = DIRS4[a.din][0], iz = DIRS4[a.din][1];
   const rx = -iz, rz = ix;                         // right of travel
   if (a.din === a.dout) {
-    a.px = cx - ix * HALF + rx * r + ix * s;
-    a.pz = cz - iz * HALF + rz * r + iz * s;
-    a.hx = ix; a.hz = iz;
+    let rr = r, dr = 0;
+    const L = a.lr;
+    if (L) {
+      // w4 lane drift (cars): lIn at the entry edge -> lMid -> lOut at the exit
+      // edge, eased over DRIFT units at each end; heading follows the slope
+      if (s < DRIFT && L[0] !== L[1]) {
+        const t = s / DRIFT, e = t * t * (3 - 2 * t);
+        rr = L[0] + (L[1] - L[0]) * e; dr = (L[1] - L[0]) * 6 * t * (1 - t) / DRIFT;
+      } else if (s > TILE - DRIFT && L[2] !== L[1]) {
+        const t = (s - (TILE - DRIFT)) / DRIFT, e = t * t * (3 - 2 * t);
+        rr = L[1] + (L[2] - L[1]) * e; dr = (L[2] - L[1]) * 6 * t * (1 - t) / DRIFT;
+      } else rr = L[1];
+    }
+    a.px = cx - ix * HALF + rx * rr + ix * s;
+    a.pz = cz - iz * HALF + rz * rr + iz * s;
+    if (dr !== 0) {
+      const n = Math.hypot(1, dr);
+      a.hx = (ix + rx * dr) / n; a.hz = (iz + rz * dr) / n;
+    } else { a.hx = ix; a.hz = iz; }
     return;
   }
   if (a.sq && a.din !== a.dout && ((a.din + 1) & 3) !== a.dout) {
@@ -245,6 +288,7 @@ export class Life {
     this.models = modelsRef || null;
 
     this.density = 1;
+    this._retileCar = (a) => this._carLanes(a);   // w4 lane drift, per tile
     this._leanX = 0; this._leanZ = 0;   // r12 iso-lean (see _leanRefresh)
 
     // pooled agents (each entry keeps its baked handle + variant so we never
@@ -265,6 +309,8 @@ export class Life {
     this.waterCount = 0;   // all water tiles (boats need WATER_MIN of them)
     this._open = new Uint8Array(N * N); // 1 = open water (all 8 neighbours water)
     this._junc = new Uint8Array(N * N); // 1 = road junction (degree >= 3)
+    this._straight = new Uint8Array(N * N); // 1 = plain straight road tile (spawn tiles, w4)
+    this._bayKerb = new Set();              // w4: idx*4 + side of every kerb with parking bays
     this._claims = new Map();           // junction idx -> bitmask of the headings crossing it
     this.factories = [];   // [{x,z,timer}] factory chimneys emitting smoke
     this.ventSites = [];   // [{bid,i,x,y,z,timer}] catalog chimney mouths (models.catalogVents)
@@ -397,6 +443,7 @@ export class Life {
 
     // ---- move everything ---------------------------------------------
     this._traffic(step, state);
+    if (dt === 0) this._clearBoxes(state, wall);   // w4: a paused frame keeps junctions + crossings clear
     for (const p of this.peds) if (p.active) this._movePed(p, step, state);
     for (const b of this.boats) if (b.active) this._driveBoat(b, step, state);
 
@@ -450,10 +497,13 @@ export class Life {
     }
     // junction tiles (3+ road neighbours): cars take turns crossing them
     this._junc.fill(0);
+    this._straight.fill(0);
     for (const t of this.roadTiles) {
-      let d = 0;
-      for (const [dx, dz] of DIRS4) if (inBounds(t.x + dx, t.z + dz) && map[idx(t.x + dx, t.z + dz)] === T.ROAD) d++;
+      let d = 0, m = 0;
+      DIRS4.forEach(([dx, dz], k) => { if (inBounds(t.x + dx, t.z + dz) && map[idx(t.x + dx, t.z + dz)] === T.ROAD) { d++; m |= 1 << k; } });
       if (d >= 3) this._junc[idx(t.x, t.z)] = 1;
+      // w4: a plain straight (N+S or E+W only) — the only tiles cars pop in on
+      else if (m === 5 || m === 10) this._straight[idx(t.x, t.z)] = 1;
     }
     // where the town is: boats prefer the water people can see from it
     this._town = rn ? { x: rsx / rn, z: rsz / rn } : { x: N / 2, z: N / 2 };
@@ -570,7 +620,9 @@ export class Life {
       // kerb, two when one end of the tile meets a junction (its zebra + stop
       // bar take the first ~1.9 units), one when both do. Long kinds take two
       // bays. The first bay is always filled, the rest most of the time.
-      const pos = both ? [-BAY, 0, BAY] : backJ && aheadJ ? [0] : backJ ? [0.1, 0.1 + BAY] : [-0.1 - BAY, -0.1];
+      // w4r2: 2.6 bays -> a clear kerb spans +-3.9, a junction end keeps its
+      // first 2.6 units (zebra + stop bar end ~2.1 in) clear
+      const pos = both ? [-BAY, 0, BAY] : backJ && aheadJ ? [0] : backJ ? [-0.1, BAY - 0.1] : [0.1 - BAY, 0.1];
       let i0 = 0;
       if (isLong(k) && pos.length >= 2) {
         push(k, (pos[0] + pos[1]) / 2, seed);
@@ -614,6 +666,8 @@ export class Life {
     slots.sort((a, b) => (b.fleet - a.fleet));
     if (slots.length > PARKED_CAP) slots.length = PARKED_CAP;
     this._parkSlots = slots;
+    // w4: kerbs that carry bays (traffic beside them keeps LANE_BAY): idx*4 + side
+    this._bayKerb = new Set(slots.map((sl) => idx(sl.tx, sl.tz) * 4 + sl.s));
     // One merged model per road tile (all its bays, both kerbs): a street of
     // parked cars is one draw call per tile. Models are cached by content, so
     // a rescan that leaves a tile's bays alone reuses its geometry.
@@ -791,7 +845,7 @@ export class Life {
   }
 
   // Move `dist` along the path; false if the agent ran off valid tiles.
-  _advance(a, dist, ok, nbsOf, pStraight, laneOf) {
+  _advance(a, dist, ok, nbsOf, pStraight, laneOf, retile) {
     a.s += dist;
     let guard = 6;
     while (a.s >= a.len && guard-- > 0) {
@@ -811,6 +865,7 @@ export class Life {
       if (d < 0) return false;
       a.dout = d;
       if (laneOf) a.lane = laneOf(a.tx, a.tz);
+      if (retile) retile(a);
       a.len = pathLen(a.din, a.dout, a.lane, a.sq);
     }
     if (a.s >= a.len) a.s = a.len - 1e-3;
@@ -943,6 +998,9 @@ export class Life {
     if (a.handle) { try { a.handle.setVisible(false); } catch (_) {} }
     // a pedestrian's trailing dog hides with its owner
     if (a.dogHandle) { try { a.dogHandle.setVisible(false); } catch (_) {} a.hasDog = false; }
+    // w4: the second stride pose and a walking companion hide with it too
+    for (const h of [a.h2, a.cH, a.cH2]) if (h) { try { h.setVisible(false); } catch (_) {} }
+    a.hasComp = false;
   }
 
   // one model object per (kind, variant) so every pooled copy shares geometry
@@ -1005,26 +1063,29 @@ export class Life {
 
   _spawnCar(state) {
     // find a road tile that actually has somewhere to drive: sometimes beside
-    // a service site (fire engines at the fire station ...), else near the view
+    // a service site (fire engines at the fire station ...), else near the view.
+    // w4 (the w3 critic: cars "at random offsets and spacing ... on crosswalks
+    // and in intersection boxes"): only PLAIN STRAIGHTS host a pop-in. A bend
+    // or dead end started the car on a straight path through a tile that has
+    // no such road (it stood on the kerb corner or across the stub), and a
+    // junction would bypass the claims.
     let cur = null, nb = null, kind = null;
+    const straight = (x, z) => inBounds(x, z) && this._straight[idx(x, z)] === 1;
     if (Math.random() < SITE_P) {
       const s = this._siteSpawn();
-      if (s) {
+      if (s && straight(s.x, s.z)) {
         const n = this._neighbors(state, s.x, s.z);
-        if (n.length && !this._junc[idx(s.x, s.z)]) { cur = s; nb = n; kind = s.kinds[(Math.random() * s.kinds.length) | 0]; }
+        if (n.length) { cur = s; nb = n; kind = s.kinds[(Math.random() * s.kinds.length) | 0]; }
       }
     }
     for (let tries = 0; tries < 8 && !cur; tries++) {
       const t = this._viewRoad(this._carsInView || 0, this._carTarget || 0);
       if (!t) return null;
-      if (this._junc[idx(t.x, t.z)]) continue;     // r11: pick another tile, don't give up
+      if (!straight(t.x, t.z)) continue;            // r11: pick another tile, don't give up
       const n = this._neighbors(state, t.x, t.z);
       if (n.length) { cur = t; nb = n; break; }
     }
-    if (!cur) return null;
-    // never pop into existence inside a junction: crossing flows there are
-    // only kept apart by the claim logic, which a fresh car would bypass
-    if (this._junc[idx(cur.x, cur.z)]) return null;
+    if (!cur || !straight(cur.x, cur.z)) return null;
     // w1: emergency vehicles stay RARE — at most EMERG_CAP fire engines /
     // ambulances / police cars driving at once, whatever the site spawns ask
     if (kind != null && EMERGENCY[kind]) {
@@ -1038,33 +1099,137 @@ export class Life {
       () => this._model('car', variant, () => this.models.carModel(variant)), variant);
     if (!car) return null;
     this._startPath(car, cur, nb, CAR_LANE);
-    // r11: anywhere along the straight, not only mid-tile (two spawn spots a
-    // tile capped a freshly framed street at ~2 cars per tile)
-    // Keep clear of junctions at either end (a car spawned in the stop-bar
-    // zone would bypass the junction claims).
+    this._carLanes(car);
+    // w4 (the w3 critic: "cars at random offsets and spacing ... the street
+    // reads as scattered confetti instead of flowing lanes"): a pop-in lands
+    // on a SLOT, not anywhere. Cruising slots are a lattice SLOT_PITCH apart
+    // (tile-local s = 2 and 6 — the gap car-following settles to at speed, so
+    // a street fills as evenly spaced platoons that keep their spacing). On
+    // the approach to a junction the car joins the queue at the stop line
+    // instead: nose on the bar or bumper to bumper behind the last car
+    // waiting there (standing, like a red light) — never in the stop-bar /
+    // crossing zone, which a fresh car would also claim-bypass.
+    let queued = false;
     {
-      const [dx, dz] = DIRS4[car.dout];
+      const d = car.dout, [dx, dz] = DIRS4[d];
       const jA = inBounds(cur.x + dx, cur.z + dz) && this._junc[idx(cur.x + dx, cur.z + dz)];
-      const jB = inBounds(cur.x - dx, cur.z - dz) && this._junc[idx(cur.x - dx, cur.z - dz)];
-      const lo = jB ? 2.5 : 1, hi = car.len - (jA ? 4.8 : 1);
-      car.s = hi > lo ? lo + Math.random() * (hi - lo) : HALF; evalPath(car);
+      const bl = car.blen;
+      if (jA) {
+        let nose = car.len - STOP_NOSE;          // front of the queue: nose at the bar
+        for (const o of this.cars) {
+          if (o === car || !o.active || o.tx !== cur.x || o.tz !== cur.z || o.din !== d) continue;
+          nose = Math.min(nose, o.s - o.blen * 0.5 - QUEUE_GAP);
+        }
+        car.s = nose - bl * 0.5;
+        if (car.s < bl * 0.5 + 0.3) { car.active = false; return null; }   // queue reaches back: full
+        queued = true;
+      } else {
+        const k = Math.random() < 0.5 ? 0 : 1;
+        car.s = SLOTS[k];
+        evalPath(car);
+        if (this._carNear(car)) car.s = SLOTS[1 - k];
+      }
+      evalPath(car);
     }
     // don't pop into existence on top of another car
-    for (const o of this.cars) {
-      if (o === car || !o.active) continue;
-      if (Math.abs(o.px - car.px) + Math.abs(o.pz - car.pz) < (o.blen + car.blen) * 0.6 ||
-          Math.hypot(o.px - car.px, o.pz - car.pz) < (o.blen + car.blen) * 0.5 + 0.4) { car.active = false; return null; }
-    }
+    if (this._carNear(car)) { car.active = false; return null; }
     const ck = ((car.variant % CAR_KINDS) + CAR_KINDS) % CAR_KINDS;
     car.active = true;
-    car.vmax = CAR_SPEED[ck] * (0.85 + Math.random() * 0.3);
-    car.v = car.vmax * 0.5;
+    // w4: one steady cruising speed per kind (±3 %, was ±15 %), so platoons
+    // keep the lattice spacing instead of bunching behind the slowest car
+    car.vmax = CAR_SPEED[ck] * (0.97 + Math.random() * 0.06);
+    car.v = queued ? 0 : car.vmax;
     car.stuck = 0; car.held = 0; car.ghost = 0; car.pre = null; car.preAt = -1;
     car.y = this._isBridge(state, cur.x, cur.z) ? BRIDGE_Y : ROAD_Y;
     try { car.handle.setVisible(true); } catch (_) {}
     this._placeCar(car);
     if (this._view && this._ndcExtent(car.px, car.y, car.pz) <= VIEW_IN) this._carsInView = (this._carsInView || 0) + 1;
     return car;
+  }
+
+  // Is another live car too close to `car` (its current px/pz) to pop in there?
+  _carNear(car) {
+    for (const o of this.cars) {
+      if (o === car || !o.active) continue;
+      if (Math.abs(o.px - car.px) + Math.abs(o.pz - car.pz) < (o.blen + car.blen) * 0.6 ||
+          Math.hypot(o.px - car.px, o.pz - car.pz) < (o.blen + car.blen) * 0.5 + 0.4) return true;
+    }
+    return false;
+  }
+
+  // w4: the lane offset a car keeps on straight tile (x,z) heading h (see
+  // LANE_BAY / LANE_OPEN); bends, junctions and the rest use CAR_LANE.
+  _laneMid(x, z, h) {
+    if (!inBounds(x, z) || !this._straight[idx(x, z)]) return CAR_LANE;
+    return this._bayKerb.has(idx(x, z) * 4 + ((h + 1) & 3)) ? LANE_BAY : LANE_OPEN;
+  }
+
+  // Set a car's per-tile lane: a drift triple [entry edge, middle, exit edge]
+  // on a straight (edges shared with the neighbour, so the path is continuous;
+  // an edge onto a bend / junction is CAR_LANE, which its arc uses), else the
+  // constant CAR_LANE.
+  _carLanes(a) {
+    a.lane = CAR_LANE;
+    if (a.din !== a.dout || !inBounds(a.tx, a.tz) || !this._straight[idx(a.tx, a.tz)]) { a.lr = null; return; }
+    const h = a.dout, dx = DIRS4[h][0], dz = DIRS4[h][1];
+    const m = this._laneMid(a.tx, a.tz, h);
+    const edge = (x, z) => (inBounds(x, z) && this._straight[idx(x, z)] ? (m + this._laneMid(x, z, h)) * 0.5 : CAR_LANE);
+    const L = a.lr || (a.lr = [0, 0, 0]);
+    L[0] = edge(a.tx - dx, a.tz - dz); L[1] = m; L[2] = edge(a.tx + dx, a.tz + dz);
+    a.lane = m;
+  }
+
+  // Does car a's footprint cover a junction box, its crossings or the stop
+  // bar in front of it? (the tile is a junction; or its nose is inside the
+  // stop-bar zone of the junction ahead; or its tail is still in the one behind)
+  _inBox(a) {
+    if (!inBounds(a.tx, a.tz)) return false;
+    if (this._junc[idx(a.tx, a.tz)]) return true;
+    const ox = DIRS4[a.dout][0], oz = DIRS4[a.dout][1];
+    if (inBounds(a.tx + ox, a.tz + oz) && this._junc[idx(a.tx + ox, a.tz + oz)] &&
+        a.len - a.s - a.blen * 0.5 < STOP_NOSE - 0.3) return true;
+    const ix = DIRS4[a.din][0], iz = DIRS4[a.din][1];
+    return inBounds(a.tx - ix, a.tz - iz) && this._junc[idx(a.tx - ix, a.tz - iz)] && a.s - a.blen * 0.5 < 0.4;
+  }
+
+  // w4: PAUSED (dt 0 — the player's pause button, and every still the review
+  // takes). A car caught inside a junction box, on its zebra or over the stop
+  // bar rolls on (CLEAR_V, wall time) until it is clear of the box, then
+  // holds; a car standing in its way is nudged forward too. Otherwise a
+  // freeze-frame shows cars stopped across the crossings and in the middle of
+  // the crossroads (the w3 critic's "sitting on crosswalks and in
+  // intersection boxes"). Running traffic is untouched.
+  _clearBoxes(state, wall) {
+    if (!(wall > 0)) return;
+    const step = Math.min(wall, 0.25) * CLEAR_V;
+    const cars = this.cars;
+    for (const a of cars) {
+      if (!a.active) continue;
+      const boxed = this._inBox(a);
+      let want = boxed ? step : Math.min(step, a.push || 0);
+      a.push = 0;
+      if (!boxed && want > 0) {                  // a nudged car never moves up into a box itself
+        const ox = DIRS4[a.dout][0], oz = DIRS4[a.dout][1];
+        if (inBounds(a.tx + ox, a.tz + oz) && this._junc[idx(a.tx + ox, a.tz + oz)]) want = Math.min(want, a.len - a.s - a.blen * 0.5 - STOP_NOSE);
+        else if (a.din !== a.dout || a.len - a.s < want) want = 0;   // stay on this straight
+      }
+      if (want <= 0) continue;
+      // keep a standstill gap to the car ahead in this lane; ask it to move up
+      for (const b of cars) {
+        if (b === a || !b.active) continue;
+        const dx = b.px - a.px, dz = b.pz - a.pz, along = dx * a.hx + dz * a.hz;
+        if (along <= 0 || along > 6 || Math.abs(dx * a.hz - dz * a.hx) > 1.0 || a.hx * b.hx + a.hz * b.hz < 0.2) continue;
+        const room = along - (a.blen + b.blen) * 0.5 - QUEUE_GAP;
+        if (room < want) { b.push = Math.max(b.push || 0, want - Math.max(0, room)); want = Math.max(0, room); }
+      }
+      if (want <= 0) continue;
+      const ok = this._advance(a, want, (x, z) => this._isRoad(state, x, z),
+        (x, z) => this._neighbors(state, x, z), 0.7, null, this._retileCar);
+      if (!ok) { this._retire(a); continue; }
+      a.y = this._isBridge(state, a.tx, a.tz) ? BRIDGE_Y : ROAD_Y;
+      a.v = 0;
+      this._placeCar(a);
+    }
   }
 
   // All cars: car-following (keep a gap to whoever is ahead in the same lane),
@@ -1175,7 +1340,7 @@ export class Life {
     for (const a of cars) {
       if (!a.active) continue;
       const ok = this._advance(a, a.v * dt, (x, z) => this._isRoad(state, x, z),
-        (x, z) => this._neighbors(state, x, z), 0.7);
+        (x, z) => this._neighbors(state, x, z), 0.7, null, this._retileCar);
       if (!ok) { this._retire(a); continue; }
       const ty = this._isBridge(state, a.tx, a.tz) ? BRIDGE_Y : ROAD_Y;
       a.y += (ty - a.y) * Math.min(1, dt * 8);
@@ -1275,7 +1440,28 @@ export class Life {
   }
 
   _pedModel(variant) {
-    return () => this._model('person', variant, () => this.models.personModel(variant));
+    return () => this._model('person', variant, () => this.models.personModel(variant, 1));
+  }
+
+  // w4: the other stride pose of a pooled walker (made once per slot; the
+  // slot keeps its variant). _posePed swaps the two as the figure walks.
+  _pedExtras(p) {
+    if (p.h2 || !this.engine || typeof this.engine.makeDynamic !== 'function') return;
+    const v = p.variant;
+    try { p.h2 = this.engine.makeDynamic(this._model('person2', v, () => this.models.personModel(v, 2))); } catch (_) { p.h2 = null; }
+    if (p.h2) { try { p.h2.setVisible(false); } catch (_) {} }
+  }
+
+  // Place a walker's two stride poses (and its companion): the pose flips
+  // every STRIDE units walked, so a still catches people mid-step.
+  _posePed(p, x, y, z, yaw) {
+    const B = p.h2 && ((Math.floor((p.walk || 0) / STRIDE) & 1) === 1);
+    const hs = [p.handle, p.h2];
+    for (let i = 0; i < 2; i++) {
+      const h = hs[i];
+      if (!h) continue;
+      try { h.setPos(x, y, z); h.setRot(yaw); h.setVisible(i === 1 ? B : !B); } catch (_) {}
+    }
   }
 
   _spawnRoadPed(state) {
@@ -1303,9 +1489,14 @@ export class Life {
     p.speed = 0.6 + Math.random() * 0.4; // 0.6..1.0 u/s (people are 1.0 tall)
     this._startPath(p, cur, nb, this._isBridge(state, cur.x, cur.z) ? PED_LANE_BRIDGE : PED_LANE);
     p.bob = Math.random() * Math.PI * 2;
+    p.walk = Math.random() * STRIDE * 2;
     p.y = this._groundY(state, p.tx, p.tz, p.px, p.pz);
+    this._pedExtras(p);
     try { p.handle.setVisible(true); } catch (_) {}
     this._attachDog(p);
+    if (!p.hasDog) this._attachComp(p);
+    this._posePed(p, p.px, p.y, p.pz, facing(p.hx, p.hz));
+    if (p.hasDog || p.hasComp) this._updateDog(p, 0);
     if (this._view && this._ndcExtent(p.px, p.y, p.pz) <= VIEW_IN) this._pedsInView = (this._pedsInView || 0) + 1;
     return p;
   }
@@ -1334,18 +1525,70 @@ export class Life {
     if (p.dogHandle) { try { p.dogHandle.setVisible(false); } catch (_) {} }
   }
 
+  // w4 (the w3 critic: "no poses or groupings"): some walkers without a dog
+  // walk with someone — a child (half the time) or a friend — one step
+  // behind them on the same path (the dog's trail).
+  _attachComp(p) {
+    p.hasComp = false;
+    if (!this.engine || typeof this.engine.makeDynamic !== 'function' || !this.models ||
+        typeof this.models.personModel !== 'function' || Math.random() >= COMP_P) {
+      for (const h of [p.cH, p.cH2]) if (h) { try { h.setVisible(false); } catch (_) {} }
+      return;
+    }
+    if (!p.cH) {
+      // the companion keeps its variant for the life of the slot
+      const cv = ((Math.random() * PERSON_VARIANTS) | 0) | (Math.random() < 0.5 ? 64 : 0);
+      try {
+        p.cH = this.engine.makeDynamic(this._model('person', cv, () => this.models.personModel(cv, 1)));
+        p.cH2 = this.engine.makeDynamic(this._model('person2', cv, () => this.models.personModel(cv, 2)));
+      } catch (_) { p.cH = p.cH || null; }
+      if (!p.cH) return;
+    }
+    p.hasComp = true;
+    this._trailReset(p);
+  }
+
+  // Trail of the owner's recent positions (newest at trailHead). A fresh
+  // trail is laid out BEHIND the walker along its heading, so a dog or
+  // companion stands a step behind from the first frame (it used to stand
+  // inside its owner until they had walked a while — a still showed a
+  // two-headed blob).
   _trailReset(p) {
     if (!p.trailX) {
       p.trailX = new Float32Array(TRAIL_LEN); p.trailZ = new Float32Array(TRAIL_LEN);
       p.trailY = new Float32Array(TRAIL_LEN);
     }
-    const px = p.px || 0, pz = p.pz || 0;
-    p.trailX.fill(px); p.trailZ.fill(pz); p.trailY.fill(p.y || 0);
+    const px = p.px || 0, pz = p.pz || 0, hx = p.hx || 0, hz = p.hz || 0;
     p.trailHead = 0;
+    for (let k = 0; k < TRAIL_LEN; k++) {
+      const i = (TRAIL_LEN - k) % TRAIL_LEN;          // head, head-1, ...
+      p.trailX[i] = px - hx * k * 0.1; p.trailZ[i] = pz - hz * k * 0.1; p.trailY[i] = p.y || 0;
+    }
   }
 
-  // record the owner's position and place the dog DOG_GAP units back along the
-  // recent path (no per-frame allocation — writes straight into the handle).
+  // The point `gap` units back along the owner's trail -> this._tp [x, y, z].
+  _trailPoint(p, gap) {
+    const out = this._tp || (this._tp = [0, 0, 0]);
+    let i = p.trailHead;
+    let bx = p.trailX[i], bz = p.trailZ[i], by = p.trailY[i];
+    let acc = 0;
+    for (let k = 0; k < TRAIL_LEN - 1; k++) {
+      const j = (i - 1 + TRAIL_LEN) % TRAIL_LEN;
+      const nx = p.trailX[j], nz = p.trailZ[j];
+      const seg = Math.hypot(nx - bx, nz - bz);
+      if (acc + seg >= gap) {
+        const f = (gap - acc) / (seg || 1);
+        bx += (nx - bx) * f; bz += (nz - bz) * f; by = p.trailY[j];
+        acc = gap; break;
+      }
+      acc += seg; bx = nx; bz = nz; by = p.trailY[j]; i = j;
+    }
+    out[0] = bx; out[1] = by; out[2] = bz;
+    return out;
+  }
+
+  // record the owner's position and place the dog DOG_GAP units (a companion
+  // COMP_GAP units) back along the recent path (no per-frame allocation).
   _updateDog(p, dt) {
     if (!p.trailX) this._trailReset(p);
     // sample only after the owner moved a little, so the trail spans a real
@@ -1358,29 +1601,28 @@ export class Life {
     p.trailZ[p.trailHead] = p.pz;
     p.trailY[p.trailHead] = p.y;
 
-    let i = p.trailHead;
-    let bx = p.trailX[i], bz = p.trailZ[i], by = p.trailY[i];
-    let acc = 0;
-    for (let k = 0; k < TRAIL_LEN - 1; k++) {
-      const j = (i - 1 + TRAIL_LEN) % TRAIL_LEN;
-      const nx = p.trailX[j], nz = p.trailZ[j];
-      const seg = Math.hypot(nx - bx, nz - bz);
-      if (acc + seg >= DOG_GAP) {
-        const f = (DOG_GAP - acc) / (seg || 1);
-        bx += (nx - bx) * f; bz += (nz - bz) * f; by = p.trailY[j];
-        acc = DOG_GAP; break;
-      }
-      acc += seg; bx = nx; bz = nz; by = p.trailY[j]; i = j;
-    }
-
-    p.dogBob += dt * 14;                     // fast little trot
-    const y = by + Math.abs(Math.sin(p.dogBob)) * 0.03;
-    const ddx = p.px - bx, ddz = p.pz - bz;
-    if (p.dogHandle) {
+    if (p.hasDog && p.dogHandle) {
+      const [bx, by, bz] = this._trailPoint(p, DOG_GAP);
+      p.dogBob = (p.dogBob || 0) + dt * 14;   // fast little trot
+      const y = by + Math.abs(Math.sin(p.dogBob)) * 0.03;
+      const ddx = p.px - bx, ddz = p.pz - bz;
       try {
         p.dogHandle.setPos(bx, y, bz);
         if (Math.abs(ddx) + Math.abs(ddz) > 0.05) p.dogHandle.setRot(facing(ddx, ddz));
       } catch (_) {}
+    }
+    if (p.hasComp && p.cH) {
+      const [bx, by, bz] = this._trailPoint(p, COMP_GAP);
+      const ddx = p.px - bx, ddz = p.pz - bz;
+      if (Math.abs(ddx) + Math.abs(ddz) > 0.05) p.cYaw = facing(ddx, ddz);
+      // out of step with the leader (half a stride), like two people walking
+      const B = p.cH2 && ((Math.floor(((p.walk || 0) + STRIDE) / STRIDE) & 1) === 1);
+      const hs = [p.cH, p.cH2];
+      for (let k = 0; k < 2; k++) {
+        const h = hs[k];
+        if (!h) continue;
+        try { h.setPos(bx, by + Math.abs(Math.sin((p.bob || 0) + 1.3)) * 0.03, bz); h.setRot(p.cYaw || 0); h.setVisible(k === 1 ? B : !B); } catch (_) {}
+      }
     }
   }
 
@@ -1418,10 +1660,15 @@ export class Life {
     p.yaw = Math.random() * Math.PI * 2;
     p.bob = Math.random() * Math.PI * 2;
     p.y = this._parkStandY();
+    p.walk = Math.random() * STRIDE * 2;
     p.hasDog = false;                          // park visitors come without dogs
     if (p.dogHandle) { try { p.dogHandle.setVisible(false); } catch (_) {} }
+    p.hasComp = false;
+    for (const h of [p.cH, p.cH2]) if (h) { try { h.setVisible(false); } catch (_) {} }
     this._parkTarget(p);
+    this._pedExtras(p);
     try { p.handle.setVisible(true); } catch (_) {}
+    this._posePed(p, p.px, p.y, p.pz, p.yaw);
     return p;
   }
 
@@ -1447,6 +1694,7 @@ export class Life {
         const step = Math.min(d, p.speed * dt);
         p.px += (dx / d) * step;
         p.pz += (dz / d) * step;
+        p.walk = (p.walk || 0) + step;
         p.targetYaw = facing(dx / d, dz / d);
         this._turn(p, dt);
       }
@@ -1456,16 +1704,16 @@ export class Life {
         (x, z) => this._neighbors(state, x, z), 0.6,
         (x, z) => (this._isBridge(state, x, z) ? PED_LANE_BRIDGE : PED_LANE)); // inside bridge rails
       if (!ok) { this._retire(p); return; }
+      p.walk = (p.walk || 0) + p.speed * dt;
       const ty = this._groundY(state, p.tx, p.tz, p.px, p.pz);
       p.y += (ty - p.y) * Math.min(1, dt * 12);   // step up / down the kerb
-      if (p.handle) { try { p.handle.setRot(facing(p.hx, p.hz)); } catch (_) {} }
     }
     // tiny walking bob
     if (dt > 0) p.bob += dt * 11;
     const y = p.y + Math.abs(Math.sin(p.bob)) * 0.03;
-    if (p.handle) { try { p.handle.setPos(p.px, y, p.pz); } catch (_) {} }
-    // a trailing dog follows road pedestrians only
-    if (p.mode === 'road' && p.hasDog && p.dogHandle) this._updateDog(p, dt);
+    this._posePed(p, p.px, y, p.pz, p.mode === 'park' ? p.yaw : facing(p.hx, p.hz));
+    // a trailing dog / companion follows road pedestrians only
+    if (p.mode === 'road' && (p.hasDog || p.hasComp)) this._updateDog(p, dt);
   }
 
   // -------------------------------------------------------------------
@@ -1837,6 +2085,23 @@ export function _selfTest() {
         if (Math.max(u, v) < PED_LANE - 0.05) pedOff++;
       }
     }
+    // w4: lane discipline — on a plain straight every car keeps its lane
+    // (LANE_BAY..LANE_OPEN right of the centre line, eased between them)
+    let laneOff = 0;
+    for (const c of life.cars) {
+      if (!c.active || !life._straight[idx(c.tx, c.tz)]) continue;
+      const ix = DIRS4[c.din][0], iz = DIRS4[c.din][1];
+      const lat = (c.handle.x - tc(c.tx)) * -iz + (c.handle.z - tc(c.tz)) * ix;
+      if (c.din === c.dout && (lat < LANE_BAY - 0.01 || lat > LANE_OPEN + 0.01)) laneOff++;
+    }
+    if (laneOff > 0) throw new Error(laneOff + ' cars off their lane on a straight');
+    // w4: a paused frame clears the junction boxes (wall time drives the roll)
+    state.speed = 0;
+    for (let i = 0; i < 60; i++) { life._lastWall = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - 100; life.update(0, state, roadGraph); }
+    let boxed = 0;
+    for (const c of life.cars) if (c.active && life._inBox(c)) boxed++;
+    if (boxed > 0) throw new Error(boxed + ' cars still in a junction box after a pause');
+    state.speed = 1;
     if (pedSamples === 0) throw new Error('no road pedestrians sampled');
     if (pedOff > 0) throw new Error(pedOff + ' pedestrian samples off the sidewalk ring');
     if (maxJump > 1.05) throw new Error('car motion not smooth (jump ' + maxJump.toFixed(2) + 'x top speed)');

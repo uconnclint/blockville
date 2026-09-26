@@ -606,3 +606,47 @@ blend smearing onto the neighbouring grass tile (round-2 note) — ground's.
 mix to ~.55 before touching occupancy. If post.js changes its grade, redo the
 flat-lake calibration first (colours are grade-dependent). Glint streaks are
 still slightly glyph-like; ref05's are soft chevrons.
+
+## 2026-09-26 — wave 4, round 1 (builder)
+
+Critic (w3r1, picked ours, not wowed): "inner walls a near-black navy band;
+open water one flat saturated blue with a few hard-edged dark rectangles;
+ref05 goes bright cyan shallows by the walls -> deeper blue mid, walls
+mid-blue with tile lines, soft white shimmer spread across the surface".
+
+**Body = a mosaic gradient (the big one):** looked closely at ref05's pool —
+its "patches" ARE the gradient, drawn as quarter-tile squares in a few pool
+blues (an ordered dither of shallow -> deep). The big drifting dark
+rectangles (patchLayer calls, uCoreColor/uAbyss mixes) are gone. Now the
+smooth 5-tap depth ramp is read at the centre of every 2 u tile (and pulled
+shallow by the tile's own wall distance), a per-tile jitter of ~1 step is
+added (4 u block term .85 + 2 u term .55, so tiles clump into 1-3-tile
+patches, + a slow .22 sine breathing per tile), and the sum is rounded (soft
+0.42-0.58 step, so boundary tiles fade) into 5 levels: uEdgeColor #0cbcd0 ->
+uShallow #04a8c8 -> uMid #0488b0 -> uDeep #036c9c -> uCore #035c90. Fades
+to the smooth ramp at far zoom (pDetA) and on the map-edge strip; 60% calmer
+at night. uPatchMix.x (setSky slabs) scales the jitter. patchLayer() is now
+unused. Rim band uPatchColor #0cc0d4 -> #2cc8d8 (lighter wall shallows).
+**Walls:** root cause of the navy — wave 2 dropped WALL_GLOW to 0.25, but the
+WATER KEY alpha was gated on vGlow > 0.5, so the walls silently left the key
+and post's coolSat/dip greyed + darkened them. Gate now vGlow > 0.2 (coping
+band, 0.125, stays out). Wall #0a7cc6 / alt #0c84ce / seam #086cb2 / grout
+#04447e, WALL_TONE .92/.84/.92/.88, ROW_K [1,.95,.90,.86].
+**Glints:** streak density .18 -> .26, sparkle odds .10 -> .16, streaks 1-2
+bars (3-bar stacks read as a menu glyph), halo .85 -> .55, core .92.
+
+**Measured (iso-water lake crop):** body p10/30/50/70/90 #0397da/#03b0e3/
+#04c7eb/#04c8ec/#06d6ea (ref05 pool #018fdb/#04acdd/#08c1ed/#10cef0/#13dcf6).
+Walls far face #0571c3..#0678d3, other face #0f90ec (was #114075..#134f8b /
+#2579ce; ref #0083c2..#0289cb, top #024780). Zero console errors
+(iso-water, iso-wide, iso-night). FPS 2-28 — machine heavily loaded (build
+78-140 s); shader is cheaper than before (2 patch layers gone).
+**Coherence bridge notch:** unchanged — still a real 1-tile inlet (w2 note).
+Dev server on :8351 was down at start; restarted it (tools/dev-server.py).
+**Next:** if "too speckly", drop the 2 u jitter term (.55 -> .3) before
+touching levels; if "centre too dark" lift uCore toward uDeep. Deck/grass
+edge (critic: plain tan strip, hard edge) could get more hedges (hash > .55
+gate in _hedges) or a grass lip.
+
+### Coordinator note (2026-09-26 12:20, wave 4) — depth read
+Two critics in a row (w3r1, w4r1) object to scattered/mottled dark patches in the middle; neither asked for more patches. Supersedes my earlier "sparse large tile patches" brief: make depth ONE smooth read — a clearly lighter shallow shelf band (~1 tile) hugging every wall, stepping (1-2 clean steps or a smooth ramp) to a single uniform deeper blue in the middle; at most a very faint large-scale variation. Your wall colours are now measured close to ref05 — keep them; add a light top-lip highlight (light tile/concrete coping edge) on the inner wall. Keep the glints.

@@ -51,7 +51,7 @@ import * as THREE from '../../vendor/three.module.js';
 import { buildVoxelGeometry, materialFor, PALETTE_INDEX as PI } from './voxel.js';
 import { PALETTE } from '../models.js';
 import { vegModel, vegFarBoxes } from '../models/vegetation.js';
-import { cityBlockMask, parcelPlan, skirtLandY, lawnMask, lawnPark, LZ_GROVE, LZ_CLEAR, LZ_PICNIC, LOT_TOP } from './terrain.js';
+import { cityBlockMask, parcelPlan, skirtLandY, lawnMask, lawnPark, LZ_PICNIC, LZ_HUB, LZ_FLOWER, LOT_TOP } from './terrain.js';
 
 // ---------------------------------------------------------------------------
 // World facts
@@ -130,7 +130,7 @@ const NCHUNK = CHUNKS * CHUNKS;
 // Chunk boxes are inflated before the frustum test so props just off the edge
 // of the screen still make it into the shadow cascades.
 const CULL_PAD = 24;
-const OFF_BAND = 22;                  // ground r8: tiles of off-map countryside scattered round the map
+const OFF_BAND = 34;                  // ground r8: tiles of off-map countryside scattered round the map (w4: 22 -> 34, the iso-wide field ran out into a bare sheet)
 
 // ---------------------------------------------------------------------------
 // Deterministic hashing / noise  (no Math.random anywhere in this file)
@@ -469,7 +469,7 @@ const OAK_FAMILY = ['oak', 'column', 'cluster', 'sapling'];
 // neighbours in a meadow differ.
 // wave-2 r1: + ref06's sapling (a slim column with a deep band) as a fourth
 // silhouette, ~12% of the broadleaves.
-const OAK_FAMILY_CDF = [0.26, 0.58, 0.88, 1.0];
+const OAK_FAMILY_CDF = [0.24, 0.52, 0.86, 1.0];   // w4 r3: cluster 30 -> 34%, sapling 12 -> 14%
 const OAK_PATCH_SHARE = 90;   // of 256 (was 179)
 // wave-2 r1: 0.66 / 0.27 made the ground layer's rocks boulders — a raw 1.0-1.7
 // understorey rock came out 5-7.6 units wide (a whole tile, twice a street
@@ -512,12 +512,12 @@ const TYPES = [
   // models are greedy-meshed res-4 cuboids (~100-250 triangles), cheaper than
   // the old speckled 270-triangle oak, so the near LOD reaches further out:
   // the iso camera sits ~camDist (85-190) from its target.
-  { key: 'oak', group: 'veg', lod1: 140, cull: 1200, fade: 0, sway: 0.0 },
-  { key: 'column', group: 'veg', lod1: 140, cull: 1200, fade: 0, sway: 0.0 },
-  { key: 'cluster', group: 'veg', lod1: 140, cull: 1200, fade: 0, sway: 0.0 },
-  { key: 'pine', group: 'veg', lod1: 140, cull: 1200, fade: 0, sway: 0.0 },
-  { key: 'blossom', group: 'veg', lod1: 140, cull: 1200, fade: 0, sway: 0.0 },
-  { key: 'sapling', group: 'veg', lod1: 140, cull: 1200, fade: 0, sway: 0.0 },   // wave-2 r1: near model only (~140 tris)
+  { key: 'oak', group: 'veg', lod1: 140, cull: 2600, fade: 0, sway: 0.0 },
+  { key: 'column', group: 'veg', lod1: 140, cull: 2600, fade: 0, sway: 0.0 },
+  { key: 'cluster', group: 'veg', lod1: 140, cull: 2600, fade: 0, sway: 0.0 },
+  { key: 'pine', group: 'veg', lod1: 140, cull: 2600, fade: 0, sway: 0.0 },
+  { key: 'blossom', group: 'veg', lod1: 140, cull: 2600, fade: 0, sway: 0.0 },
+  { key: 'sapling', group: 'veg', lod1: 140, cull: 2600, fade: 0, sway: 0.0 },   // wave-2 r1: near model only (~140 tris)
   { key: 'shrub', group: 'veg', lod1: 300, cull: 520, fade: 90, sway: 0.0 },
   { key: 'bushTall', group: 'veg', lod1: 300, cull: 520, fade: 90, sway: 0.0 },   // r13: 2nd bush shape
   { key: 'flowers', group: 'veg', lod1: 900, cull: 380, fade: 90, sway: 0.020 },
@@ -531,6 +531,7 @@ const TYPES = [
 // rest became a near-black skirt at the base (critic: "ghost shadow quads").
 // ref05's field rocks show no cast shadow at all; the model's own AO grounds it.
 const NO_SHADOW = new Set(['path', 'flowers', 'rock']);
+const NO_WORLD_AO = new Set(['oak', 'column', 'cluster', 'pine', 'blossom', 'sapling']);   // w4: see the mesh setup
 const TYPE_INDEX = Object.create(null);
 for (let i = 0; i < TYPES.length; i++) TYPE_INDEX[TYPES[i].key] = i;
 const NT = TYPES.length;
@@ -556,6 +557,7 @@ attribute float emissiveT;
 attribute vec4  aPropParam;   // x sway, y phase, z fadeStart, w fadeEnd
 attribute float aVegTone;     // 1 on vegetation geometry, 0 (default) elsewhere
 uniform float uPropToneSide;  // +1 sun from the camera's left, -1 from its right
+uniform float uPropWallComp;  // veg shade-side gain that undoes lighting's away-wall fill cut beyond VEG_WALL_REF
 uniform float uPropTime;
 uniform float uPropWind;
 uniform vec3  uPropCam;
@@ -630,8 +632,12 @@ vPropMat  = matParams;
   // against ref06 (+~4% for our brighter lawn): top #cce400, lit #b6d400,
   // shade #88ae00; bark #c47444 / #9a502a; rock #94 / #76 / #4c neutral;
   // bush #66cc04 / #50b802 / #379200.
-  topT  = mix(topT,  vec3(0.72, 0.60, 0.15), lime);
-  litT  = mix(litT,  vec3(1.05, 0.95, 0.30), lime);
+  topT  = mix(topT,  vec3(0.53, 0.50, 0.02), lime);   // w4 r1: rendered #d6e72f (ref06 #c4dd00)
+  // w4 r2 (critic w4r1: "the top face is barely brighter than the side
+  // face"): lit side rendered #bed804 under a #c3e104 top (ref06 #b0cf00
+  // under #c4dd00) — lowered to ~#adcc00 so top / lit / shade are three
+  // clear steps and the lit face no longer matches the lawn's value.
+  litT  = mix(litT,  vec3(0.78, 0.76, 0.30), lime);
   // r13 (critic r12: "left and right canopy faces almost the same tone; in
   // ref06 the shade face is clearly darker olive"): shade side down from
   // #84af00 to ~#78a200, a clear olive step under the #abce02 lit side.
@@ -666,18 +672,33 @@ vPropMat  = matParams;
   // with the top kept a step lighter (~#9a) so it still pops off the lawn.
   // r13: top 0.80 -> 0.88 so it separates clearly from the lit side
   // (critic r12 wanted three distinct rock tones; they measured ~143/112/69).
-  topT  = mix(topT,  vec3(0.41), greyish);
-  litT  = mix(litT,  vec3(0.375), greyish);
-  darkT = mix(darkT, vec3(0.92, 0.72, 0.55), greyish);   // neutral: the sky fill tinted it slate
+  // w4 r1: the rig drifted again — rendered top #b0 / lit #88 / shade a warm
+  // near-black (55,49,45), chips (29,24,21): the old blue-cut shade factor now
+  // browned it. Re-solved in linear to ref06's ~#94 / #76 / #4c, neutral.
+  // The shade side is mostly the blue sky fill, so it keeps a warm-leaning
+  // factor. Rock pixels are exempt from post's asphalt ops (post.js aboveK,
+  // scene alpha < -0.5) — before that every low neutral face was pulled to
+  // ~#15, which is what the earlier 'black skirt' / 'dark lumps' notes were.
+  topT  = mix(topT,  vec3(0.165), greyish);
+  litT  = mix(litT,  vec3(0.20), greyish);
+  darkT = mix(darkT, vec3(1.12, 0.98, 0.84), greyish);
   // Bark (r > g > b): ref06 trunks keep a warm shade side (#9b502b against
   // #c27642 lit, ~0.8x); the canopy's own shadow already darkens them, so
   // the stylised shade step is milder than the leaves' (r5 read maroon).
-  litT  = mix(litT,  vec3(0.50, 0.44, 0.46), barky);   // wave-2 r1: lit side rendered a pale peach #efa968
-  darkT = mix(darkT, vec3(1.62, 1.03, 1.25), barky);   // r10: shade side rendered #6c3a0c
+  litT  = mix(litT,  vec3(0.30, 0.24, 0.26), barky);   // w4 r1: rendered #db874e (ref06 #c27642)   // wave-2 r1: lit side rendered a pale peach #efa968
+  darkT = mix(darkT, vec3(1.62, 1.03, 1.25), barky);
+  // w4 r2: the top faces of the (now thicker) fork arms rendered a pale
+  // peach #fab579 next to the #cc7543 trunk; ref06's limbs stay orange-brown.
+  topT  = mix(topT,  vec3(0.20, 0.14, 0.10), barky);   // r10: shade side rendered #6c3a0c
   vec3 tone = vec3(1.0);
   tone *= mix(vec3(1.0), topT, tTop);
   tone *= mix(vec3(1.0), litT, tLit);
-  tone *= mix(vec3(1.0), darkT, tDark);
+  // w4 r2: the veg tones above were solved with lighting.js's away-wall
+  // fill cut at 0.75. The rig's cut changes between rounds (0.95 in light
+  // w4r2 put every canopy / rock / trunk shade side at near-black #0b-#3f),
+  // so the shade step is normalised back to the solved rig: an away face
+  // gets no key, only the (cut) fill, so this gain restores it exactly.
+  tone *= mix(vec3(1.0), darkT * uPropWallComp, tDark);
   tone *= mix(vec3(1.0), vec3(0.70), tUnder);
   vPropTone = mix(vec3(1.0), tone, aVegTone);
 }
@@ -711,6 +732,9 @@ vPropEmi  = emissiveT;
 }
 `;
 
+// lighting.js wallFillAway the veg face tones in VERT_BODY were solved against.
+const VEG_WALL_REF = 0.75;
+
 const FRAG_PARS = /* glsl */`
 uniform float uPropNight;
 uniform float uPropSnow;
@@ -738,6 +762,21 @@ roughnessFactor = clamp(vPropMat.x, 0.03, 1.0);
 `;
 const FRAG_METAL = /* glsl */`
 metalnessFactor = clamp(vPropMat.y, 0.0, 1.0);
+`;
+// w4 r2 (critic w4r1: "canopies washed out, lime on lime against the grass;
+// ref06 has a vivid yellow-lime top ~#c5e000"): the top face rendered
+// #c5e231 — the blue was the sky's specular/env reflection (F0 0.04 * a
+// bright sky dome) added on top of the albedo, which no albedo tone can
+// cancel. ref06's leaves are matte, so lime canopies drop their specular.
+const FRAG_VEG_SPEC = /* glsl */`
+#ifdef USE_COLOR
+if (vPropVeg > 0.5) {
+  float bvLime = clamp((vColor.g - max(vColor.r, vColor.b)) * 14.0, 0.0, 1.0)
+               * smoothstep(0.36, 0.50, vColor.r / max(vColor.g, 1e-3));
+  material.specularColor *= 1.0 - bvLime;
+  material.specularF90 *= 1.0 - bvLime;
+}
+#endif
 `;
 
 // r10 (critic: "canopy and rock outlines soft and smeared"): vegetation
@@ -807,6 +846,7 @@ export class Props {
       uPropGlowGain: { value: 2.6 },
       uPropSnow: { value: 0 },   // coherence 09-25: setSnow()
       uPropToneSide: { value: 1 },
+      uPropWallComp: { value: 1 },
       // r10: how much of post.js's screen-space AO vegetation keeps (scene
       // alpha, the same gate voxel buildings use via materials.ssaoKeep).
       uPropVegSsao: { value: 0.2 },   // 0 = none (floats), 1 = full soft SSAO (smeared faces)
@@ -896,6 +936,7 @@ export class Props {
       f = f.replace('#include <color_fragment>', '#include <color_fragment>\n' + FRAG_COLOR);
       f = f.replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n' + FRAG_ROUGH);
       f = f.replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n' + FRAG_METAL);
+      f = f.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>\n' + FRAG_VEG_SPEC);
       f = f.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FRAG_EMISSIVE);
       f = f.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n' + FRAG_SSAO_KEEP);
       shader.fragmentShader = f;
@@ -1172,6 +1213,10 @@ export class Props {
     // `pop` labels the population that produced the instance ('w' woodland,
     // 's' street/yard, 'o' other). The bake ignores it; selfTest asserts on it.
     let lastRock = null;   // r9: see the iRock fold in push()
+    // wave-4: set by meadow() around its tree push: a field tree takes a
+    // per-tree mix of ref05's chunky crowns (round / 3-lobe / column), never
+    // the slim sapling, and never a patch-wide single shape.
+    let fieldTree = false;
     const push = (t, x, z, y, yaw, scale, tint, rank, pop) => {
       // Vegetation model dispatch (not placement): deal a broadleaf into one of
       // ref06's four tree shapes and some shrubs into flower patches, from a
@@ -1200,9 +1245,10 @@ export class Props {
         // a ~14-unit patch hash, so a copse reads as round trees next to a
         // stand of columns, as in ref05, instead of per-tree confetti.
         const hp = hash3(Math.floor(x / 14), Math.floor(z / 14), 7717);
-        const u = ((hv >>> 8) & 0xff) < OAK_PATCH_SHARE ? (hp & 0xffff) / 65536 : (hv & 0xffff) / 65536;
+        const u = ((hv >>> 8) & 0xff) < OAK_PATCH_SHARE && !fieldTree ? (hp & 0xffff) / 65536 : (hv & 0xffff) / 65536;
         let f = 0;
-        while (f < OAK_FAMILY_CDF.length - 1 && u >= OAK_FAMILY_CDF[f]) f++;
+        if (fieldTree) f = u < 0.40 ? 0 : u < 0.72 ? 2 : 1;   // round 40%, cluster 32%, column 28%
+        else while (f < OAK_FAMILY_CDF.length - 1 && u >= OAK_FAMILY_CDF[f]) f++;
         t = TYPE_INDEX[OAK_FAMILY[f]];
         scale *= OAK_FAMILY_SCALE[f];
       } else if (t === iShrub && ((hv >>> 16) & 0xffff) / 65536 < FLOWER_SHARE) {
@@ -1285,59 +1331,80 @@ export class Props {
     // (evenness is the point; ref05's top-left field), trees are a size up
     // (ref05's field trees match its street trees), and the lattice's
     // diagonal mid-points carry the odd small rock or cube bush. No flowers.
+    // wave-4 r1 FIELD QUINCUNX (critic w3: "open countryside is a vast flat
+    // featureless lime sheet with sparse thin twig-like trees … ref05's
+    // top-left field fills open grass with an even sprinkle of chunky cuboid
+    // trees, grey stepped rocks and cube bushes"). Counted on ref05's
+    // top-left field (400x230 px at ~120 px/tile, ~25 tiles): 24 trees, 4
+    // rock clusters, 5 cube bushes = ~0.95 trees, 0.16 rocks, 0.2 bushes per
+    // tile, evenly spread, no clearings. wave-2's pitch-12 square lattice
+    // with an fbm clearing mask came out at ~0.2 trees/tile. Now the lattice
+    // is a QUINCUNX of pitch 12 (the square points AND their centres, both on
+    // the kerb row's 4-unit grid: 12i+2 / 12i+8), ~0.89 tree slots per tile,
+    // ~88% filled (~0.78 trees/tile), no clearing mask; the other two
+    // quincunx sub-lattices carry the rocks and cube bushes (~0.14 / ~0.13
+    // per tile). Tree jitter stays <= 15% of the spacing so the field reads
+    // even (coordinator) without ruled rows.
     const FIELD_PITCH = 12, FIELD_OFF = 2;
-    const FIELD_TREE = 0.90, FIELD_ROCK = 0.09, FIELD_BUSH = 0.05;
-    const FIELD_SIZES = [0.46, 0.53, 0.60];
+    const FIELD_TREE = 0.88, FIELD_ROCK = 0.16, FIELD_BUSH = 0.15;
+    const FIELD_SIZES = [0.50, 0.57, 0.64];
     const FIELD_CDF = [0.30, 0.70, 1.00];
+    const LAWN_FILL = 0.88, LAWN_ROCK = 0.12, LAWN_BUSH = 0.30, LAWN_TREE_K = 0.70;   // w4 r2: lawn-park quadrant lattice (~1.5 small trees per tile after vetoes)
     const iFieldBush = TYPE_INDEX.bushTall != null ? TYPE_INDEX.bushTall : iShrub;   // never dealt into a flower speckle
     // lattice points (pitch FIELD_PITCH, offset off) inside tile coordinate span [a, a + TILE)
     const latRange = (a, off) => {
       const g0 = Math.ceil((a - off) / FIELD_PITCH), g1 = Math.floor((a + TILE - 1e-3 - off) / FIELD_PITCH);
       return [g0, g1];
     };
-    const meadow = (x, z, f, salt, yBase, skip) => {
+    // w4 r2: `avoid(px, pz)` (optional) vetoes a jittered slot, so a lawn
+    // park can keep its paths, hub, beds and rims clear.
+    const meadow = (x, z, f, salt, yBase, skip, avoid) => {
       let nT = 0;
       const y0 = yBase || 0;
       const x0 = x * TILE, z0 = z * TILE;
       const slotBit = (px, pz) => 1 << (((px - x0) >= TILE / 2 ? 1 : 0) + ((pz - z0) >= TILE / 2 ? 2 : 0));
-      // trees
-      {
-        const [ax, bx] = latRange(x0, FIELD_OFF), [az, bz] = latRange(z0, FIELD_OFF);
+      const HP = FIELD_PITCH / 2;
+      // trees: the quincunx (square points + their centres)
+      for (let sub = 0; sub < 2; sub++) {
+        const off = FIELD_OFF + sub * HP;
+        const [ax, bx] = latRange(x0, off), [az, bz] = latRange(z0, off);
         for (let gz = az; gz <= bz; gz++) for (let gx = ax; gx <= bx; gx++) {
-          const px0 = gx * FIELD_PITCH + FIELD_OFF, pz0 = gz * FIELD_PITCH + FIELD_OFF;
+          const px0 = gx * FIELD_PITCH + off, pz0 = gz * FIELD_PITCH + off;
           if (skip & slotBit(px0, pz0)) continue;
-          const h = hash3(gx * 7919 + S, gz * 104729 + 17, 7193);
+          const h = hash3(gx * 7919 + S + sub * 3571, gz * 104729 + 17, 7193);
           const h2 = hash3(h, 13, 331);
-          // big soft CLEARINGS (~5-10 tiles) of clean lime between treed
-          // stretches, so a whole new-city screen is not one even wallpaper;
-          // inside a stretch the lattice stays perfectly even.
-          const keep = smooth01(0.42, 0.54, fbm(gx * 0.16 + 3.7, gz * 0.16 - 5.3, (S + 3319) & 0xffff));
-          if ((h & 0xffff) / 65536 >= f * FIELD_TREE * keep) continue;
-          const px = px0 + (((h2 >>> 16) & 255) / 255 - 0.5) * 1.0;
-          const pz = pz0 + (((h2 >>> 24) & 255) / 255 - 0.5) * 1.0;
+          if ((h & 0xffff) / 65536 >= f * FIELD_TREE) continue;
+          const px = px0 + (((h2 >>> 16) & 255) / 255 - 0.5) * 2.4;
+          const pz = pz0 + (((h2 >>> 24) & 255) / 255 - 0.5) * 2.4;
+          if (avoid && avoid(px, pz)) continue;
           const sc = pickSize(((h2 >>> 4) & 0xffff) / 65536, FIELD_SIZES, FIELD_CDF);
+          fieldTree = true;
           push(iOak, px, pz, y0, 0, sc, this._foliageTint(h2, false), ((h >>> 3) & 0xffff) / 65536, salt === 101 ? 'w' : 's');
+          fieldTree = false;
           if (salt === 101) nWood++; else nStreet++;
           nT++;
         }
       }
-      // the odd rock / cube bush on the lattice's diagonal mid-points
-      {
-        const off = FIELD_OFF + FIELD_PITCH / 2;
-        const [ax, bx] = latRange(x0, off), [az, bz] = latRange(z0, off);
+      // rocks and cube bushes on the other two quincunx sub-lattices
+      for (let sub = 0; sub < 2; sub++) {
+        const offX = FIELD_OFF + (sub ? HP : 0), offZ = FIELD_OFF + (sub ? 0 : HP);
+        const [ax, bx] = latRange(x0, offX), [az, bz] = latRange(z0, offZ);
         for (let gz = az; gz <= bz; gz++) for (let gx = ax; gx <= bx; gx++) {
-          const px = gx * FIELD_PITCH + off, pz = gz * FIELD_PITCH + off;
-          if (skip & slotBit(px, pz)) continue;
-          const h = hash3(gx * 3301 + S, gz * 7727 + 5, 4153);
+          const px1 = gx * FIELD_PITCH + offX, pz1 = gz * FIELD_PITCH + offZ;
+          if (skip & slotBit(px1, pz1)) continue;
+          const h = hash3(gx * 3301 + S + sub * 911, gz * 7727 + 5, 4153);
           const h2 = hash3(h, 7, 97);
           const v = (h & 0xffff) / 65536;
           const rk = ((h >>> 9) & 0xffff) / 65536;
+          const px = px1 + (((h2 >>> 16) & 255) / 255 - 0.5) * 2.0;
+          const pz = pz1 + (((h2 >>> 24) & 255) / 255 - 0.5) * 2.0;
+          if (avoid && avoid(px, pz)) continue;
           if (v < f * FIELD_ROCK) {
             lastRock = null;   // a field rock is its own cluster, never folded into a neighbour's
             const g = 0.9 + ((h2 >>> 8) & 255) / 255 * 0.14;
-            push(iRock, px, pz, y0, 0, 0.9 + ((h2 >>> 4) & 15) / 60, [g, g * 0.99, g * 0.96], rk);   // readable little grey clusters, not specks
+            push(iRock, px, pz, y0, 0, 0.9 + ((h2 >>> 4) & 15) / 50, [g, g * 0.99, g * 0.96], rk);   // readable little grey clusters, not specks
           } else if (v < f * (FIELD_ROCK + FIELD_BUSH)) {
-            push(iFieldBush, px, pz, y0, 0, 0.6 + ((h2 >>> 8) & 255) / 255 * 0.2, this._foliageTint(h2, false), rk);
+            push(iFieldBush, px, pz, y0, 0, 0.7 + ((h2 >>> 8) & 255) / 255 * 0.25, this._foliageTint(h2, false), rk);
           }
         }
       }
@@ -1348,7 +1415,12 @@ export class Props {
       for (let x = 0; x < N; x++) {
         const i = z * N + x;
         const p = plant[i];
-        if (!p) continue;
+        // w4 r2: a 1x1 deco item standing on a lawn park (lawnMask admits
+        // them) used to blank its whole tile; plant round it instead.
+        const lawnDeco = !p && lawn[i] && occ && occ[i] !== 0 &&
+          !(x > 0 && occ[i - 1] === occ[i]) && !(x < N - 1 && occ[i + 1] === occ[i]) &&
+          !(z > 0 && occ[i - N] === occ[i]) && !(z < N - 1 && occ[i + N] === occ[i]);   // 1x1 items only
+        if (!p && !lawnDeco) continue;
 
         const cx = (x + 0.5) * TILE, cz = (z + 0.5) * TILE;
         // r10: open lawn the town has closed in on stands on a raised plinth
@@ -1362,47 +1434,65 @@ export class Props {
           // group or bush pair, PICNIC tiles a shade tree; flower / hub tiles
           // are terrain's beds and plaza.
           const zn = lpark.zone[i], pb = lpark.path[i];
-          const h = hash3(x * 2654435761 + S, z * 40503, 877);
-          const hf = (k) => (hash3(h, k, 1291) & 0xffff) / 65536;
-          const tint = (k) => this._foliageTint(hash3(h, k, 71), false);
-          const treeAt = (px, pz, k, big) => {
-            const t = hf(k * 3 + 1) > 0.97 ? iBlossom : iOak;
-            const sc = pickSize(hf(k * 3 + 2), big ? KERB_SIZES : STREET_SIZES, big ? KERB_CDF : STREET_CDF);
-            push(t, px, pz, gy, 0, sc, tint(k), hf(k * 3 + 3), 's');
-            nStreet++;
-          };
-          if (zn === LZ_GROVE) {
+          // w4 r2 EVEN LAWN (critic w4r1: "trees bunched into a few clumps
+          // and bare stretches between them … ref05's field is an even
+          // scatter of many small single cuboid trees, grey stepped rock
+          // clusters and tiny cube bushes, edge to edge"). The r11 GROVE /
+          // CLEARING clumps are gone: every lawn tile carries the SAME world
+          // quincunx as the open field (same small field trees, rocks and
+          // cube bushes), with the slots that would land on a path, the hub
+          // plaza, a flower bed, the picnic patch or the kerb rim vetoed.
+          if (zn === LZ_FLOWER) continue;
+          const x0 = x * TILE, z0 = z * TILE, W = 1.45, M = 1.3;
+          const eN = !(z > 0 && lawn[i - N]), eS = !(z < N - 1 && lawn[i + N]);
+          const eW = !(x > 0 && lawn[i - 1]), eE = !(x < N - 1 && lawn[i + 1]);
+          const avoid = (px, pz) => {
+            const lx = px - x0, lz = pz - z0;
+            if ((eW && lx < M) || (eE && lx > TILE - M) || (eN && lz < M) || (eS && lz > TILE - M)) return true;
+            const dx = lx - TILE / 2, dz = lz - TILE / 2, adx = Math.abs(dx), adz = Math.abs(dz);
+            if (lawnDeco && Math.max(adx, adz) < 2.4) return true;
+            // hub plaza (a +-2.5 x +-1.9 cross) / picnic patch: only the tile
+            // corners (the slots are pushed out to +-3.1 there) stay planted
+            if (zn === LZ_HUB) return (adx < 2.7 && adz < 2.1) || (adx < 2.1 && adz < 2.7) || (adx < 1.0 && adz < 2.7);
+            if (zn === LZ_PICNIC) return Math.max(adx, adz) < 2.9;
             if (pb) {
-              let k = 0;
-              for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-                if (hf(40 + k) < 0.8) treeAt(cx + sx * 2.5, cz + sz * 2.5, k, hf(50 + k) < 0.5);
-                k++;
-              }
-            } else {
-              const n = 4 + ((hf(60) * 3) | 0);
-              const ox = (hf(61) - 0.5) * 1.4, oz = (hf(62) - 0.5) * 1.4, a0 = hf(63) * 6.28;
-              for (let k = 0; k < n; k++) {
-                const rr = k === 0 ? 0 : 1.7 + (k & 1) * 0.8, ang = a0 + k * 2.39996;
-                const px = Math.max(-2.7, Math.min(2.7, ox + Math.cos(ang) * rr));
-                const pz = Math.max(-2.7, Math.min(2.7, oz + Math.sin(ang) * rr));
-                treeAt(cx + px, cz + pz, k, k === 0 || hf(70 + k) < 0.4);
-              }
-              if (hf(80) < 0.7) push(iShrub, cx - ox * 1.6 + 1.2, cz - oz * 1.6 - 1.2, gy, 0, 0.7 + hf(81) * 0.4, tint(9), hf(82));
+              if (adx < W && adz < W) return true;
+              if ((pb & 1) && dz < 0 && adx < W) return true;
+              if ((pb & 2) && dz > 0 && adx < W) return true;
+              if ((pb & 4) && dx < 0 && adz < W) return true;
+              if ((pb & 8) && dx > 0 && adz < W) return true;
             }
-          } else if (zn === LZ_CLEAR) {
-            const u = hf(90);
-            const px = cx + (hf(91) - 0.5) * 3, pz = cz + (hf(92) - 0.5) * 3;
-            if (u < 0.55) {
+            return false;
+          };
+          // A finer lattice than the open field's (a park is 2-6 tiles
+          // across, so pitch-12 slots mostly fell on rims and paths): the
+          // four (+-2, +-2) quadrant slots of every tile, split as a world
+          // checker. Tree slots (~2 per tile) are LAWN_FILL occupied, the
+          // other two carry the odd grey rock cluster or cube bush.
+          const corner = zn === LZ_HUB || zn === LZ_PICNIC;
+          const so = corner ? 3.0 : 2, jit = corner ? 0.2 : 1.0;
+          for (let k = 0; k < 4; k++) {
+            const qx = k & 1, qz = k >> 1;
+            const gx = x * 2 + qx, gz = z * 2 + qz;
+            const hq = hash3(gx * 7919 + S, gz * 104729 + 29, 6151), hq2 = hash3(hq, 19, 433);
+            const px = x0 + TILE / 2 + (qx ? so : -so) + (((hq2 >>> 16) & 255) / 255 - 0.5) * jit;
+            const pz = z0 + TILE / 2 + (qz ? so : -so) + (((hq2 >>> 24) & 255) / 255 - 0.5) * jit;
+            if (avoid(px, pz)) continue;
+            const u = (hq & 0xffff) / 65536, rk = ((hq >>> 9) & 0xffff) / 65536;
+            if (((gx + gz) & 1) === 0) {
+              if (u >= LAWN_FILL) continue;
+              fieldTree = true;
+              push(iOak, px, pz, gy, 0, pickSize(((hq2 >>> 4) & 0xffff) / 65536, FIELD_SIZES, FIELD_CDF) * LAWN_TREE_K,
+                this._foliageTint(hq2, false), rk, 's');
+              fieldTree = false;
+              nStreet++;
+            } else if (u < LAWN_ROCK) {
               lastRock = null;
-              const g = 0.9 + hf(93) * 0.14;
-              push(iRock, px, pz, gy, 0, 0.7 + hf(94) * 0.3, [g, g * 0.99, g * 0.96], hf(95));
-              push(iShrub, px + 1.6, pz + 0.6, gy, 0, 0.7 + hf(96) * 0.3, tint(3), hf(97));
-            } else if (u < 0.85) {
-              push(iShrub, px, pz, gy, 0, 0.8, tint(4), hf(98));
-              push(TYPE_INDEX.flowers != null ? TYPE_INDEX.flowers : iShrub, px + 1.4, pz - 0.8, gy, 0, 0.8, tint(5), hf(99));
+              const g = 0.9 + ((hq2 >>> 8) & 255) / 255 * 0.14;
+              push(iRock, px, pz, gy, 0, 0.85 + ((hq2 >>> 4) & 15) / 60, [g, g * 0.99, g * 0.96], rk);
+            } else if (u < LAWN_ROCK + LAWN_BUSH) {
+              push(iFieldBush, px, pz, gy, 0, 0.7 + ((hq2 >>> 8) & 255) / 255 * 0.25, this._foliageTint(hq2, false), rk);
             }
-          } else if (zn === LZ_PICNIC) {
-            if (hf(100) < 0.7) treeAt(cx + (hf(101) < 0.5 ? -2.6 : 2.6), cz + (hf(102) < 0.5 ? -2.6 : 2.6), 7, true);
           }
           continue;
         }
@@ -1640,7 +1730,7 @@ export class Props {
           const m = map[bz * N + bx];
           if (m !== T_GRASS && m !== T_TREE && m !== T_MOUNTAIN) continue;
           const dT = Math.max(tx < 0 ? -tx : tx >= N ? tx - N + 1 : 0, tz < 0 ? -tz : tz >= N ? tz - N + 1 : 0);
-          const fade = 1 - smooth01(B * 0.45, B, dT);
+          const fade = 1 - smooth01(B * 0.62, B, dT);
           const h = hash3(tx * 2246822519 + S + 77, tz * 3266489917 + 5, 881);
           const h2 = hash3(h, 23, 557);
           const u = (h & 0xffff) / 65536;
@@ -1862,8 +1952,13 @@ export class Props {
       }
 
       const def = TYPES[t];
-      const fadeEnd = def.cull;
-      const fadeStart = def.fade > 0 ? def.cull - def.fade : def.cull;
+      // w4 r2: a type with no fade band is cut per CHUNK only (in
+      // _refreshVisible). The old per-instance shrink at `cull` hid far
+      // off-map trees in the colour pass while lighting.js's caster pass
+      // (scene.overrideMaterial, no shrink) still drew them: iso-wide showed
+      // a field of tree shadows with no trees past ~1200 units.
+      const fadeEnd = def.fade > 0 ? def.cull : 1e9;
+      const fadeStart = def.fade > 0 ? def.cull - def.fade : 1e9;
 
       for (const [c, arr] of buckets) {
         // Rank-sort so a density cut is a truncation, not a reshuffle.
@@ -1917,6 +2012,12 @@ export class Props {
       mesh.frustumCulled = false;         // we cull per chunk ourselves
       mesh.castShadow = !NO_SHADOW.has(def.key);
       mesh.receiveShadow = true;          // irrelevant to CSM, harmless
+      // w4 (veg): tree canopies are overhangs to lighting.js's top-down world-AO
+      // height volume, which stamped each canopy's footprint on the grass as a
+      // crisp-rimmed "ghost" rectangle (critics r7/r8: "diamond ghosting", "grid
+      // decals under trees"). ref05/06 trees only drop their cast shadow, so trees
+      // stay out of that volume (rocks / bushes, solid to the ground, stay in).
+      if (NO_WORLD_AO.has(def.key)) mesh.userData.noWorldAO = true;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(c * 3), 3);
       mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -2050,6 +2151,15 @@ export class Props {
         const e = camera.matrixWorld.elements;   // column 0 = camera right in world
         const d = ctx.sunDir.x * e[0] + ctx.sunDir.y * e[1] + ctx.sunDir.z * e[2];
         this.uniforms.uPropToneSide.value = clamp(-d * 6, -1, 1);
+      }
+      // Veg shade sides are solved against an away-wall fill cut of
+      // VEG_WALL_REF; read the live rig value (lighting.js shares its
+      // uCsmWallFill uniform into this material) and undo any extra cut.
+      const sh = this.material && this.material.userData.shader;
+      const wf = sh && sh.uniforms.uCsmWallFill && sh.uniforms.uCsmWallFill.value;
+      if (wf) {
+        const z = clamp(wf.z, 0, 1);
+        this.uniforms.uPropWallComp.value = clamp((1 - VEG_WALL_REF * z) / Math.max(0.02, 1 - wf.x * z), 0.25, 8);
       }
       this._frameSinceRefresh++;
       const moved = this._lastCamPos.distanceToSquared(camera.position) > 2.25;

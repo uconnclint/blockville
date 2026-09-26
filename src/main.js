@@ -12,6 +12,7 @@ import { initUI } from './ui.js';
 import * as audio from './audio.js';
 import { CHALLENGES, GUIDED, makeBaseline, progress } from './challenges.js';
 import { Net, makeCode, normalizeCode } from './net.js';
+import { startIcons } from './icons.js';
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -445,6 +446,8 @@ function leaveRoom() {
 // UI
 // ---------------------------------------------------------------------------
 let activeTool = null; // null | 'road' | 'tree' | 'bulldoze' | catalog entry
+let menuIcons = null;       // icons.js handle (startMenuIcons, below)
+const pendingArt = [];      // icon keys the UI asked for before it started
 const ui = initUI({
   onTool(tool) {
     activeTool = (tool == null || tool === 'move') ? null : tool;
@@ -488,8 +491,22 @@ const ui = initUI({
   onHost() { hostRoom(); },
   onJoin(code) { joinRoom(code); },
   onLeaveRoom() { leaveRoom(); },
+  onArtWanted(keys) { if (menuIcons) menuIcons.want(keys); else pendingArt.push(...keys); },
 });
 ui.setCatalog(models.CATALOG);
+
+// Menu icons: every catalog card / sticker / menu glyph gets a picture rendered
+// from our own voxel models (icons.js — worker + tiny private renderer, off the
+// critical path). Emoji show until each icon lands. Started after boot.
+function startMenuIcons() {
+  if (menuIcons) return;
+  if (/[?&]noicons\b/.test(location.search)) return;   // perf A/B: emoji only
+  try {
+    menuIcons = startIcons({ catalog: models.CATALOG, onIcon: (key, url) => ui.setArt(key, url) });
+    if (pendingArt.length) menuIcons.want(pendingArt.splice(0));
+    if (window.BV) window.BV.icons = menuIcons;   // debug: BV.icons.stats
+  } catch (e) { console.warn('[icons] disabled', e); }
+}
 if (ui.setStickers) ui.setStickers(stickers);
 
 // ---------------------------------------------------------------------------
@@ -953,6 +970,7 @@ function afterMode() {
 }
 
 const boot = document.getElementById('boot');
+setTimeout(startMenuIcons, 900);
 setTimeout(() => {
   if (boot) { boot.style.opacity = '0'; setTimeout(() => boot.remove(), 600); }
   const firstRun = !mode;

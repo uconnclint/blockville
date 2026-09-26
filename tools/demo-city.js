@@ -575,7 +575,20 @@
     // packed blocks. The old layout gave each row its own street on both sides,
     // so ~60% of the frame was asphalt (res critic r5: 'sparse, toy-like').
     const block = !one && !!catM && catM[1] === 'homes';
-    const rowW = rows.map((r) => r.reduce((s, e) => s + e.tw + (framed ? 1 : 0), 0));
+    // (civic w4r4) Fun/civic pages build each row as ONE civic block: the lots
+    // stand plinth to plinth along their street, with streets only between the
+    // rows and round the outside. A 1-tile road between every 2×2 lot made the
+    // frame ~56% asphalt (lot:road 2:1) where ref05's civic grid is ~28%
+    // (lot:road ~6:1) — critics w4r1-w4r3 all called it 'small islands in
+    // oversized asphalt blocks'. Now ~33%, and the tighter frame also brings the
+    // camera in to ~ref05 scale.
+    const tight = !one && !!catM && catM[1] === 'fun';
+    // (coordinator, res w4r1-w4r4) Homes: a 1-tile garden plot (flower bed /
+    // hedge) between neighbouring houses, so each house reads as its own lot
+    // with a yard (ref01) instead of one merged mass; rows stay back to back.
+    const gardens = block;
+    const GARDEN = ['flower-bed', 'hedge'];
+    const rowW = rows.map((r) => r.reduce((s, e) => s + e.tw + (framed && !tight ? 1 : 0), 0) + (gardens ? Math.max(0, r.length - 1) : 0));
     const W = Math.max(...rowW) + (block ? 0 : 1);
     const rowZ = block ? [0, rowDs[0] - 1, rowDs[0] + rowDs[1] - 1] : [0, rowDs[0], rowDs[0] + rowDs[1]];
     const D = rowZ[2] + 1;
@@ -599,7 +612,7 @@
     }
     if (!one) {
       for (let x = x0 - 2; x < x0 + W + 2; x++) road(x, z0 + rowZ[2]);
-      for (let z = z0; z <= z0 + rowZ[2]; z++) { road(block ? x0 : x0 - 2, z); road(x0 + W + 1, z); }
+      for (let z = z0; z <= z0 + rowZ[2]; z++) { road(block || tight ? x0 : x0 - 2, z); road(tight ? x0 + W : x0 + W + 1, z); }
     }
     // (civic r6) In a mixed row, the small lots go at the end of the row AWAY
     // from the lens: a 1×1 wind turbine painted in front of the 4×4 stadium
@@ -617,7 +630,11 @@
         const pz = block && r === 1 ? z0 + rowZ[2] - e.td : z0 + rowZ[r] + 1;
         try { BV.paint(e.id, x, pz); } catch (err) {}
         x += e.tw;
-        if (framed) { for (let z = z0 + rowZ[r]; z <= z0 + rowZ[r + 1]; z++) road(x, z); x += 1; }
+        if (gardens && e !== row[row.length - 1]) {
+          for (let dz = 0; dz < e.td; dz++) { try { BV.paint(GARDEN[(r + dz + x) % 2], x, pz + dz); } catch (err) {} }
+          x += 1;
+        }
+        if (framed && !tight) { for (let z = z0 + rowZ[r]; z <= z0 + rowZ[r + 1]; z++) road(x, z); x += 1; }
       }
     });
     // (industry r11) A factories page is ONE industrial district: the tiles its
@@ -638,6 +655,18 @@
         k++;
       }
     }
+    // (coordinator, civic w4r1+w4r3) Road-framed fun/civic pages leave enclosed
+    // grass tiles (a 1×1 beside 2×2s in a 2-deep row, the spare edge columns)
+    // that terrain dresses as car parks / bare paving — critics read them as
+    // "small islands in oversized asphalt blocks". Fill them with parks so every
+    // block is full edge to edge, like ref05's civic blocks.
+    if (!one && catM && catM[1] === 'fun') {
+      for (let z = z0 + 1; z < z0 + rowZ[2]; z++) for (let x = x0 + 1; x < x0 + W; x++) {
+        const i = z * N + x;
+        if (s.map[i] !== T.GRASS || (s.occ && s.occ[i])) continue;
+        try { BV.paint('park', x, z); } catch (err) {}
+      }
+    }
     BV.ff(40);
     if (BV.sim && BV.sim.state) { BV.sim.state.speed = 0; BV.sim.state.clock = 0.5; }
     clearWeather();
@@ -647,7 +676,7 @@
     // Iso snap that puts the sun ~0.8 rad round from the lens, like the iso shots.
     const want = Math.atan2(sd.x, sd.z) + 0.8;
     const snap = isoSnapForSun(0.8); void want;
-    let cx = (x0 + (block ? 1 : 0) + W / 2) * 8, cz = (z0 + D / 2) * 8;
+    let cx = (x0 + (block ? 1 : 0) + (tight ? 0.5 : 0) + W / 2) * 8, cz = (z0 + D / 2) * 8;
     if (one) { cx = (x0 + 1 + entries[0].tw / 2) * 8; cz = (z0 + 1 + entries[0].td / 2) * 8; }
     const tall = Math.max(...entries.map((e) => (e.cap || 6))) ;
     let dist = Math.max(W, D) * 8 * 0.95 + Math.min(tall, 40) * 0.8;
@@ -669,6 +698,14 @@
       const need = (foot + realH * 0.816) / (one ? 0.85 : 1.35) / 2 / Math.tan(20 * Math.PI / 180);
       dist = Math.max(dist, need);
       camY = realH * (one ? 0.5 : 0.34);
+    }
+    // (civic w4r4) the tight fun blocks bring the camera in; a tall model (the
+    // ferris wheel, ~30 high) on the back row then loses its top. Lift and back
+    // off just enough for anything over the ~24-high civic skyline.
+    if (tight) {
+      let realH = 0;
+      for (const e of entries) { try { const m = BV.models.catalogModel(e.id, 0); realH = Math.max(realH, m.sy / (m.res || 1)); } catch (err) {} }
+      if (realH > 24) { camY += realH - 24; dist += (realH - 24) * 1.5; }
     }
     if (BV.engine._post) BV.engine._post.setParams({ dof: { autoFocus: false, focus: dist, range: dist * 2 } });
     cam({ x: cx, y: camY, z: cz, dist, az: snap, polar: ISO_POLAR });

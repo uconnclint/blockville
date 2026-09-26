@@ -295,7 +295,7 @@ const DEFAULTS = {
   // 0.835 / 1.1 puts a crease at 0.61 and an inside corner at 0.39 — the
   // same two levels the classic res-1 term gives, so res 1 and res 4 models
   // standing side by side read as one family.
-  aoRayStrength: 0.55,   // r13: 0.76 -> 0.55 with knee 5 -> 2.5 (critic r12: ground floor "muddy ... almost black"; a plain crease went to 0.30, now ~0.57, corner rolls into the 0.55 wall floor, small ledge ~0.76). r9 0.66 -> 0.76 (critic r8: 'raise its strength a lot'); floor 0.24. r8: floor 0.34
+  aoRayStrength: 0.62,   // wave-4 r2: 0.55 -> 0.62 (critic w4r1: ledges 'pasted on'; the r13 note's first step). r13: 0.76 -> 0.55 with knee 5 -> 2.5 (critic r12: ground floor "muddy ... almost black"; a plain crease went to 0.30, now ~0.57, corner rolls into the 0.55 wall floor, small ledge ~0.76). r9 0.66 -> 0.76 (critic r8: 'raise its strength a lot'); floor 0.24. r8: floor 0.34
   aoRayCurve: 1.0,    // r8: the knee does the shaping now (r4-r7: 0.66)
   // TOE (surface r4): a soft-knee threshold on occ (quadratic below 2*toe,
   // occ - toe above, renormalised by 1 - toe) before the curve. Open-ish faces (a roof deck inside a low parapet, lot paving beside
@@ -350,9 +350,22 @@ const DEFAULTS = {
   // r12/aomap.mjs: the r9-r11 symmetric 1-unit dilation stamped the reveal
   // darkness of four windows over the whole panel, ~0.45 flat, which is why
   // the bakery's storeys read as one flat tone).
-  aoSkyShadow: 0.8,   // r13: 0.85 -> 0.8 (it is also scaled by the lower aoRayStrength)
-  aoSkyReach: 1.25,   // r13: 1.5 -> 1.25
+  aoSkyShadow: 1.0,   // wave-4 r3: 0.9 -> 1.0 (critics w4r1+w4r2 agree: no soft AO under cornice / sills / around the window bays on the upper walls). wave-4 r2: 0.8 -> 0.9 (with aoSkyDepth: deep overhangs pool, thin sills stay short). r13: 0.85 -> 0.8 (it is also scaled by the lower aoRayStrength)
+  aoSkyReach: 1.6,    // wave-4 r3: 1.25 -> 1.6 (wider soft pools; see aoSkyShadow). r13: 1.5 -> 1.25
   aoSkyPow: 1.3,
+  // wave-4 r2 (critic w4r1: "almost no soft AO under the cornice, sills,
+  // awnings ... the ledges look pasted on"). Measured (aomap, bakery +z):
+  // every ledge carried its darkness the SAME aoSkyReach down the wall, so on
+  // a res-8 facade (a sill, lintel or band every ~0.5 u) the one-sided bands
+  // overlapped into one grey storey (median AO 0.65, p25 0.59) and there was
+  // nothing open left to contrast with. A real overhang's shadow is as long
+  // as the overhang is deep: aoSkyDepth scales each source's reach by its own
+  // upward darkness, reach x clamp(dark / (aoSkyDepth x aoRayStrength),
+  // aoSkyMin, 1). A deep cornice or awning keeps the full soft pool, a
+  // 1-voxel sill lays a short one, and the panel between stays open.
+  // 0 = the r12 fixed reach.
+  aoSkyDepth: 0.8,
+  aoSkyMin: 0.5,      // wave-4 r3: 0.2 -> 0.5 (a 1-voxel sill / belt / flower box now lays a visible soft pool, ref04's ledges)
   // BROAD AO (surface r10; see the note at broadDark in _buildSliced): a
   // second, massing-scale AO through a coarse (1 cell / world unit) density
   // grid, multiplied onto the fine term. aoBroad = max darkening (0 = off),
@@ -363,7 +376,7 @@ const DEFAULTS = {
   // plinth under a wall, a parapet round a roof, a storey over a shopfront.
   // aoBroadLift = start point off the face, aoBroadCone = box half-size per
   // unit of distance (both world units / ratios).
-  aoBroad: 0.45,      // r13: 0.8 -> 0.45 (critic r12: gradient up the whole storey). r12: 0.6 -> 0.8 (critic r11: no contact shading where walls meet roof and plinth)
+  aoBroad: 0.35,      // wave-4 r2: 0.45 -> 0.35 (open wall nearer 1.0, so the ledge pools have something to contrast with). r13: 0.8 -> 0.45 (critic r12: gradient up the whole storey). r12: 0.6 -> 0.8 (critic r11: no contact shading where walls meet roof and plinth)
   aoBroadDist: 3.5,   // r13: 4.5 -> 3.5. r12: 3.5 -> 4.5
   aoBroadFall: 1.0,
   aoBroadKnee: 2.0,
@@ -385,7 +398,7 @@ const DEFAULTS = {
   // light factor now rolls off softly (exponential knee aoFloorKnee wide)
   // into aoWallFloor on vertical faces and aoTopFloor on up/down faces, so
   // a crease is a confident step darker but never muddy or near-black.
-  aoWallFloor: 0.55,
+  aoWallFloor: 0.48,   // wave-4 r2: 0.55 -> 0.48 (with materials aoWallCap 0.5: bakery cornice crease 0.82 -> 0.75 of no-AO in sRGB, the coordinator's ~0.65-0.7 'of lit' midpoint)
   aoTopFloor: 0.5,
   aoFloorKnee: 0.1,
   // ray mode merges a rectangle when bilinear AO across it stays within this
@@ -397,6 +410,10 @@ const DEFAULTS = {
   // screen-space grime term. Only with skipBottom (the bottom faces it would
   // hide are already skipped).
   groundAO: true,
+  // wave-4 r3: a model that brings its own lot (full y = 0 layer) stands on
+  // terrain's LOT_Y (0.42) footing; outside its footprint the AO ground plane
+  // sits this far (world units) lower. See _lotGroundDropV. false = off.
+  lotGroundDrop: 0.42,
   // Slice mesher only: grow every quad this far (world units) in its own plane
   // to seal greedy T-junction pinholes. 0 disables.
   seal: 0.0035,
@@ -845,6 +862,38 @@ const AO_LEVELS_SOLID = 6;
 // same aoStrength/aoCurve LUT as the other modes. Cost: vertices near
 // geometry only (an open vertex is skipped via the solid-kernel box test).
 
+// LOT GROUND (wave-4 r3, DEFAULTS.lotGroundDrop). Critic w4r2: "the plinth's
+// side band is almost black". Every catalog building brings its own lot
+// (lotPlinth: the whole footprint's y = 0 layer is solid) and engine seats it
+// on terrain's LOT_Y footing, so the plinth side continues straight DOWN into
+// the footing and the grass is LOT_Y below the model's y = 0. The plain
+// ground plane put the full wall-meets-floor crease (plus the broad ground
+// term) on the 0.5-unit plinth side, the darkest spot on the whole lot.
+// Returns the drop in voxels (0 = plain ground plane at y = 0). Auto-detects a
+// lot: building-scale AO, footprint >= 2 x 2 world units, and the y = 0 layer
+// >= 97% solid (props, benches, cars and trees never fill their footprint).
+function _lotGroundDropV(model, o, res, rayAO) {
+  let d = o.lotGroundDrop;
+  if (d === false || d === 0 || !rayAO || !((o.aoDist > 0 ? o.aoDist : 1.5) >= 1)) return 0;
+  const sx = model.sx | 0, sz = model.sz | 0, blocks = model.blocks;
+  if (sx < 2 * res || sz < 2 * res || !blocks) return 0;
+  if (o.lotGroundAuto !== false) {
+    const cov = new Uint8Array(sx * sz);
+    let n = 0;
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (!b || (b[1] | 0) !== 0) continue;
+      const x = b[0] | 0, z = b[2] | 0;
+      if (x < 0 || z < 0 || x >= sx || z >= sz) continue;
+      const k = x + z * sx;
+      if (!cov[k]) { cov[k] = 1; n++; }
+    }
+    if (n < 0.97 * sx * sz) return 0;
+  }
+  d = typeof d === 'number' ? d : 0.42;
+  return Math.max(0, Math.round(d * res));
+}
+
 // Exterior air of a padded occupancy grid: 1 for every empty cell connected
 // (6-neighbour) to the grid boundary, 0 for solid cells and sealed interiors.
 // Scanline-free BFS over a typed queue; O(cells).
@@ -898,7 +947,18 @@ function _buildSliced(model, o, res, greedy, R, t0) {
     occ[BASE + x + y * STR[1] + z * STR[2]] = ci + 1;   // later writes win, like the map
   }
   // Ground plane (padded y < 0) is solid for AO — see DEFAULTS.groundAO.
-  if (o.skipBottom !== false && o.groundAO !== false) occ.fill(1, 0, P * STR[1]);
+  // wave-4 r3 LOT GROUND (DEFAULTS.lotGroundDrop): a building that brings its
+  // own lot sits on terrain's footing, so directly outside its footprint the
+  // real ground is LOT_Y lower; only the footprint itself is solid down there.
+  const gDropV = (o.skipBottom !== false && o.groundAO !== false) ? _lotGroundDropV(model, o, res, rayAO) : 0;
+  if (o.skipBottom !== false && o.groundAO !== false) {
+    const full = Math.max(0, P - gDropV);             // padded rows fully solid
+    occ.fill(1, 0, full * STR[1]);
+    for (let y = full; y < P; y++) for (let z = 0; z < sz; z++) {
+      const row = y * STR[1] + (z + P) * STR[2] + P;
+      occ.fill(1, row, row + sx);
+    }
+  }
 
   // PERF (view index): which empty cells are OUTSIDE air, i.e. connected to
   // the padded boundary. Catalog buildings are hollow shells, so every wall,
@@ -1060,6 +1120,17 @@ function _buildSliced(model, o, res, greedy, R, t0) {
     const x = i / (skyR + 1);
     skyW[i] = skyPow > 0 ? Math.pow(1 - x, skyPow) : 1 - x * x * (3 - 2 * x);
   }
+  // wave-4 r2: depth-scaled reach (DEFAULTS.aoSkyDepth). skyRef = the source
+  // darkness that earns the full reach; skyMinF = the shortest reach share.
+  const skyRef = o.aoSkyDepth > 0 ? Math.max(1e-3, +o.aoSkyDepth * rayS) : 0;
+  const skyMinF = Math.max(0.05, Math.min(1, o.aoSkyMin != null ? +o.aoSkyMin : 0.2));
+  const skyFall = (sK, di) => {
+    if (!skyRef) return skyW[di];
+    const rf = Math.max(skyMinF, Math.min(1, sK / skyRef));
+    const x = di / ((skyR + 1) * rf);
+    if (x >= 1) return 0;
+    return skyPow > 0 ? Math.pow(1 - x, skyPow) : 1 - x * x * (3 - 2 * x);
+  };
   const needK = spreadR > 0 || skyR > 0;
   // r13 combined floor (DEFAULTS.aoWallFloor): building-scale callers only.
   const floorOn = rayAO && aoOn && (o.aoDist > 0 ? o.aoDist : 1.5) >= 1 && (o.aoWallFloor > 0 || o.aoTopFloor > 0);
@@ -1257,7 +1328,17 @@ function _buildSliced(model, o, res, greedy, R, t0) {
       for (let k = 0; k < 3; k++) { if (hi[k] <= lo[k]) return 0; vol *= hi[k] - lo[k]; }
       let cnt = 0;
       if (lo[1] < 0) {
-        if (groundOn) cnt += groundW * (Math.min(0, hi[1]) - lo[1]) * (hi[0] - lo[0]) * (hi[2] - lo[2]);
+        if (groundOn) {
+          // below -gDropV: open ground everywhere; -gDropV..0: the footing
+          // under this model's own footprint only (see LOT GROUND).
+          const yA = Math.min(-gDropV, hi[1]);
+          if (yA > lo[1]) cnt += groundW * (yA - lo[1]) * (hi[0] - lo[0]) * (hi[2] - lo[2]);
+          const yB0 = Math.max(lo[1], -gDropV), yB1 = Math.min(0, hi[1]);
+          if (gDropV > 0 && yB1 > yB0) {
+            const fx = Math.min(sx, hi[0]) - Math.max(0, lo[0]), fz = Math.min(sz, hi[2]) - Math.max(0, lo[2]);
+            if (fx > 0 && fz > 0) cnt += groundW * (yB1 - yB0) * fx * fz;
+          }
+        }
         if (hi[1] > 0) cnt += boxCount(lo[0] + P, P, lo[2] + P, hi[0] + P, hi[1] + P, hi[2] + P);
       } else cnt += boxCount(lo[0] + P, lo[1] + P, lo[2] + P, hi[0] + P, hi[1] + P, hi[2] + P);
       return cnt / vol;
@@ -1463,7 +1544,7 @@ function _buildSliced(model, o, res, greedy, R, t0) {
               for (let i = la; i <= i1; i++) {
                 if (vtxK[row + i] < 0) continue;
                 const sK = vtxKU[row + i];
-                if (sK > 0) { const w = sK * skyW[i - la]; if (w > ms) ms = w; }
+                if (sK > 0) { const w = sK * skyFall(sK, i - la); if (w > ms) ms = w; }
               }
               vtxKS[row + la] = ms;
             }

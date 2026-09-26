@@ -662,3 +662,39 @@ blob-URL import without touching the live file). ~6 s a shot vs ~2.5 min for sho
   for vVoxWorld / normals) — owner of materials.js; then life can put each variant in one InstancedMesh.
 - Blue bodies + blue glass-class screens are low contrast; a lighter/whiter screen class would fix it.
 - Van roof bars (dark) read a bit heavy from above; the farm tractor (another piece) dwarfs the traffic.
+
+### Coordinator note (2026-09-26 08:40, wave 4) — vehicle SCALE, measured
+The w4r1 critic's pair was NOT scale-matched (its ref05 crop was ~2x zoomed vs our iso-mid), so "tiny blobs" is exaggerated — but the direction is real. Measured on ref05 (1920 wide, ~120 px/tile): fire engines ~55 px long ≈ 0.45 tile; caravans/vans ~40 px ≈ 0.33 tile; a car occupies roughly half a lane-width's length ~0.3 tile and nearly fills its lane width. Ours at iso-mid: cars ≈ 0.15-0.2 tile and about a quarter of the road width. Target: cars ~0.28-0.3 tile, vans/buses/trucks 0.35-0.5 tile, each vehicle filling most of its lane width. Measure your result at iso-mid (232 px/tile at 2x) in PIL before/after and log the numbers. Keep lane discipline (prev critic): centred in lanes, consistent spacing, junctions/crossings clear. Themed parked vehicles on their lots (fire station, hospital, depot) remain welcome — coordinate by note with civic if you need their lot slots.
+
+## 2026-09-26 — wave 4, round 2 (builder)
+
+w4r1 critic (ref won): at iso-mid our cars were 1-2 voxel lozenges (~0.15 tile) spread through every
+lane; ref05's are ~40 % bigger with cab/body/trailer breaks and parked with purpose. Coordinator
+measure: cars ~0.28-0.3 tile, vans/trucks 0.35-0.5 tile. (This round resumed an interrupted run of
+itself — the scale work below was already in the tree at 12:03 and is verified here.)
+
+**Changed**
+- `vehicles.js`: vehicles keep their RV 18 voxel art but are OUTPUT at `RT = 12` (x1.5) for traffic,
+  kerbside bays and terrain car parks; `RL = 15` (x1.2) for cars stamped into building lots (their
+  1 x 2.25 stalls). Sedan 2.2 long x 1.0 wide (0.27 tile), bus 3.5, fire engine 3.7, semi 4.7 (0.58).
+  Bays 1.3 / 2.6 half-length, 1.33 deep. People RP 16 -> 13 (1.0 tall, kids 0.62).
+- `life.js`: LANE_BAY 1.0 / LANE_OPEN 1.65 for the wider cars; BAY 2.6, PARK_SINK 0.069 (res-12 paint);
+  CARS_PER_TILE 3.2 -> 1.8 (fewer, bigger movers; parked rows carry the density).
+  Taxi trim: CAR_MIX taxi 0.045 -> 0.03, SHOPPER bays no taxi, arcade leads with a city car,
+  city-bank sends no taxis (iso-close had ~8 yellow cabs of ~60 vehicles; now ~2-3).
+  (Earlier w4 work still in: lane drift per kerb type, pop-in slots + stop-line queues, paused
+  junction/zebra clearing, semis at depots, stride poses + walking companions.)
+
+**Measured**
+- life self-test ok (maxJump 1.01, 0 overlaps), models ok; check.sh ok; 0 console errors in
+  iso-mid / iso-close / iso-water (w4r2-builder). fps 20 / 9 / 8 under heavy multi-agent load (27 / 32
+  in the unloaded pre-change run) — no extra draws, same voxel counts.
+- iso-mid (232 px/tile): sedans ~55-65 px long = ~0.26 tile (was ~0.15); vans/buses ~0.4 tile.
+  Every vehicle shows black wheels, a glass band and bright screens at iso-mid; iso-close reads as
+  orderly two-lane streets with parked rows.
+
+**Next**
+- Moving box trucks are semis 40 % of the time (colour slot >= 6); trim to depots only if a critic
+  calls downtown semis clutter.
+- Instanced movers still blocked on instanceMatrix in materials.js VERT_BODY (perf idea 3).
+- A hospital building would let ambulances park "with purpose" (civic piece).

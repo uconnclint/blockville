@@ -512,3 +512,69 @@ r8 "too dark navy" → r11 "all pale, washes out". I cropped ref05's industrial 
  - YARDS: dark asphalt with white lines, orange trucks, a blue loading pool.
 So: keep light walls, add blue glazing, darken roofs a step, and load them with
 dark equipment. That gives both "light" and "bold silhouette".
+
+## 2026-09-26 — wave 4 round 1 (builder; third start, continued the killed instance's uncommitted w4 r1/r1b edits)
+
+Inherited (already in the tree, from the earlier w4 r1 attempts): light steel/navy bodies, blue seams→indShade, white/orange
+`banded` surfStack style on the 1×1 works, a light stack house with a blue band under the cornice, orange/white dock semis, smooth
+surf balloons, and fineRoof density 0.84.
+**Changed (r1c).**
+- Measured with PIL: ref05 factory roofs have a mean L of 92–101, ours 144–157. A false-colour dev flag (`--pre "globalThis.__IND_DECK=1"`:
+  decks red, pads lime) showed the light read came from the light pads, the parapets and the light units, not from the deck. Fixes:
+  `indYard` 0x5b6571→0x2b313a (tone mapping compresses it: it renders ~#707581), fine pads and hvacPad pads indShade→indRoofLt, and
+  condensers mixed as mid steel / charcoal / navy / a few light units so their tops still pop on the dark deck.
+- Vault roofs are slate indRoof, as the gables already were (vault L was 170). Hopper towers (NOM, ECO) are dark steel indRoofLt with
+  light corner posts, not a plain light block.
+- VENTS: no puffs from the 1×1 works. A fresh puff sat on every stack mouth as a white cube "hat" (critics r7, r8 and r11; ref05 has no smoke).
+  The mega keeps its 2 plumes.
+- Dock semis: one white semi per works (two at the warehouse), was 2–3 orange/white. Side by side, the district read as a sea of
+  orange boxes.
+**Measured.** All 4 shots: 0 console errors. Scene tris gal-1 632k, gal-2 795k, gal-3 594k, one-mega 507k. fps at dpr 2 under other
+builders' load: 35 / 26 / 38 / 20. Shots: scratchpad rounds/industry/w4r1-builder.
+**Next.** In my own side-by-side (w4r1-h/pair.png) ref05's district is still more intricate, and its massing is grey/charcoal steel
+(refinery frames, tall dark process blocks). Ours is chunkier and more saturated (theme signs, coloured tanks, traffic). If a critic
+says so, try these, in order: (1) a dark steel "process frame" cluster type in yardFill (columns plus pipe decks), (2) white theme
+tanks with only a coloured band, (3) thinner copings on the 1×1 works.
+
+### Coordinator note (2026-09-26 17:00, wave 4) — organised, not crammed
+Critics have swung: earlier rounds "big empty pale aprons"; w4r1 "crammed edge to edge with trucks, forklifts and crates on every tile". My "yards packed" brief overshot. Aim at the midpoint, as in ref05: each factory lot = building mass + ONE organised yard: a clear dark asphalt apron with white-striped truck bays, a neat row of trailers/trucks backed onto a long loading-dock facade, and props grouped in 1-2 tidy zones (a tank farm corner, a crate/pallet stack) with open asphalt between them. Rough budget: ~50-60% of the yard reads as clear marked asphalt. Also finer facade detail on the big grey blocks: window mullions/ribbon windows, roof vents and fans, pipe runs along walls.
+
+## 2026-09-26 — wave 4 round 2 (builder)
+
+Critic (w4r1) picked the reference: lots "crammed edge to edge" with trucks, forklifts, crates and gantries; ref05 has
+one clear striped asphalt apron per factory, a neat row of trailers on one long dock facade, hedges on the edges; big plain
+grey upper masses. Followed the coordinator's 17:00 "organised, not crammed" note.
+**Changed (all in industrial.js).**
+- 1×1 `works()`: ONE vehicle per dock lot — the theme truck backs into bay 0 (in a packed row every lot's truck sits in the
+  same bay, so the row reads as one long dock with a neat line of trucks); warehouse 2 semis in adjacent bays; process
+  works only the tanker at its rack. The office forecourt truck became a staff car in a striped stall. No forklift, no
+  yard goods heap (only POP keeps its balloon bunch, on a staging pad: `keepGoods`), no portal crane (TOOLS / JUICE), back
+  crates halved. Clipped hedges on the apron's left edge and between the apron and the office forecourt.
+- Process tanker rack: yellow arm pair, stair treads and bollards removed; one riser + skid + one slim grey arm.
+- Rocket-lab hangar gable faces: two blue curtain bands + three light ledges; the wall-high BV board became a half-size
+  fine `tag` under the coping.
+- Mega works dock: one unbroken run of 5 semis in orange/white (was 6 scattered in 5 colours + one loose on the apron).
+**Measured.** 0 console errors on all 4 shots. Scene tris gal-1 664k, gal-2 754k, gal-3 608k, one-mega 518k (≈ −1k vs base).
+fps under other builders' load 7–44 (not a budget reading). Shots: scratchpad rounds/industry/w4r2-builder. In gal-3 the
+yards now read as ~60% open striped asphalt.
+**Next.** The loudest leftovers in the galleries are the greenhouse (giant fruit crates, big FARM board) and the sawmill's
+orange log piles — tone those next if a critic names clutter again. Street traffic trucks (life piece) still line every
+kerb. Signs: a lone "chunky pixel text" remark — leave unless it repeats.
+
+### Coordinator note (2026-09-26 19:05) — after w4r2: stop cloning the glass office block
+My earlier palette note ("big blue glass curtain walls") overshot: w4r2 sees every lot as the same white/blue glass tower + big sign + orange-banded stack. In ref05 the glass office block is ONE small annex per plant; the mass of the district is low-slung sheds. Rework so each factory id has a distinct primary silhouette: broad low warehouse/shed (sawtooth or shallow pitched roofs with vents and fans), long rows of numbered roll-up dock doors with trailers backed in, fenced truck yards, tank clusters linked by pipe racks, silos, a chimney on only some. Glass only as a small office annex on some lots. Keep signage small. Keep the 17:00 "organised yard" rule.
+
+## 2026-09-26 — wave 4 round 3 (builder)
+
+Critic (w4r2) picked the reference. Every lot repeated the same formula: a white/blue glass office TOWER, a chunky pixel-font sign and a banded stack. ref05's industry is broad, low sheds with dock rows and trailers nosed in, plus tank farms linked by racks. Followed the coordinator's 19:05 note ("stop cloning the glass office block").
+**Changed (industrial.js only).**
+- `works()`: halls 20/19 → 15 high (`WK`). The dock office is a 14-high glass ANNEX under the hall parapet (was a 26-high tower). The process and warehouse office wings rise h+3 (was h+7 / h+6). The full-height blue `curtainBand` on the hall front is now a slim 2-row clerestory `ribbon`. The dock canopy is lower (y0+9).
+- Signs: `tag({plaque:true})` is a bare board with no frame, rail or brackets. Works use a white plaque with accent letters. There is ONE plaque per lot (office annex front, process canopy, or the warehouse's right wall), and the back signs are gone. Dock doors get small numbered plates (1-3) on the canopy fascia (fine part).
+- A dropped trailer (`fTrailer`, theme trailer colour) is nosed into bay 2 beside the theme truck in bay 1. Bay 3 stays the staging bay.
+- "Staircase towers": the hopper and silo conveyor galleries are now smooth sloped surf beams with trestles (they were 1-voxel stepped boxes). The hopper towers are lower (NOM 24→14, ECO 18→12). The vault and gable roofs are shallow (Hr 6/7 → 4); they read as stepped pyramids before.
+- Stacks only on some lots: CARS 2→0, POP 1→0. `W_STACK_H` 50→46.
+**Measured.** `modelhash` selfTest ok. All modules parse. 0 console errors on all 4 shots. Scene tris: gal-1 596k, gal-2 685k, gal-3 541k, one-mega 455k. fps was 9–34 under load avg ~20 from other shooters, so it is not a budget reading. Shots are in scratchpad rounds/industry/w4r3-builder. The galleries now read as a low-slung shed district with dock rows. The mega is unchanged.
+**Next.** The rocket-lab hangar (tall glass block with the BV tag) is now the tallest non-stack box in gal-1. Lower it if a critic calls it an office tower. The plaque letters can't get smaller than the res-8 3×5 glyph, so an icon-only plaque is the next step if "chunky signs" repeats. Pipe racks between neighbouring 1×1 tank farms are still untried.
+
+### Coordinator note (2026-09-26 20:35) — after w4r3: fewer, bigger masses
+w4r3: "dense clutter piles of small pale-grey boxes with no dominant readable mass". Combine with w4r1 (crammed) and w4r2 (cloned glass towers): each factory = ONE dominant big building (a long shed/warehouse with a loading-dock row, or a plant hall) + at most 2 secondary elements (a tank pair, a chimney, a silo pair), set in the organised open yard. Delete small scattered boxes/crates/extra trucks rather than add; merge small volumes into the main mass. The mega-factory/power plant can be the one with four banded stacks on a solid base (ref05).

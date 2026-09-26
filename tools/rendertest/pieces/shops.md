@@ -374,3 +374,91 @@ one-bakery 167k (was 290k). 0 console errors on all 4 shots. one-diner 61 fps; t
 from other builders' Chromes (not a budget reading). Shots in `rounds/shops/r1-builder`.
 **Next:** the diner's 3D star reads as a little figure at iso angles — try a thicker star or a milkshake icon. Bring the cinema and
 mall onto roofProps + namePanel. GF glass under deep awnings renders near-slate; consider lighter frames on some shops.
+
+## 2026-09-26 — wave 4, round 1 (builder)
+**Critic w3r1:** picked the ref. Roofs were big blank pale slabs with 1-2 props, facades were uniform grids of small windows, lots were plain,
+and the red/green side faces were flat. This is a LONE critic contradicting the w2 "3-4 roof props" consensus, so the aim is the midpoint: 5-6
+legible COMPOSITE props, not r7's field of little boxes.
+**Changed** (src/models/commercial.js only; no palette keys):
+- Composite roof props in `RPROP`: `plant` (a raised plant room with a brand band, door, louvres, and AC + vent on top, 16×12), `hvac` (a
+  condenser + AC + pipe run on a pad), `stock` (a pallet of boxes and crates), `cafe` (a tiled roof café with 2 parasol tables and a planter
+  bench), `dish`, and `frame` (a sign frame with a logo board). They take the shop's colours via `roofProps(..., opt)`. Each catalog shop and
+  `ROOFKITS` now carries 5-7 of these; the prop gap is 2. The toy blocks moved to the back corner.
+- Upper floors: new `WSTYLE` entries `big` (wide picture windows on the first floor) and `arch` (round-headed, on pizza), plus a `mix` rhythm
+  of narrow/wide/narrow windows (toys, candy, sports). Pilasters now take the belt-course colour unless it is white/cream.
+- Lots: new `tree` (a kerb planter with a small cuboid tree) and `pots` SLOT items, 1 per shop.
+- Bakery shopfront: WHITE frames + a red kick plate. Dark comFrame frames under the deep red awning read as a slate void. Zoned C: frames
+  are white unless darkSign is set (reuses that rng, so nothing shifts).
+- Diner: a 3D milkshake (`shake3d`) replaces the star, which read as a running figure. F5B `N` is now 7 wide with a 3-row diagonal
+  (DINER read as DIHER).
+**Measured:** 0 console errors on gal-shops-1/2, one-bakery and one-diner. Frame tris: gal-shops-1 520k, gal-shops-2 534k, one-* 316-321k.
+fps 6-41 while the machine was loaded (buildMs 50-68 s), so this is not a budget reading. Shots are in `rounds/shops/w4r1-it`.
+**Next:** the arcade and pets roofs are still the emptiest. Try light frames on the cafe shopfront, which is still dark under its teal
+awnings. The grey rock beside one-diner is veg/terrain filler, not ours.
+
+## 2026-09-26 — wave 4, round 2 (builder)
+**Critics w3r1 + w4r1 agree:** upper floors were flat repeated grids of small pale windows on big washed-out pastel walls; glass had no
+highlights; lots were plain and the cream paving blended into the walls. (Scale mismatch in the w4r1 pair was the harness, not us.)
+**Changed** (src/models/commercial.js only; no palette keys):
+- **Crisp windows** (`shop()` → `uo`): every upper window now has a DARK frame + reveal (default `C.comFrame`; `S.upFrame` still
+  overrides, e.g. books/arcade) set in a LIGHT surround: a proud sill + head in the cornice colour (`S.sill`, `S.lintel`). All nine
+  `upFrame: C.signWhite` overrides were removed, and the cafe's teal frames too. They read as sharp dark-glass rectangles, like ref05's terraces.
+- **Glass glint** (`upWin`): a 4-voxel diagonal dtGlassHi streak + a short parallel one on each sash (was 2 stray dots). `o.bar` sets the bar colour.
+- **Walls**: pastel uppers (pBlue/pYellow/pPink/mint/resTerracotta) replaced with white / resButter / cream / sage / **brickDark**
+  (`C.brick` and resTerracotta render tomato-red / salmon; brickDark still reads as a warm red brick in-game). GF brand colours are unchanged.
+- **Per-floor treatment**: new `S.floorO[k-1]` merges window options per storey (front + back; sides only take shutters). Bakery: flower boxes
+  on the big first-floor windows, green shutters above. Cafe: brand awnings on floor 1, boxes on floor 2. Pizza: red geranium boxes under the arches.
+  Flower boxes are now deep-green `leafDark` with a bloom every 2 (the lime `vegBush` row read as a neon bar).
+- **Paving**: shop lots are mid-grey setts (`SETT` = C.stone) with light joints (`SETT_J` = C.concrete); the sidewalk band under the
+  awnings is lotPave. Bakery lost its `walk` override. SCOOPS/candy keep their pink walks.
+- A-board signs were added to the bakery / pets / books / music / sports aprons (a small step toward the "busier lots" note; 1 item each).
+**Measured:** all modules parse. gal-shops-1 523k tris (base 520k), gal-shops-2 535k, one-bakery 322k, one-diner 318k. 0 console errors on all 4.
+fps 17-61 under load (load avg ~11 from other Chromes), so not a budget reading. Shots are in `rounds/shops/w4r2-builder` (base in `w4r2-base`).
+Preview tool: `scratchpad/sw5/iso5.mjs` (the old iso.mjs, with winCool mapped to in-game azure): `node iso5.mjs out.png bakery:0:2 cafe:1:2 --k 3`.
+**Next:** the pet shop and sports uppers are still the plainest (one style, no floor treatment), so give them floorO. The lots could take one more
+distinct prop (parasol table) on the widest aprons. Check the zoned C growth in a city view with the dark frames.
+
+### Coordinator note (2026-09-26 17:20, wave 4) — three critics agree: upper-floor window grids
+w3r1, w4r1, w4r2 all name the same thing: repetitive grids of identical blue windows on flat pale upper floors. Look at ref05's supermarket, fast-food and market row: they are mostly LOW retail boxes (1 tall storey, sometimes 2) whose whole street face is full-height glazing with fine mullions, under a striped/solid awning, with a rooftop terrace or plant clutter — not flats-over-a-shop. So: drop or shorten generic upper floors on most shops (keep a 2nd storey only where it has its own character: terrace, balcony, big display window, sign band), make the ground floor full-height glass with thin mullions, and scale signage to ~1/4 storey letters on a crisp panel (w4r2 found ours "oversized, chunky"). Keep the rooftop-prop fix from w3r1 and the legibility that earlier critics praised.
+
+## 2026-09-26 — wave 4, round 3 (builder)
+**Critics w3r1 + w4r1 + w4r2 + coordinator 17:20 agree:** generic upper floors (grids of blue windows on pale walls); w4r2 also said the
+signs were oversized/chunky and the roofs were noisy clumps (flowers, cubes, AC).
+**Changed** (src/models/commercial.js only; no palette keys):
+- **Low retail boxes.** Most shops are now ONE tall glazed storey (`floors: 1`, `tall` 4-8): toys, scoops, cafe, pets, roses, arcade, candy,
+  sports, barber. When `floors === 1`, bays default to bayW 20 / pierW 2 / pane 5, which gives full-height glass with fine mullions. Storeys kept
+  only where they add character: bakery 2 (big windows + flower boxes), pizza 2 (arches), music 2 (ribbon), books 3 (was 4), and burger (set-back pavilion).
+  Zoned C is now L1 = 1 storey (tall 6), L2 = 2, L3 = 3 (was 2/3/4).
+- New upper style `'curtain'`: a full-glass pavilion storey (wide bays, dark fine mullions) used by the burger upper box (Mac Auto).
+- **Cafe:** a Mac Auto roof terrace (`roofTerrace` [3,15,59,31], sand deck, tables with wood chairs, no parasols) plus `glassRail` on the parapet.
+- **Fine sign font** `F5T` (4×5, 1-voxel strokes, flush on the panel) replaces F5B in `namePanel`. The panels are about 1/3 narrower. N is 5 wide
+  because the 4-wide N read as DIHER. F5B is kept in the file, unused.
+- **Tidy roofs.** Roof cafés have NO parasols: small striped r4 domes seen from above read as the "flowers" in w4r2. They now have 3 plain tables,
+  one bloom colour, and no corner pots. `stock`/`garden`/`dish` were removed from almost every roofKit and from ROOFKITS, leaving 4 neutral props + the icon.
+- The diner is tall 6 (more glass under the red band).
+**Measured:** 0 console errors on all 4 shots. gal-shops-1 548k tris, gal-shops-2 565k, one-bakery 346k, one-diner 343k. fps 19-61 under load (not a
+budget reading). Shots are in `rounds/shops/w4r3-builder`. The preview tool is `scratchpad/sw6/iso5.mjs`.
+**Next:** if a critic calls the 1-storey roofs "empty slabs" again, add a light deck-tile band or a second neutral row (sky + ac). Do NOT bring back
+coloured clutter. The pizza pediment's inner face reads as a red staircase from behind. Candy/barber gables on 1-storey boxes are barely visible.
+
+## 2026-09-26 — wave 4, round 4 (builder)
+**Critics w4r2 + w4r3 (+ coordinator 21:15) agree:** the signs were chunky, low-res pixel lettering. w4r3 also named the same grey AC/vent
+clutter on every roof, the missing thin white trim bands and red/white striped canopies, and a diner "smoke blob". That blob is the grey terrain
+rock cluster behind one-diner (ground/veg filler, not ours; also seen in w4r1).
+**Changed** (src/models/commercial.js only; no palette keys):
+- **Fine sign part (res 16).** `grid()` now carries a sparse `__fine` grid (`fineGrid`, `fineFace`). `done()` attaches it as `model.parts`, and it
+  works alongside vehicles.js's lot-part accessor. It is stored unflipped. The exported `BUILDERS` are wrapped (`flipFine`) so the catalog path
+  flips the part with the base; zoned `commercial()` is never flipped. `namePanel` now draws the F7 5×7 font with 1-FINE-voxel strokes, flush in a
+  1-fine board with a proud 1-fine frame. It is 13 fine rows (6.5 shop rows, was 9) and about half as wide. The F7 N got a full diagonal (it read
+  DIHER). Burger/diner roof boxes use it too (out 0 puts the board on fine layer 1).
+- **Distinct roofs:** there is now one themed piece per shop plus 1-2 small units. The plant rooms and HVAC pads are gone from every catalog kit and from ROOFKITS.
+  New RPROP entries: `flue`, `dogrun`, `play`, `court`, `herbs`. Bakery gets a Mac Auto roof terrace (red/white tables) + flue; SCOOPS gets a pink terrace + cone;
+  pizza gets herb beds + garden; toys a play mat + ABC; pets a dog run; sports a court; grocery 2 solar arrays; arcade frame + solar + dish; books a garden + tank.
+  The roof-café planter changed from lime vegBush to leafMid (it read as a neon bar).
+- **Trim + canopies:** a 1-row white pinstripe runs along the foot of every dark or saturated fascia band (`S.pin`). Bakery, SCOOPS, pizza, candy and the
+  diner have red/brand + white striped awnings (`awnStripe:'force'`, 4-wide stripes, `S.awnStripeW`); the rest stay solid.
+- Diner: the milkshake is now a tapered red soda cup with a white band, flat lid and striped straw (no cream dome). Pizza lost its pediment (the back read as a staircase).
+**Measured:** models `_selfTest` ok; all modules parse. gal-shops-1 487k tris (w4r3 548k), gal-shops-2 503k, one-bakery 304k, one-diner 301k.
+0 console errors on all 4 shots. fps 35-48 under load. Shots are in `rounds/shops/w4r4-builder`. The fine part adds about 1-3k blocks per shop.
+**Next:** the cinema and mall still use the res-8 `text()` names, so move them to `namePanel`. The pizza gardenL reads as one green lump, so try herbs x2.
+If a critic wants still smaller/lighter letters, the fine font could go mixed-case. Coordinator: the rock pile behind one-diner belongs to ground/veg scatter.

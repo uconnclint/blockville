@@ -257,7 +257,10 @@ const PALETTE = {
   walk: 0xb8b4c0,
   kerbFace: 0xaaa7af,
   paintWhite: 0xffffff,
-  paintYellow: 0xffe03a,
+  // Wave 4 r1: 0xffe03a -> 0xdcd62a. ref05's kerb-foot line measures a lime-
+  // leaning yellow (G >= R, ~(150-215,165-220,26-45)); ours rendered a warm
+  // lemon (248,213,50) that read as "a flat painted line". Now (211,216,45).
+  paintYellow: 0xdcd62a,
 };
 // Arc length of a tile's centreline: 8 for a straight / stub, a quarter circle
 // of radius 4 for a corner. Indexed by mask.
@@ -322,6 +325,7 @@ uniform vec3  uBvAsphalt;
 uniform vec3  uBvConcrete;
 uniform vec3  uBvWalk;
 uniform vec3  uBvKerbFace;
+uniform vec3  uBvFaceFill;
 uniform vec3  uBvPaintW;
 uniform vec3  uBvPaintY;
 uniform sampler2D uBvTileTex;
@@ -849,6 +853,24 @@ if ( bvLipT > 0.001 ) {
 // lighting.js's CSM splice (applied after ours) declares csmLastShadow;
 // guarded so an unpatched material still compiles.
 const GLSL_WALK_SHADOW = /* glsl */`
+// Wave 4 r1: KERB FACE FILL. The w3 critic: "barely any kerb step ... the
+// blocks look printed onto the road". Measured: every camera-facing kerb face
+// rendered near-black navy (44 -> 9, even with a WHITE albedo only 75 -> 31)
+// -- it turns away from the key, and this material has none of the sky fill /
+// sun bounce the voxel materials give their shade faces, so the step merged
+// into the asphalt. Faces (kinds 2, 3) now get a neutral fill, strongest on
+// the side turned away from the key, so the face reads as a mid-grey band
+// under the light top (ref05 / ref04: the dark side is darker, never black).
+#if NUM_DIR_LIGHTS > 0
+if ( vBvKind > 1.5 && vBvKind < 3.5 ) {
+  float bvNL = dot( normal, directionalLights[ 0 ].direction );
+  float bvAway = 1.0 - smoothstep( -0.2, 0.6, bvNL );
+  // away-side weight capped at 0.8 (was 1.0): the key-side face stays the
+  // brighter one (left ~0.75 x top, right ~0.6 x top), as ART-DIRECTION asks
+  reflectedLight.indirectDiffuse += diffuseColor.rgb * uBvFaceFill
+    * mix( 0.35, 0.8, bvAway ) * ( 1.0 - 0.85 * uBvNight );
+}
+#endif
 #ifdef CSM_MAX_TAPS
 // Round 14: asphalt too (uBvRoadSh). The r13 critic: "soft, dark smudges of
 // shading on the asphalt next to vehicles and lamp posts, a little muddy
@@ -948,6 +970,8 @@ export class Roads {
       uBvConcrete: { value: new THREE.Vector3() },
       uBvWalk: { value: new THREE.Vector3() },
       uBvKerbFace: { value: new THREE.Vector3() },
+      // Wave 4 r1: extra fill on kerb faces (see GLSL_WALK_SHADOW)
+      uBvFaceFill: { value: new THREE.Vector3(0.5, 0.5, 0.5) },
       uBvPaintW: { value: new THREE.Vector3() },
       uBvPaintY: { value: new THREE.Vector3() },
     };
@@ -1009,7 +1033,7 @@ export class Roads {
         .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n' + GLSL_WALK_SHADOW);
       mat.userData.shader = shader;
     };
-    mat.customProgramCacheKey = () => 'bv-roads-v23';
+    mat.customProgramCacheKey = () => 'bv-roads-v25';
     return mat;
   }
 

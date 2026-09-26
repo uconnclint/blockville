@@ -356,7 +356,14 @@ function defaultParams() {
     // 0.188), 16-px local contrast 0.140 -> 0.164 (ref 0.182); no rims on the A/B.
     crisp: { enabled: true, fine: 1.1, mid: 0.45, sigmaFine: 1.0, sigmaMid: 4.0,
       coreLo: 0.01, coreHi: 0.035, limitFine: 0.12, limitMid: 0.08, close: 0.55, closeLo: 5, closeHi: 12,
-      distLo: 50, distHi: 85 },
+      distLo: 50, distHi: 85,
+      // w4r1 — HALO CLAMP on the fine band: the sharpened luma may not leave the
+      // pixel's own neighbourhood range (8 taps `step` CSS px away) by more than
+      // `overshoot` x that range. An edge still steepens to ~1 CSS px (the
+      // acutance), but the bright/dark rim the USM draws BESIDE it (white lines
+      // on parapets, dark lines round props at overview) is gone. The mid band
+      // (local contrast) keeps its own soft limit. overshoot < 0 = off.
+      clampStep: 1.0, overshoot: 0.12 },
     // Round 4: output-resolution luma unsharp mask (see OUTPUT_FRAG), halo-
     // clamped to each pixel's 3x3 range so flat faces and lawns are untouched.
     usm: { enabled: false, fine: 0.6, edge: 0.5, radius: 2.5, overshoot: 0.15, coreLo: 0.05, coreHi: 0.14, noSS: 0.4, farLo: 2.0, farHi: 4.5 },
@@ -396,6 +403,11 @@ function defaultParams() {
     // coordinator 22:15: OFF. r6 (the only post win) had no ink; surface r6/r12, light r8 and
     // post r9/r11 critics all lost rounds to dark silhouette halos from this pass.
     edge: { enabled: false, strength: 0.5, minStep: 0.3, minPixels: 2, width: 1.5, slope: 4 },
+    // night w4r4: moonlit silhouette rim — a thin pale-blue line on the near
+    // side of every depth step at night (roof edges, towers against the next
+    // tower), so unlit masses separate. Scaled by the night factor (0 by day).
+    // strength = mix toward `color` (display sRGB) at the rim's core.
+    moonRim: { enabled: true, strength: 0.55, width: 1.4, minStep: 0.35, slope: 3, color: [0.55, 0.66, 0.82] },
     // Round 9 — overview read (critic r8, 'iso' shot: "soft, slightly hazy,
     // pale is the dominant cast; buildings and lots don't stand out; ref05 has
     // crisp dark silhouette edges and much stronger local contrast"). A zoom
@@ -419,6 +431,29 @@ function defaultParams() {
       ground: { amount: 0.0, y0: 1.15, y1: 1.7, lo: 0.45, hi: 0.85, satLo: 0.3, satHi: 0.55 },
       // r12: off — the distance-gated crisp pass is the one overview sharpener.
       sharpen: { enabled: false, fine: 0.2, edge: 0.5, radius: 1.25, overshoot: 0.1, coreLo: 0.04, coreHi: 0.12 } },
+    // w4r2 — CITY-SCALE depth (critic w4r1: "flat and pastel, as if a milky
+    // layer sits over the frame; in the downtown cluster the shaded right
+    // faces, tower stripes, window recesses and the gaps between buildings all
+    // sit in one narrow mid-value band"). Same camDist gate as crisp: exactly 0
+    // below distLo (iso-close 36, one-* 22-45, and the faceratio.sh probe, so
+    // the close-zoom look and the measured 1 : 0.89 : 0.63 face ratio are
+    // untouched), full from distHi (iso-mid 85 and farther). At k = 1:
+    //   floor      x0.5 on the shade-floor lift (grade.floor.amount 0.18 ->
+    //              0.09). The lift's kernel peaks at display luma ~0.29, i.e.
+    //              crevices, recesses and dark-coloured shade faces, not a
+    //              white wall's shade side (~0.6), so this deepens the accents
+    //              without greying the right faces.
+    //   voxelKeep  voxel faces take this share of the contact + cavity SSAO
+    //              (0 closer in: surface r7's bakery halos). At iso-mid a voxel
+    //              is ~7 device px, so the AO sits IN ledges, under signs and at
+    //              tower feet rather than rimming them.
+    //   voxelCanyon / canyonIntensity: the broad skylight term. It was
+    //              0.18 x 0.1 = 1.8% on voxel faces (effectively off); here it
+    //              darkens the canyons between towers and each tower's foot.
+    // Measured same frame iso-mid (1920-wide equivalent): p25/p50 104/144 ->
+    // ~80/125 (ref05 68/140; ours has far less visible asphalt), share < 0.35
+    // .19 -> ~.30 (ref05 .33), 16-px local contrast .161 -> ~.185 (ref .182).
+    depth: { enabled: true, distLo: 50, distHi: 85, floor: 0.5, voxelKeep: 0.5, voxelCanyon: 1.0, canyonIntensity: 0.35 },
     // Debug / harness
     split: 0.0,           // 0 = full post, >0 = raw scene left of this uv.x
     debug: 'none',        // none | ao | bloom | coc | depth | normals | raw
@@ -1105,6 +1140,8 @@ uniform vec4  uAbove;      // r12 above-ground key: (on, world Y lo, world Y hi,
 uniform float uEdge;      // silhouette ink strength (0 = off)
 uniform float uEdgeThr;   // depth step (world units) where the ink starts
 uniform float uEdgeR;     // ink tap radius in internal texels (line width)
+uniform vec4  uMoonRim;   // night w4r4: (strength, tap radius [internal texels], depth step [world u], 0)
+uniform vec3  uMoonRimCol; // night w4r4: display-space colour the rim lifts toward
 uniform vec2  uDTexel;    // 1 / depth texture size
 uniform float uAspect2;
 uniform int   uDebug;     // 0 none, 1 ao, 2 bloom, 3 coc, 4 depth, 5 normals
@@ -1211,7 +1248,7 @@ float zAt(vec2 uv) { return linearDepth(texture2D(tDepth, uv).x, uNear, uFar); }
 // the taps come out NEARER) and convex box corners (residual ~R px of world
 // size, far under the threshold) all give zero, so there is no halo on the
 // ground behind, no line along a wall foot and no line down a tower corner.
-float inkK() {
+float inkK(float R, float thr) {
   float z0 = zAt(vUv);
   vec2 t = uDTexel;
   float zl = zAt(vUv - vec2(t.x, 0.0)), zr = zAt(vUv + vec2(t.x, 0.0));
@@ -1222,16 +1259,16 @@ float inkK() {
   float acc = 0.0;
   for (int i = 0; i < 8; i++) {
     float a = float(i) * 0.78539816;
-    vec2 o = vec2(cos(a), sin(a)) * uEdgeR;
+    vec2 o = vec2(cos(a), sin(a)) * R;
     float res = zAt(vUv + o * t) - (z0 + gx * o.x + gy * o.y);
-    acc += smoothstep(uEdgeThr, uEdgeThr * 2.5, res);
+    acc += smoothstep(thr, thr * 2.5, res);
   }
   if (acc <= 0.0) return 0.0;
   for (int i = 0; i < 8; i++) {
     float a = (float(i) + 0.5) * 0.78539816;
-    vec2 o = vec2(cos(a), sin(a)) * (uEdgeR * 0.5);
+    vec2 o = vec2(cos(a), sin(a)) * (R * 0.5);
     float res = zAt(vUv + o * t) - (z0 + gx * o.x + gy * o.y);
-    acc += smoothstep(uEdgeThr, uEdgeThr * 2.5, res);
+    acc += smoothstep(thr, thr * 2.5, res);
   }
   return smoothstep(0.0, 0.3, acc * 0.0625);
 }
@@ -1264,7 +1301,7 @@ void main() {
   if (uDebug == 1) { float ao = texture2D(tAO, vUv).r; gl_FragColor = vec4(srgbEncode(vec3(ao)), 1.0); return; }
   if (uDebug == 2) { gl_FragColor = vec4(srgbEncode(texture2D(tBloom, vUv).rgb * uBloom), 1.0); return; }
   if (uDebug == 3) { gl_FragColor = vec4(srgbEncode(vec3(texture2D(tDof, vUv).a)), 1.0); return; }
-  if (uDebug == 6) { gl_FragColor = vec4(vec3(1.0 - inkK()), 1.0); return; }
+  if (uDebug == 6) { gl_FragColor = vec4(vec3(1.0 - inkK(uEdgeR, uEdgeThr)), 1.0); return; }
   if (uDebug == 4) {
     float z = linearDepth(texture2D(tDepth, vUv).x, uNear, uFar);
     gl_FragColor = vec4(srgbEncode(vec3(1.0 - exp(-z * 0.004))), 1.0); return;
@@ -1287,6 +1324,10 @@ void main() {
       if (uDebug == 7) { gl_FragColor = vec4(clamp(wy * 0.25, 0.0, 1.0), fract(wy * 4.0), 0.0, 1.0); return; }
       aboveK = uAbove.x * smoothstep(uAbove.y, uAbove.z, wy);
     }
+    // veg w4: props rocks (scene alpha < -0.5) are knee-high neutral greys —
+    // not asphalt. Without this their low shelves / chips took the asphalt
+    // pull to ~#151617 and lost the floor lift (ref06 rock faces #8d/#72/#4d).
+    if (lit0.a < -0.5) aboveK = uAbove.x;
   }
 
   // ---- tonemap (scene-linear -> display-linear) -------------------------
@@ -1624,7 +1665,22 @@ void main() {
   // sub-pixel line rather than a stair-stepped one. Ratio-preserving multiply.
   // veg r14: props.js vegetation (scene alpha = uPropVegSsao 0.2) takes no
   // ink — ref06 canopies have clean edges (critic r13: "thin dark outline").
-  if (uEdge > 0.0) d *= 1.0 - uEdge * inkK() * smoothstep(0.04, 0.08, abs(lit0.a - 0.2));
+  if (uEdge > 0.0) d *= 1.0 - uEdge * inkK(uEdgeR, uEdgeThr) * smoothstep(0.04, 0.08, abs(lit0.a - 0.2));
+
+  // ---- NIGHT w4r4: moonlit silhouette rim ---------------------------------
+  // Critics w4r1..r3 (all three): at night unlit masses share one dark value,
+  // so one building no longer separates from the next or from the street;
+  // "edges should be crisp and light" (ref05 carries every mass with a light
+  // roof rim). The same depth-laplacian test as the ink finds the NEAR side of
+  // every real depth step (roof edge over the street, tower in front of the
+  // next, parapet over its deck) and lifts it toward a pale moon blue — a thin
+  // light line on the object's own rim, never a halo on what is behind it.
+  // Max-blend: lit windows / neon never dim. Vegetation (alpha 0.2) and water
+  // are spared. Day: uMoonRim.x = 0, the taps are skipped.
+  if (uMoonRim.x > 0.0) {
+    float mk = inkK(uMoonRim.y, uMoonRim.z) * smoothstep(0.04, 0.08, abs(lit0.a - 0.2)) * (1.0 - waterK);
+    if (mk > 0.0) d = max(d, mix(d, uMoonRimCol, uMoonRim.x * mk));
+  }
 
   // ---- vignette (off by default; kept for photo-mode) --------------------
   if (uVignette > 0.0) {
@@ -1910,6 +1966,7 @@ uniform sampler2D tBlurF;   // r11 crisp: luma blurred at sigmaFine (CSS res)
 uniform sampler2D tBlurM;   // r11 crisp: luma blurred at sigmaMid (half CSS res)
 uniform vec4 uCrisp;        // x fine amount, y mid amount, z limit fine, w limit mid
 uniform vec2 uCrispCore;    // coring: |band| under x untouched, full from y
+uniform vec2 uCrispClamp;   // w4r1: x tap distance (device px, 0 = off), y overshoot fraction of the local range
 ${COMMON}
 float crispBand(float x, float lim) {
   float a = abs(x);
@@ -2041,13 +2098,32 @@ void main() {
     float y0 = usmY(texture2D(tSrc, vUv).rgb);
     float yf = texture2D(tBlurF, vUv).r;
     float ym = texture2D(tBlurM, vUv).r;
-    float d = uCrisp.x * crispBand(y0 - yf, uCrisp.z) + uCrisp.y * crispBand(yf - ym, uCrisp.w);
+    float dF = uCrisp.x * crispBand(y0 - yf, uCrisp.z);
+    float dM = uCrisp.y * crispBand(yf - ym, uCrisp.w);
+    float d = dF + dM;
     float ye = usmY(e);
     // Headroom (as the USM above): a lit face approaches white but never
     // flat-clips; near-black asphalt cannot be crushed to 0.
     float room = d > 0.0 ? (1.0 - ye) : ye;
-    d = d * room / max(room + abs(d), 1e-4);
+    float hk = room / max(room + abs(d), 1e-4);
+    d *= hk;
     float yo = ye + d;
+    // w4r1 halo clamp (fine band only; see params.crisp.overshoot).
+    if (uCrispClamp.x > 0.0) {
+      vec2 o = uRcp * uCrispClamp.x;
+      float l1 = usmY(texture2D(tSrc, vUv + vec2( o.x, 0.0)).rgb), l2 = usmY(texture2D(tSrc, vUv + vec2(-o.x, 0.0)).rgb);
+      float l3 = usmY(texture2D(tSrc, vUv + vec2(0.0,  o.y)).rgb), l4 = usmY(texture2D(tSrc, vUv + vec2(0.0, -o.y)).rgb);
+      float l5 = usmY(texture2D(tSrc, vUv + o).rgb),               l6 = usmY(texture2D(tSrc, vUv - o).rgb);
+      float l7 = usmY(texture2D(tSrc, vUv + vec2(o.x, -o.y)).rgb), l8 = usmY(texture2D(tSrc, vUv + vec2(-o.x, o.y)).rgb);
+      float lmn = min(min(min(l1, l2), min(l3, l4)), min(min(l5, l6), min(min(l7, l8), y0)));
+      float lmx = max(max(max(l1, l2), max(l3, l4)), max(max(l5, l6), max(max(l7, l8), y0)));
+      float ov = uCrispClamp.y * (lmx - lmn);
+      // the detail pass may have moved e off y0: clamp the CHANGE, in e's frame
+      float dm = dM * hk;
+      float lo = ye + (lmn - ov - y0) + min(dm, 0.0);
+      float hi = ye + (lmx + ov - y0) + max(dm, 0.0);
+      yo = clamp(yo, min(lo, ye), max(hi, ye));
+    }
     vec3 c = ye > 0.03 ? e * (yo / ye) : e + (yo - ye);
     float cm = max(c.r, max(c.g, c.b));
     if (cm > 1.0) c = yo + (c - yo) * ((1.0 - yo) / max(cm - yo, 1e-4));
@@ -2248,6 +2324,7 @@ export class PostFX {
       uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0),
       uOrthoBox: U(new THREE.Vector4(-1, 1, -1, 1)), uWorldRowY: U(new THREE.Vector4(0, 1, 0, 0)),
       uEdge: U(0), uEdgeThr: U(0.4), uEdgeR: U(2), uDTexel: U(new THREE.Vector2(1, 1)),
+      uMoonRim: U(new THREE.Vector4(0, 2, 0.4, 0)), uMoonRimCol: U(new THREE.Vector3(0.55, 0.66, 0.82)),
       uNear: U(1), uFar: U(2000),
     });
 
@@ -2270,7 +2347,7 @@ export class PostFX {
       uSharpen: U(0.4), uSplit: U(0.0), uUsm: U(new THREE.Vector4()), uUsmCore: U(new THREE.Vector2(0.05, 0.14)),
       uToe: U(new THREE.Vector2(0, 0.14)),
       uDetail: U(new THREE.Vector4()), uDetailSim: U(new THREE.Vector4(0.07, 0.2, 0.2, 0.5)),
-      tBlurF: U(null), tBlurM: U(null), uCrisp: U(new THREE.Vector4()), uCrispCore: U(new THREE.Vector2(0.006, 0.03)),
+      tBlurF: U(null), tBlurM: U(null), uCrisp: U(new THREE.Vector4()), uCrispCore: U(new THREE.Vector2(0.006, 0.03)), uCrispClamp: U(new THREE.Vector2(0, 0)),
     });
 
     this.mLumaBlur = this._mat(LUMA_BLUR_FRAG, {
@@ -2571,6 +2648,13 @@ export class PostFX {
 
     const depthTex = this.rtScene.depthTexture;
 
+    // w4r2 city-scale depth factor (params.depth): 0 at close zoom, 1 from
+    // depth.distHi out. Read by the SSAO / LIT passes and the shade floor.
+    const Dp = P.depth || {};
+    const dk = Dp.enabled === false ? 0
+      : THREE.MathUtils.smoothstep((ctx && ctx.camDist) || 205, Dp.distLo ?? 50, Math.max((Dp.distLo ?? 50) + 1, Dp.distHi ?? 85));
+    const dLerp = (a, b) => (b == null ? a : a + (b - a) * dk);
+
     // ---- 2. SSAO ---------------------------------------------------------
     const S = P.ssao;
     const aoOn = q.ao && S.enabled !== false && (S.intensity > 0 || S.contactIntensity > 0);
@@ -2585,7 +2669,7 @@ export class PostFX {
       u.uRadius.value = S.radius;
       u.uContactRadius.value = S.contactRadius;
       u.uCanyonRadius.value = S.canyonRadius || 6.0;
-      u.uCanyonIntensity.value = S.canyonIntensity || 0;
+      u.uCanyonIntensity.value = dLerp(S.canyonIntensity || 0, Dp.canyonIntensity);
       u.uBias.value = S.bias;
       u.uIntensity.value = S.intensity;
       u.uContactIntensity.value = S.contactIntensity;
@@ -2628,8 +2712,8 @@ export class PostFX {
       const t = P.ssao.tint;
       u.uAOTint.value.set(t[0], t[1], t[2]);
       u.uAOChroma.value = P.ssao.chroma > 0 ? P.ssao.chroma : 0;
-      u.uVoxelKeep.value = clamp(P.ssao.voxelKeep || 0, 0, 1);
-      u.uVoxelCanyon.value = clamp(P.ssao.voxelCanyon || 0, 0, 1);
+      u.uVoxelKeep.value = clamp(dLerp(P.ssao.voxelKeep || 0, Dp.voxelKeep), 0, 1);
+      u.uVoxelCanyon.value = clamp(dLerp(P.ssao.voxelCanyon || 0, Dp.voxelCanyon), 0, 1);
       this._blit(this.mLit, this.rtLit);
     }
 
@@ -2764,6 +2848,7 @@ export class PostFX {
       {
         const neK = (ctx && typeof ctx.nightEff === 'number') ? ctx.nightEff : 0;
         u.uNightK.value = THREE.MathUtils.smoothstep(neK, 0.35, 0.7);
+        this._nightEffK = u.uNightK.value;
       }
       // r9 overview factor: 1 while a building voxel (0.25 u) is under
       // overview.lo CSS px (the default 'iso' overview), 0 from overview.hi up
@@ -2782,7 +2867,8 @@ export class PostFX {
         const nu0 = clamp(F.neutral != null ? F.neutral : 0.35, 0, 1);
         const nu = THREE.MathUtils.lerp(nu0, clamp(Ov.floorNeutral ?? nu0, 0, 1), ov);
         const ym = 1 / (n + 1);
-        const fAmt = clamp(F.amount || 0, 0, 0.4) * (1 - ov * (1 - clamp(Ov.floor ?? 1, 0, 1)));
+        const fAmt = clamp(F.amount || 0, 0, 0.4) * (1 - ov * (1 - clamp(Ov.floor ?? 1, 0, 1)))
+          * dLerp(1, clamp(Dp.floor ?? 1, 0, 1));
         u.uFloorGreen.value = clamp(F.green != null ? F.green : (F.amount || 0), 0, 0.4);
         u.uFloor.value.set(fAmt, nu, n, 1 / (ym * Math.pow(1 - ym, n)));
       }
@@ -2821,6 +2907,17 @@ export class PostFX {
       u.uEdgeThr.value = Math.max(E.minStep > 0 ? E.minStep : 0.35,
         wpp * Math.max(E.minPixels > 0 ? E.minPixels : 2, inkR * inkSlope));
       u.uDTexel.value.set(1 / this._iw, 1 / this._ih);
+      // night w4r4: moonlit silhouette rim (see the grade shader). Width in CSS
+      // px like the ink; the depth step never under ~2 internal px of world.
+      {
+        const MR = P.moonRim || {};
+        const on = MR.enabled !== false && P.debug === 'none';
+        const k = on ? (this._nightEffK || 0) * clamp(MR.strength || 0, 0, 1) : 0;
+        const R = Math.max(1, (MR.width > 0 ? MR.width : 1.2) * (this._pr || 1) * (this._ss || 1));
+        u.uMoonRim.value.set(k, R, Math.max(MR.minStep > 0 ? MR.minStep : 0.35, wpp * Math.max(2, R * (MR.slope > 0 ? MR.slope : 3))), 0);
+        const col = MR.color || [0.55, 0.66, 0.82];
+        u.uMoonRimCol.value.set(col[0], col[1], col[2]);
+      }
       u.uNear.value = near;
       u.uFar.value = far;
       u.uDebug.value = DEBUG_ID[P.debug] || 0;
@@ -2934,6 +3031,7 @@ export class PostFX {
       u.tBlurM.value = crispK > 0 ? this.rtCrM0.texture : null;
       u.uCrisp.value.set(crispK * (Cr.fine || 0), crispK * (Cr.mid || 0), Cr.limitFine ?? 0.1, Cr.limitMid ?? 0.06);
       u.uCrispCore.value.set(Cr.coreLo ?? 0.006, Math.max((Cr.coreLo ?? 0.006) + 1e-4, Cr.coreHi ?? 0.03));
+      u.uCrispClamp.value.set(crispK > 0 && (Cr.overshoot ?? -1) >= 0 ? Math.max(1, (Cr.clampStep || 1) * (this._pr || 1)) : 0, Math.max(0, Cr.overshoot ?? 0));
       u.tSrc.value = final.texture;
       u.tRaw.value = this.rtScene.texture;
       u.uRcp.value.set(1 / this._w, 1 / this._h);

@@ -41,7 +41,19 @@ import { C, grid, mulberry32 } from './core.js';
 const R = 4;                       // birds, smoke
 const RB = 5;                      // boats (r8: x1.2 — a sailboat is ~6.4 units long, a ferry ~7.6)
 const RV = 18;                     // road vehicles (r7: 12 -> 15, x0.8; r9: 15 -> 17, x0.88; r10: 17 -> 18 + narrower, lower bodies — see Cars)
-const RP = 16;                     // people — r13: 16 (0.81 tall; the r12 critic: "1 to 2 px specks" at iso-close).
+// w4r2 (the w4r1 critic: "at the default iso-mid zoom our cars are too small
+// ... 1-2 voxel-tall coloured lozenges ... ref05's vehicles are about 40 %
+// larger relative to lane width"; the coordinator measured ref05: cars
+// ~0.28-0.3 tile, vans / trucks 0.35-0.5 tile). Vehicles keep their RV voxel
+// ART but are OUTPUT at a coarser res: RT for the traffic, the kerbside bays
+// and the terrain car parks (x1.5: sedan 2.2 long x 1.0 wide, bus 3.5, fire
+// engine 3.7, semi 4.7 = 0.27 / 0.44 / 0.58 tile); RL for the cars stamped
+// into the buildings' own lots (x1.2 — their stalls are the building
+// pieces': 1 x 2.25 units, and a compact cousin <= 33 voxels = 2.2 fits).
+const RT = 12;
+const RL = 15;
+const RP = 13;                     // w4r2: people 13 -> 1.0 tall (was 16 = 0.81; "invisible at iso-mid"), kids 0.62
+                                   // (r13: 16 (0.81 tall; the r12 critic: "1 to 2 px specks" at iso-close).
                                    // was (r11: res 18 = the lot figures' res, 13 tall = 0.72: the r10 critic read 0.875 as "tall sticks, as tall as a car is long")
 const RD = 12;                     // dogs
 
@@ -250,7 +262,10 @@ export function carModel(variant, parked) {
   const vi = variant | 0;
   const k = ((vi % CAR_KINDS) + CAR_KINDS) % CAR_KINDS;
   const g = vehicleGrid(vi);
-  return parked ? inBay(g, LONG_KINDS.includes(k) ? 2 : 1) : withBlob(g.done());
+  if (parked) return inBay(g, LONG_KINDS.includes(k) ? 2 : 1);
+  const m = g.done();
+  m.res = RT;                                    // w4r2: traffic scale (see RT)
+  return withBlob(m);
 }
 
 // r12 contact shadow (engine.js makeDynamic draws model.blobs): the r11
@@ -286,7 +301,7 @@ function small(m) { m.voxOpts = VOX_SMALL; return m; }
 // world size as the traffic, lights off.
 export function carModelAt(variant, res) {
   const m = carModel(variant);
-  const r = res > 0 ? res : RV, k = RV / r;
+  const r = res > 0 ? res : RT, k = (m.res || RT) / r;
   if (Math.abs(k - 1) < 1e-6) return m;
   const src = new Map();
   for (const [x, y, z, c] of m.blocks) src.set(x + ',' + y + ',' + z, c);
@@ -314,6 +329,11 @@ function vehicleGrid(variant, o = {}) {
   const col = () => (o.paint != null ? o.paint : pick(CAR_COLS()));
   const cpt = !!o.compact;
   const seed = ((Math.floor(vi / CAR_KINDS) % 6) + 6) % 6;   // r11: livery slot (fleet vans / trucks)
+  // w4: colour slots 6-9 of the box truck are ARTICULATED SEMIS (tractor +
+  // trailer; the w3 critic wanted ref05's semis at the depots). Compact
+  // (lot-stall) cousins stay the short delivery truck.
+  const semi = k === 8 && !cpt && (((Math.floor(vi / CAR_KINDS) % 10) + 10) % 10) >= 6;
+  if (semi) return skyGlass(flare(wrapCorners(semiTruck(seed))));
   return skyGlass(flare(wrapCorners(vehicleKind(k, pick, col, rng, cpt, o, seed))));
 }
 
@@ -399,13 +419,15 @@ function racing(g, rng) {
 
 // Copy a vehicle grid into a bay grid: vehicle raised one voxel onto the paint
 // layer, centred along the bay, 1 voxel off the kerb (+X); outline paint.
-// bays stay in WORLD units whatever RV is: 1.2 / 2.4 half-length, 0.93 deep
-const BAY_HALF1 = Math.round(1.2 * RV), BAY_HALF2 = Math.round(2.4 * RV), BAY_D = Math.round(0.93 * RV);
+// bays stay in WORLD units: w4r2 1.3 / 2.6 half-length, 1.33 deep (the RT cars
+// are 1.0-1.1 wide x <= 2.25 long; long kinds <= 4.7 in a double bay).
+// life.js BAY / LANE_BAY / PARK_SINK follow these.
+const BAY_HALF1 = Math.round(1.3 * RT), BAY_HALF2 = Math.round(2.6 * RT), BAY_D = 16;
 function inBay(src, bays) {
   const half = bays === 2 ? BAY_HALF2 : BAY_HALF1;
   const L = half * 2, D = BAY_D;
   const W = Math.max(D + 1, src.sx + 1);
-  const g = grid(W, src.sy + 1, L, RV);
+  const g = grid(W, src.sy + 1, L, RT);
   const ox = Math.min(W - 1 - src.sx, W - Math.round((D + src.sx) / 2)), oz = half - Math.round(src.sz / 2);
   for (const [key, c] of src.map) {
     const p = key.split(',');
@@ -414,7 +436,7 @@ function inBay(src, bays) {
   for (let x = W - D; x < W; x++) { g.set(x, 0, 0, C.signWhite); g.set(x, 0, L - 1, C.signWhite); }
   for (let z = 0; z < L; z++) g.set(W - D, 0, z, C.signWhite);
   const m = g.done();
-  m.blobs = [[(ox + src.sx / 2 - W / 2) / RV, (oz + src.sz / 2 - L / 2) / RV, src.sx / RV, src.sz / RV, 1 / RV, BLOB_PARK]];
+  m.blobs = [[(ox + src.sx / 2 - W / 2) / RT, (oz + src.sz / 2 - L / 2) / RT, src.sx / RT, src.sz / RT, 1 / RT, BLOB_PARK]];
   return small(m);
 }
 
@@ -433,11 +455,11 @@ function inBay(src, bays) {
 // shows. The car sits squarely in its bay one voxel off the kerb, lights off.
 const DIR4 = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 export function parkedRowModel(items) {
-  const S = 8 * RV, g = grid(S, 24, S, RV), blobs = [];
+  const S = 8 * RT, g = grid(S, 24, S, RT), blobs = [];
   const put = (u, y, v, c) => g.set(Math.floor(u + S / 2), y, Math.floor(v + S / 2), c);
   for (const it of items || []) {
     const [hx, hz] = DIR4[(it.h | 0) & 3], [sx, sz] = DIR4[(it.s | 0) & 3];
-    const kx = it.kx * RV, kz = it.kz * RV;
+    const kx = it.kx * RT, kz = it.kz * RT;
     const half = it.bays === 2 ? BAY_HALF2 : BAY_HALF1, D = BAY_D;
     for (let a = -half; a < half; a++) {
       for (let d = 0; d < D; d++) {
@@ -453,7 +475,7 @@ export function parkedRowModel(items) {
       put(cx + f * hx + r * sx, y + 1, cz + f * hz + r * sz, c === C.lamp ? CHROME : c);
     }
     const along = hx !== 0;   // heading along X: the car's length lies on X
-    blobs.push([cx / RV, cz / RV, (along ? m.sz : m.sx) / RV, (along ? m.sx : m.sz) / RV, 1 / RV, BLOB_PARK]);
+    blobs.push([cx / RT, cz / RT, (along ? m.sz : m.sx) / RT, (along ? m.sx : m.sz) / RT, 1 / RT, BLOB_PARK]);
   }
   const out = g.done();
   out.blobs = blobs;
@@ -467,7 +489,7 @@ export function parkedRowModel(items) {
 // Everyday kinds in the lot palette plus the odd taxi / van, lights off.
 // Authored at res 15 (the res-12 vehicles × 0.8): the r4 critic wanted lot
 // cars ~15-20 % smaller against the 1.5-unit stalls.
-const LOT_RES = RV;
+const LOT_RES = RT;   // w4r2: terrain stalls are 1.5 x ~4 units, the RT cars fit
 const LOT_MIX = [0, 5, 13, 10, 0, 13, 5, 9, 11, 0, 5, 13, 1];
 export function lotCarsModel(items) {
   let ext = 1;
@@ -845,6 +867,48 @@ function boxTruck(seed, cpt) {
   return g;
 }
 
+// w4: articulated semi — a cab-over tractor (chrome grille, sleeper roof
+// fairing, visible fifth-wheel gap over black chassis rails) pulling a long
+// box trailer in the livery's colours, tandem axles at both ends. 11 wide ×
+// 16 tall × 56 long = 0.6 × 0.9 × 3.1 units (two kerbside bays).
+function semiTruck(seed) {
+  const W = SW_, L = 56, H = 16, xr = W - 1, zc = 11, zt = 14;
+  const [cab, box, accent] = BOX_LIV()[seed % 6];
+  const tcol = cab === WHITE && box === WHITE ? C.vehRed : cab;   // the tractor is never white-on-white
+  const g = grid(W, H, L, RV);
+  tray(g, W, 2, L - 3);
+  // tractor
+  g.box(0, 1, 0, xr, 10, zc - 1, tcol);
+  roundCorners(g, W, 0, zc - 1, 1, 10);
+  for (let x = 0; x < W; x++) g.del(x, 10, 0);
+  g.box(1, 11, 2, xr - 1, 12, zc - 2, tcol);                    // roof fairing over the sleeper
+  g.box(1, 6, 0, xr - 1, 9, 0, GLASS);
+  nose(g, W, 2, 0, { grille: CHROME });
+  for (const x of [0, xr]) { g.box(x, 6, 2, x, 9, 5, GLASS); g.box(x, 2, 7, x, 2, 9, CHROME); } // side glass + step
+  for (const x of [1, xr - 1]) g.box(x, 3, zc - 1, x, 12, zc - 1, C.stone);          // exhaust stacks
+  g.box(1, 1, zc, xr - 1, 2, zt, DARK);                           // chassis + fifth wheel gap
+  g.box(2, 3, zc, xr - 2, 3, zt - 1, DARK);
+  // trailer
+  const bt = H - 2;
+  g.box(0, 3, zt, xr, bt, L - 1, box);
+  for (const x of [0, xr]) {
+    g.box(x, bt, zt, x, bt, L - 1, box === WHITE ? C.concrete : WHITE);   // top rails
+    g.box(x, 4, zt + 2, x, 4, L - 3, accent);                             // band
+    const mz = Math.round((zt + L) / 2), hw = 9;
+    g.box(x, 6, mz - hw, x, bt - 2, mz + hw, accent);                     // logo panel
+    g.box(x, 7, mz - hw + 2, x, bt - 3, mz + hw - 2, WHITE);
+    g.box(x, 8, mz - 3, x, bt - 4, mz + 3, accent);
+    g.box(x, 3, zt, x, bt, zt, CHROME); g.box(x, 3, L - 1, x, bt, L - 1, CHROME);
+    g.box(x, 3, zt + 1, x, 3, L - 2, DARK);
+  }
+  for (let z = zt + 5; z < L - 2; z += 7) g.box(1, bt, z, xr - 1, bt, z, box === WHITE ? C.stone : C.concrete);
+  for (let y = 4; y < bt; y += 2) g.box(1, y, L - 1, xr - 1, y, L - 1, C.stone);
+  tail(g, W, 2, L - 1, 2, DARK);
+  mirrors(g, W, 7, 1, DARK);
+  wheels(g, W, [5, zc + 2, L - 13, L - 7], 5);
+  return g;
+}
+
 // City bus / school bus. City: body colour lower, dark window band with
 // pillars, white upper band + roof, roof A/C pod, lit destination sign,
 // kerb-side doors. School: all yellow, black rub rails, a short bonnet,
@@ -968,8 +1032,8 @@ export function stampLotCar(g, x0, y0, z0, dir, body, seed = 0) {
 
 export function stampCar(g, variant, x0, y0, z0, dir = 0, body) {
   const d = ((dir | 0) % 4 + 4) % 4;
-  const res = g && g.res > 0 ? g.res : 1, kf = RV / res;
-  const fw = RV / kf, fl = 2.25 * RV / kf;                // footprint in grid voxels (1 × 2.25 units)
+  const res = g && g.res > 0 ? g.res : 1, kf = RL / res;
+  const fw = res, fl = 2.25 * res;                        // footprint in grid voxels (1 × 2.25 units)
   const out = (d & 1) ? { w: fl, d: fw } : { w: fw, d: fl };
   const xi = Math.floor(x0), yi = Math.round(y0), zi = Math.floor(z0);
   const P0 = kf >= 1 ? probe(g, xi, yi, zi) : null;
@@ -1000,7 +1064,7 @@ export function stampCar(g, variant, x0, y0, z0, dir = 0, body) {
 // voxels to keep crowds apart). Returns true if the person was placed.
 export function stampPerson(g, cx, y0, cz, seed = 0, dir = 0) {
   const d = ((dir | 0) % 4 + 4) % 4;
-  const res = g && g.res > 0 ? g.res : 1, kf = RV / res;
+  const res = g && g.res > 0 ? g.res : 1, kf = RL / res;
   if (kf < 1) return false;
   const xi = Math.floor(cx), yi = Math.round(y0), zi = Math.floor(cz);
   const P0 = probe(g, xi, yi, zi);
@@ -1115,7 +1179,7 @@ function lotPart(ent, flipped) {
       pts.push(fx, fy, fz, col === C.lamp ? C.vehSilver : col);      // parked: lights off
     }
   }
-  const part = grid(FX, maxY, FZ, RV);
+  const part = grid(FX, maxY, FZ, RL);
   for (let i = 0; i < pts.length; i += 4) part.set(pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
   const m = small(part.done());
   ent[slot] = m;
@@ -1186,8 +1250,13 @@ function lotCar(variant, paint) {
 // the bright shirt (with a darker collar row + belt) is what catches the eye.
 // Varied skin / hair / trousers, skirts, shorts, hats, backpacks.
 // ---------------------------------------------------------------------------
-export function personModel(variant) { return withBlob(personGrid(variant).done(), BLOB_PED); }
-function personGrid(variant) {
+// w4 (the w3 critic: "pedestrians are tiny 2-3 voxel blobs ... with no
+// poses"): `stride` 1 / 2 = a mid-step pose (one leg and the opposite arm
+// forward, the others back); life.js swaps the two as the figure walks, so a
+// walker reads as walking and a still shows people caught mid-step.
+// variant & 64 forces a child (life.js walks a kid behind a parent).
+export function personModel(variant, stride = 0) { return withBlob(personGrid(variant, stride).done(), BLOB_PED); }
+function personGrid(variant, stride = 0) {
   const rng = mulberry32(((variant | 0) >>> 0) * 3 + 201);
   const pick = a => a[(rng() * a.length) | 0];
   const skin = pick([C.skin1, C.skin2, C.skin3, C.skin4, C.skin5]);
@@ -1196,7 +1265,8 @@ function personGrid(variant) {
   const pants = pick([C.navy, C.trunkDark, C.stoneDark, C.roofBlue, C.darkGray, C.sandDark]);
   const hair = pick([C.hairBlack, C.hairBrown, C.hairBlonde, C.hairAuburn, C.hairGray, C.hairBlack]);
   const shoe = pick([C.hairBlack, C.white, C.darkGray]);
-  const kid = rng() < 0.22;
+  const kr = rng();
+  const kid = (variant & 64) ? true : kr < 0.22;
   const style = rng();                         // < .22 skirt, < .4 shorts
   const hat = rng() < 0.2 ? pick([C.vehRed, C.vehBlue, C.taxiYellow, C.vehGreen, C.white]) : null;
   const longHair = rng() < 0.35;
@@ -1212,9 +1282,13 @@ function personGrid(variant) {
   const t0 = legs, t1 = legs + torso - 1, h0 = t1 + 1, ht = H - 1;
   // legs x 1-2 / 4-5 (gap at 3), z 1..2; shoes one voxel longer at the toe
   for (const x0 of [1, 4]) {
-    g.box(x0, 0, 1, x0 + 1, legs - 1, 2, pants);
-    g.box(x0, 0, 0, x0 + 1, 0, 2, shoe);
-    if (!kid && style < 0.4) g.box(x0, 1, 1, x0 + 1, 1, 2, skin);         // bare shins
+    // stride: this leg forward (z 0..1) or back (z 2..3), the hip row stays put
+    const f = stride === 0 ? 0 : ((x0 === 1) === (stride === 1) ? -1 : 1);
+    const z0 = 1 + f, z1 = 2 + f;
+    g.box(x0, 0, z0, x0 + 1, legs - 1, z1, pants);
+    if (f !== 0 && legs > 2) g.box(x0, legs - 1, 1, x0 + 1, legs - 1, 2, pants);
+    g.box(x0, 0, f < 0 ? 0 : f > 0 ? 2 : 0, x0 + 1, 0, f > 0 ? 3 : 2, shoe);
+    if (!kid && style < 0.4) g.box(x0, 1, z0, x0 + 1, 1, z1, skin);       // bare shins
   }
   if (!kid && style < 0.22) g.box(1, legs - 1, 0, 5, legs - 1, 3, shirt);  // skirt / dress hem
   // torso x 1..5, z 0..2 + a collar row; belt
@@ -1223,9 +1297,12 @@ function personGrid(variant) {
   g.box(2, t1, 0, 4, t1, 0, skin);                                          // open collar / neck
   // arms x 0 / 6, z 1..2: sleeve on top, bare forearm or cuff, hand
   for (const x of [0, 6]) {
-    g.box(x, t0, 1, x, t1, 1, shirt);
-    if (sleeve) g.box(x, t0, 1, x, t1 - 2, 1, skin);
-    g.set(x, t0, 1, skin);
+    // stride: the arm opposite the forward leg swings forward (hand at z 0)
+    const az = stride === 0 ? 1 : ((x === 0) === (stride === 1) ? 2 : 0);
+    g.box(x, t0 + 1, 1, x, t1, 1, shirt);
+    g.box(x, t0, az, x, t0 + 1, az, shirt);
+    if (sleeve) { g.box(x, t0 + 1, 1, x, t1 - 2, 1, skin); g.box(x, t0, az, x, Math.min(t1 - 2, t0 + 1), az, skin); }
+    g.set(x, t0, az, skin);
   }
   // head x 1..5, y h0..ht, z 0..3: face, eyes, cheeks; hair cap + back + sides
   g.box(1, h0, 0, 5, ht, 3, skin);

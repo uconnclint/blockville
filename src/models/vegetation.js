@@ -67,9 +67,15 @@ const SHAPES = {
       // of the four 90-degree scatter yaws it shows left, right or in front
       // of the main cube instead of hiding behind it.
       ['T', 12, 0, 6, 15, 21, 9],     // trunk, up into the main cube
-      ['T', 3, 13, 7, 11, 14, 8],     // branch out along x, 5 under the canopy ...
-      ['T', 3, 13, 7, 4, 14, 16],     // ... round the corner along z ...
-      ['T', 3, 13, 15, 4, 19, 16],    // ... and up into the side lobe
+      // w4 r2 (critic w4r1: "ref06 trunks fork into visible branches under
+      // the canopy"): the limb is 3 voxels tall (was 2) and leaves the trunk
+      // 2 voxels lower, so the loop under the side lobe is ref06's tall open
+      // rectangle, not a twig tucked under the band. (A Y on the column tree
+      // was tried: under a 14-wide canopy the arms hide in its iso
+      // silhouette — ref06's column tree has a plain trunk anyway.)
+      ['T', 3, 10, 7, 11, 12, 8],     // branch out along x, 7 under the canopy ...
+      ['T', 3, 10, 7, 4, 12, 16],     // ... round the corner along z ...
+      ['T', 3, 10, 15, 4, 19, 16],    // ... and up into the side lobe
       ['L', 0, 19, 13, 7, 30, 20],    // side lobe: 8 wide, top 4 under the main top
       ['L', 7, 19, 1, 20, 34, 14],    // main cube (14 x 16 x 14)
     ],
@@ -86,16 +92,21 @@ const SHAPES = {
   // instance gets, one lobe shows left of the tall one and one right of it,
   // always a three-cube crown.
   cluster: {
-    sx: 28, sy: 40, sz: 28, pal: PINE, dots: 0.9,   // the greener lime: a wood is not one flat tone
+    sx: 28, sy: 40, sz: 28, pal: PINE, dots: 1.1,   // the greener lime: a wood is not one flat tone
     parts: [
       ['T', 12, 0, 12, 15, 23, 15],   // trunk + leader into the tall lobe
-      ['T', 4, 14, 13, 11, 15, 14],   // left arm, low
-      ['T', 4, 14, 13, 5, 19, 14],    //   up into the left lobe
-      ['T', 16, 15, 13, 23, 16, 14],  // right arm, one higher
-      ['T', 22, 15, 13, 23, 20, 14],  //   up into the right lobe
+      ['T', 4, 13, 13, 11, 15, 14],   // left arm, low (3 tall since w4 r2)
+      ['T', 4, 13, 13, 5, 19, 14],    //   up into the left lobe
+      ['T', 16, 14, 13, 23, 16, 14],  // right arm, one higher
+      ['T', 22, 14, 13, 23, 20, 14],  //   up into the right lobe
       ['L', 8, 23, 8, 19, 39, 19],    // tall centre lobe (12 x 17 x 12)
       ['L', 0, 19, 9, 8, 29, 18],     // left lobe (9 x 11 x 10)
       ['L', 19, 20, 9, 27, 31, 18],   // right lobe
+      // w4 r3 (critic w4r2: "ref06 has a multi-lobe canopy"; ours read as
+      // only two silhouettes): a 4th lobe, ref06 tree 3's back one, stepped
+      // out of the tall lobe's -z face between the two sides' heights, so
+      // the crown is a cluster from every yaw (a front lobe under two).
+      ['L', 11, 24, 2, 19, 33, 9],
     ],
   },
   // ref06 tree 4: a young sapling — thin stem with a side shoot, a small
@@ -109,7 +120,7 @@ const SHAPES = {
       ['T', 12, 5, 10, 14, 6, 11],
       ['T', 13, 5, 10, 14, 11, 11],
       ['S', 12, 0, 12, 13, 1, 13, C.vegTuft],
-      ['S', 7, 0, 12, 8, 0, 13, C.vegTuft],
+      // (w4 r3: a second 2-voxel tuft read as a stray floating cube — one only, as ref06)
       ['L', 5, 12, 5, 15, 31, 15],
     ],
   },
@@ -184,23 +195,29 @@ const SHAPES = {
   // stepped rim. Sharpness is the mesher's job (props.js ROCK_AO: a crisp
   // 1-voxel crease line, no ground gradient).
   rock: {
-    sx: 22, sy: 11, sz: 22, pal: null,
+    // w4 r3 (critic w4r2: "a busy heap of many small grey cubes, all about
+    // the same size; ref06 rocks are one or two big stepped slabs with a few
+    // small cubes at the base"): 8 equal 2-3-voxel chips became 6 of three
+    // sizes (one 4-cube, two 3s, three 2s), the big block grew to 9 x 12 x 9
+    // on a 14-wide mid tier, and the mid step is a 7-8-voxel block — so the
+    // mass is three big blocks and the chips are accents, as in ref06 rock 1.
+    // The big block (-x -z corner), mid step (+x side) and slab (+z side) sit
+    // round it, not on one diagonal, so no 90-degree yaw hides both steps
+    // behind the big block (that view read as a top hat on a flat tier).
+    sx: 22, sy: 12, sz: 22, pal: null,
     parts: [
-      ['S', 4, 0, 4, 16, 3, 16, C.vegRock],        // low platform (13 x 4 x 13)
-      ['S', 5, 0, 5, 13, 10, 12, C.vegRock],       // THE big block, back-left (9 x 11 x 8, not a tower)
-      ['S', 10, 0, 10, 17, 6, 16, C.vegRock],      // mid ledge block, front-right (top at ~2/3 height)
-      ['S', 3, 0, 11, 8, 4, 17, C.vegRock],        // shoulder step, -x / +z
-      ['S', 13, 0, 3, 18, 5, 8, C.vegRock],        // shoulder step, +x / -z
-      ['S', 14, 7, 12, 16, 8, 14, C.vegRock],      // small cube up on the mid ledge
-      ['S', 16, 6, 4, 17, 7, 5, C.vegRock],        // small cube on the back shoulder
-      // chips round the foot (each touches one face, offset along it)
-      ['S', 1, 0, 6, 3, 2, 8, C.vegRock],
-      ['S', 0, 0, 13, 2, 1, 15, C.vegRock],
-      ['S', 5, 0, 18, 7, 2, 20, C.vegRock],
-      ['S', 11, 0, 17, 13, 1, 19, C.vegRock],
-      ['S', 18, 0, 11, 20, 2, 13, C.vegRock],
-      ['S', 19, 0, 5, 20, 1, 7, C.vegRock],
-      ['S', 8, 0, 1, 10, 2, 3, C.vegRock],
+      ['S', 4, 0, 4, 17, 4, 17, C.vegRock],        // wide mid tier (14 x 5 x 14)
+      ['S', 5, 0, 5, 13, 11, 13, C.vegRock],       // THE big block, back (9 x 12 x 9)
+      ['S', 13, 0, 3, 19, 8, 10, C.vegRock],       // mid step, +x side (7 x 9 x 8, top at 3/4)
+      ['S', 2, 0, 12, 9, 3, 19, C.vegRock],        // low slab, -x / +z
+      ['S', 16, 9, 5, 17, 10, 6, C.vegRock],       // small cube up on the mid step
+      // chips round the foot: one chunky, two medium, two small (each
+      // touches one face, offset along it)
+      ['S', 0, 0, 6, 3, 3, 9, C.vegRock],          // 4-cube off the -x side
+      ['S', 13, 0, 18, 15, 2, 20, C.vegRock],      // 3 off the front
+      ['S', 18, 0, 12, 20, 2, 15, C.vegRock],      // 3 off the +x side
+      ['S', 4, 0, 20, 5, 1, 21, C.vegRock],        // 2 off the slab
+      ['S', 9, 0, 1, 10, 1, 3, C.vegRock],         // 2 off the back
     ],
   },
 };
@@ -277,7 +294,9 @@ function sprinkleDots(g, parts, pal, rng, k, bk) {
       // up to 5 per big face (ref06's tall column shows 5-8), and on faces
       // with room ~1 in 4 is ref06's bigger 2x2 dot. Spacing 4 keeps them
       // separate squares.
-      const n = Math.min(5, Math.round((area / 26) * k * (0.75 + rng() * 0.5)));
+      // w4 r2 (critic w4r1: "our dots are slightly larger and more frequent
+      // than the reference"): single voxels only, at most 4 per face.
+      const n = Math.min(4, Math.round((area / 32) * k * (0.75 + rng() * 0.5)));
       const used = [];
       const xyz = (uu, yy) => ax === 'x' ? [f, yy, uu] : [uu, yy, f];
       const plain = (uu, yy) => {
@@ -285,7 +304,7 @@ function sprinkleDots(g, parts, pal, rng, k, bk) {
         const ox = ax === 'x' ? x + o : x, oz = ax === 'z' ? z + o : z;
         return at(x, y3, z) === pal.leaf && at(ox, y3, oz) == null;
       };
-      const big = (u1 - u0) >= 11;
+      const big = false;
       for (let i = 0, tries = 0; i < n && tries < n * 12; tries++) {
         const u = u0 + 2 + Math.floor(rng() * Math.max(1, u1 - u0 - 4));
         const y = ya + Math.floor(rng() * (yb - ya));

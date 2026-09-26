@@ -116,3 +116,4 @@ downscales both to 900 high). Never upscale ours. Performance: judge fps with
 `--dpr 1` on an idle machine; the fps printed during critic runs (many Chromes
 at once, 2x pixels) is not the budget.
 - (17:50) Gallery layout is now per category: homes/shops/deco pack shoulder to shoulder along the street; fun/civic/downtown/factories get a road-framed block each. Judge layout accordingly.
+- (2026-09-26) The dev server on :8351 is managed by the coordinator. If it seems down, wait 30 s and retry; do NOT start your own copy (a detached copy blocks the managed one from restarting).

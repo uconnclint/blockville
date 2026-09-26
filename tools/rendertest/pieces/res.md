@@ -440,3 +440,133 @@ apartments, lighter varied roofs, dressed lots. Coherence #7: the construction g
 2. The tall apartment and condo roofs could get the bold parapet + post caps too.
 3. The cabin is still the most orange lot. Consider a stone porch.
 4. Check the grow child mesh against a 4×4 res-2 model (L = 0) when one exists.
+
+## 2026-09-26 — wave 4, round 1 (builder)
+
+(An earlier w4r1 builder was stopped at 08:47 without writing notes. On disk from it: `boldCrown`, `ledgeWall`
+and `pairWin` kit pieces. The townhouse has bigQuoins, 2-tall belts, a bold crown and paired windows on every face,
+with warm schemes and no white. The tall apartment and the condo have boldCrown / ledgeWall parapets and warm
+frames in place of white. Its start file is scratchpad `rounds/res/w4-start.js`.)
+
+**Changed** (residential.js only; no palette change):
+1. **Calmer yards** (`dressYard`):
+   - Yard flower beds are a new `yardBed`: a light `lotRim` kerb round one clipped low shrub mass, with a single
+     flower colour sprinkled on top. They replace the grid of stems with a different dot on each.
+   - `vegBed` has a trunkDark/trunk frame (woodDark rendered orange), one produce colour per bed, and dots every
+     6 on alternate rows.
+   - The lawn target goes from 0.45 to 0.5.
+2. **Cabin**: a flagstone porch (stone footing, lotPave top, joint lines) replaces the plank deck. The logs,
+   porch, fences and bed frames had merged into one orange mass.
+3. **Apartment v2**: rails resTileGreenDk and slabs cream (were white, which read grey).
+4. **Coherence #7 (grow stretches the lot)**: already fixed by the wave-2 `_growLot` in engine.js, which is
+   committed. The earlier w4 check `rounds/res/w4-grow` shows squashed houses on full-height lots.
+
+**Measured.** All modules parse, 0 console errors on all four shots.
+- Tris: gal-homes-1 457k, gal-homes-2 668k, one-small-house 318k, one-apartment 400k.
+- FPS: one-* 61. The gallery shots read 15-18 under load ~10 from other Chromes, which is noise.
+- Shots are in `rounds/res/w4r1-builder`. `w4r1-cur` is the state before this round.
+
+**Next.**
+1. The cottage v1's saturated royal-blue roof and red chimney are the loudest things on page 1. Consider a
+   dusty slate-blue.
+2. Farmhouse and beach house are hidden behind the towers on gal-homes-2 (layout; the harness owns that).
+3. If a critic still calls the lots busy, drop the `crates`/`pots` fallbacks in the yard dresser first.
+
+## 2026-09-26 — wave 4, round 2 (builder)
+
+**Critic (w4r1):** reference won. The biggest gap was that our small house was squat: one storey plus a rooftop box, a flat slab under its cornice. ref04 is a tall two-storey mass with plain saturated walls, crisp chunky quoins and deep AO under the ledges.
+
+**Changed** (residential.js only; no palette change):
+1. **Small house is two full storeys.**
+   - The body is x 18..77, z 24..65 and 54 voxels tall (was 66×44×30), so from the camera it is as tall as it is wide.
+   - Walls are plain. Front: door + lamps + a big window each side downstairs, two windows upstairs. Sides: one window downstairs, a pair upstairs. Back: a door + one window downstairs, two upstairs.
+   - The v1 deck's stair house is larger (28×21 voxels).
+   - The gable, hip and dormer variants fit inside sy 110.
+2. **`ref04Block` cornice is 2-step:** a 1-proud band (4 tall) with a 2-proud lip, for a deeper ledge shadow and AO line.
+3. **Small-house quoins** use bh 5 and arms [7,4] (were 4 / [8,5]): crisper courses that no longer cover a quarter of each face.
+4. **v3** is now cream stucco with terracotta quoins and a slate roof. Its peach wall rendered grey and its royal-blue roof was loud.
+5. **Coherence #7 (grow stretches the lot):** `_growLot` is still in engine.js, so no action was needed.
+
+**Measured.** All modules parse, and all four shots had 0 console errors.
+- Tris: one-small-house 319k (was 318k), gal-homes-1 459k, gal-homes-2 634k, one-apartment 397k.
+- FPS: one-small-house 61, gal 49-54. The one-apartment reading of 10 fps was load noise.
+- Shots are in `rounds/res/w4r2-builder` (`chk.png` is the hero next to the v3 preview) and `w4r2-a` (the first iteration). The start file is `rounds/res/w4r2-start.js`.
+
+**Next.**
+1. If a critic still wants more AO under ledges, that is the lighting/materials AO strength, not geometry. The cornice and quoins are now 2 proud.
+2. Cottage v1's royal-blue roof is still the loudest thing on page 1. Consider `ROOF.slate` there too.
+3. Big house and duplex could get the same "tall plain walls, trim carries detail" treatment if critics compare them against ref04.
+
+## 2026-09-26 — wave 4, round 3 (builder)
+
+**Critic (w4r2):** reference won. Small house read fussy and spindly: thin, deeply inset windows with fine mullions, small quoin steps, thin parapet. Also a grey rock poking up behind the roof.
+**Consensus across w4r1+w4r2:** tall plain walls with FEWER, BIGGER trims (chunky quoins, fat frames, solid rail), strong contact AO.
+
+**Changed** (residential.js only; props.js/lighting.js edits tried and fully reverted, see below):
+1. New kit, measured off ref04's own voxel grid (it maps ~1:1 onto the res-12 small-house body):
+   - `refQuoins`: a continuous core post (arm 4, 1 proud) with big square blocks (arm 7, 2 proud, 4 tall) every 7 rows, hung from the top. Each block stands alone over a dark recessed neck, like ref04's stones (was bigQuoins' flat long/short stagger). `ref04Block(..., { refQ: {...} })` uses it, plus ONE bold cornice band (3 tall, 2 proud) in place of the 2-step band.
+   - `fatWin`: 1-wide lip 1 proud, 2-wide frame 2 proud, a reveal, glass behind the wall, and one bold 2-tall sash bar. No mullion grid. Outer size w+6 × h+6.
+   - `refDeck`: deck inset so the cornice's orange top frames it, big stepped post caps on the quoin columns, and a solid 2×2 rail post to post with open air under it.
+2. **Small house** body is x20..75 × z22..69 (56×48), walls 48 tall.
+   - ONE row of big windows (glass 7×18, outer 13×24) per face.
+   - Front and back: one window plus the double door (10×28) with lamps.
+   - Sides: two windows side by side, as on ref04's window face.
+   - The stair house has its own smaller refQuoins, a wall-tone roof and a rail (ref04). The AC and door moved clear of the quoins.
+   - Lot beds, topiaries and the patio were re-fitted to the new footprint.
+3. **Coherence #7:** `_growLot` is still in engine.js, so no action was needed.
+
+**Rock (for the coordinator / veg owner):** the grey cluster is a props scatter rock at (314.5, 307.6), diagonal to the building tile (40,39).
+- I tried a guard that skips rocks on tiles next to a built tile. The rock vanished, but a ghost footprint stayed on the grass.
+- lighting's world-AO height volume kept the stale rock: forcing `_lighting._aoState.S = 0` cleared it, and `_aoSignature` did not change.
+- The instance buffer still held that rock (count unchanged), so the main pass and the AO pass disagreed.
+- I reverted both files. Fixing this needs the veg + lighting owners together.
+
+**Measured.** All modules parse, and all four shots had 0 console errors.
+- Tris: one-small-house 340k (was 319k), gal-homes-1 486k, gal-homes-2 703k, one-apartment 428k.
+- FPS: one-small-house 61. The gallery and apartment readings were 13-36 under load from other Chromes, which is noise.
+- Shots are in `rounds/res/w4r3-builder`, iterations in `w4r3-a..g`, and the ref04 side-by-side in `w4r3-g/pair.png`. The start file is `rounds/res/w4r3-start.js`.
+- The `--pre` BUILDERS override does NOT change the variant in the game (the catalog holds its own reference), so the v0/v2/v3 roofs were checked in node only (they build fine).
+
+**Next.**
+1. If a critic wants more quoin courses, try per 6 / bh 4. ref04 has ~9-10 courses per corner; we have 7.
+2. Bring `fatWin` / `refQuoins` to the big house and duplex if they get compared against ref04.
+3. The faint vertical light banding on plain walls is mesher/lighting quad seams, not geometry.
+
+### Coordinator note (2026-09-26 19:35) — after w4r3: midpoints on spacing and windows
+Critics have swung on both axes: r5 (wave 1) called spaced rows "sparse, toy-like" → I packed homes back to back; w4r3 now says "crammed shoulder to shoulder, roofs overlap and merge into one mass". On windows: w4r2 "fussy thin windows, fewer bigger ones" → w4r3 "large flat stucco faces with sparse windows". Reference check: ref05 has almost no ordinary houses; the real residential refs are ref04 (single house) and ref01 (houses each on its own lot with a visible gap/rim). Midpoints:
+- Spacing: every house keeps its OWN visible lot rim with a small yard/gap (a fence, hedge or path strip) between neighbours; eaves and roofs stay inside their own lot so silhouettes never merge. Rows still front the street densely — no big empty gaps. (tools/demo-city.js homes block layout is yours to adjust if needed, e.g. back gardens deeper.)
+- Windows: a steady rhythm of MEDIUM windows (about 2-3 per wall per storey on a small house, more on apartments), each with a chunky frame/sill — neither thin-and-fussy nor sparse. Add awnings/balconies/rooftop gardens as accents on some ids.
+
+## 2026-09-26 — wave 4, round 4 (builder)
+
+**Critic (w4r3):** the reference won. The biggest gap was that gal-homes-1's six homes sat "shoulder to shoulder on one shared plinth", with roofs merging and no house reading as its own lot. The critic also wanted more window rows and trim, and said the lone small house was a "plain square block".
+**Consensus w4r1-w4r3:** all three critics said the gal-homes-1 houses crowd and merge. w4r2 wanted fewer, bigger windows; w4r3 wanted more window rows. The midpoint is the same fat windows, one row per storey.
+
+**Changed** (residential.js only; no palette or engine change):
+1. **Each home stands on its own plinth.** A new `grooveLot(raw)` runs from `grid().done()` when `g.groove` is set. Both `lot()` and `smallHouse` set it.
+   - It cuts GI = 2 voxels off the plinth on the sides and back, plus any low clutter in that strip. The front stays flush with the kerb.
+   - It redraws the dark `lotSide` band and a 2-wide `lotRim` on the new edges.
+   - Neighbouring homes now show a grass channel with two side bands between them.
+   - Plinth cover stays at 92-94%, so `engine._lotInfo`'s 90% test still passes. GI = 3 at res 10 would fail it (89%).
+2. **Small house has two storeys of fat windows.**
+   - The body is 4 voxels taller (top G+52).
+   - Ground-floor glass is 7×13 and upper glass 7×12, all in `fatWin`.
+   - A 2-tall string course in the frame tone, with a quoin-tone line under it, runs between the quoin columns.
+   - Front and back: window + double door (10×21) with lamps downstairs, and two windows upstairs. The front upstairs windows have flower boxes.
+   - Sides: 2×2 windows.
+   - The gable, hip and deck variants all still fit.
+3. **Coherence #7 (the grow stretches the lot):** verified again in-game with every gallery building at scale 0.35 (`rounds/res/w4r4-grow`). The lots stay flat at full height and the houses squash above them. `_growLot` in engine.js works, so no change was needed.
+
+**Measured.** All modules parse. 0 console errors on all four shots plus the grow shot.
+- Tris: gal-homes-1 435k, gal-homes-2 640k, one-small-house 300k, one-apartment 377k.
+- FPS readings of 9-49 were under load from other Chromes, so they are noise.
+- Shots are in `rounds/res/w4r4-builder`, iterations in `w4r4-a` and `w4r4-b`. The start file is `rounds/res/w4r4-start.js`.
+
+**Seen, not mine:** a white stepped box appears near the duplex lot corner in some gal-homes-1 runs, and one sits on open grass in gal-homes-2. It is transient, so it probably comes from life or props. The grey scatter rock behind the one-small-house lot is still there (ground/veg).
+
+**Next.**
+1. If critics still see one mass, the remaining lever is the gallery layout (a 1-voxel street or path between homes), which the harness owns. Alternatively, lower the engine lot-cover threshold to 0.85 so GI can be 3.
+2. Big house, duplex and cottage could get the small house's storey course + fat windows if they are compared against ref04.
+
+### Coordinator note (2026-09-26 21:30) — gallery done as you asked
+tools/demo-city.js now puts a 1-tile garden plot (flower bed / hedge, alternating) between neighbouring houses on gal-homes-* pages (rows still back to back). With your grooved plinths each house now reads as its own lot. Focus on the facades and oversized lot-tree canopies hiding them (w4r4).

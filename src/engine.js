@@ -107,13 +107,17 @@ const FILL_GAIN = 0.70;
 // the right on screen. The right wall's darkness now comes from the
 // directional wall fill (lighting.js csmWallFill), not from starving the left.
 // iso-mid white prop T/L/R 249 / 227 / 159 (1 : 0.91 : 0.64; ref04 0.89/0.63).
-const KEY_AZ_OFFSET = -100 * Math.PI / 180;   // coordinator: faceprobe-measured (pieces/light.md 21:05, 22:45). Change ONLY with faceprobe numbers.
-const KEY_ELEVATION = 58 * Math.PI / 180;
+// Light w4r2: -100/58 -> -110/52 with the away-wall fill at 0.95 (lighting.js):
+// faceratio 1 : 0.91 : 0.65 -> 1 : 0.88 : 0.61 (ref04 0.89 / 0.63); iso-mid
+// up-facing pixels in cast shadow 24 % -> 29 % (critic w4r1: "buildings throw
+// almost no visible shadow"); normal-masked corner right/left 0.654 -> ~0.58.
+const KEY_AZ_OFFSET = -110 * Math.PI / 180;   // faceprobe-measured (pieces/light.md w4r2). Change ONLY with faceprobe numbers.
+const KEY_ELEVATION = 52 * Math.PI / 180;
 // The voxel material's own "sky fill" (materials.js skyFill, a flat bounce
 // that is not scaled by any light) was ~20% of a wall's light and alone kept
 // every far wall at ~0.65 of its top. By day it is scaled down with the rest of
 // the authored fill (see _applySkyLighting); dusk/night keep materials' value.
-const DAY_SKYFILL_SCALE = 0.36;
+const DAY_SKYFILL_SCALE = 0.30;   // light w4r2: 0.36 -> 0.30 (this flat fill was the largest share of the far wall; ref05 right/left ~0.57)
 const FILL_SCALE = 0.8;   // global daytime fill multiplier (see _fillScale)
 // Same treatment for materials.js's "sun bounce" (params.bounce, 0.30): it adds
 // key light to faces turned AWAY from the key, and it is added AFTER the BRDF
@@ -122,7 +126,7 @@ const FILL_SCALE = 0.8;   // global daytime fill multiplier (see _fillScale)
 // with it, 211/148 without — it was the whole reason pale buildings showed no
 // dark side (critic r4: "left and right walls differ only slightly"). By day
 // keep a trace for hue carry; dusk/night keep materials' value.
-const DAY_BOUNCE_SCALE = 0.1;
+const DAY_BOUNCE_SCALE = 0.04;   // light w4r4: 0.08 -> 0.04 (warm key bounce greyed the far walls; cool wall fill replaces it, lighting.js wallFillAway). w4r2: 0.1 -> 0.08
 // Share of lighting.js's contact AO that voxel faces keep (materials.js
 // params.worldAOKeep defaults to 0 because the OLD sparse kernel streaked
 // flat faces; the r7 map-space version is smooth). See _applySkyLighting.
@@ -382,8 +386,12 @@ export class Engine {
       // csmLastUpW), so it deepens shadows on lots/roofs/streets without
       // pushing a shadowed building's key-side wall below its far wall.
       // Open-top shadow / lit at iso-mid: 0.63 -> 0.59 (ref04 0.58-0.69).
-      shadowAmbient: 0.8,   // r8: 0.7 -> 0.8 (see skyOpenFloor)
-      shadowIbl: 0.92,      // r8: 0.85 -> 0.92
+      // w4r3: 0.8 / 0.92 -> 0.68 / 0.80. Critic w4r2: cast shadows "merge into
+      // one mid-dark mass", wants ref05's light cool-grey shadows. Up-facing
+      // shadow / lit at iso-mid 0.565 -> 0.626 (ref05 tan plinth 0.60-0.67),
+      // coverage unchanged (27 %), hue still blue-grey (shadowFillTint).
+      shadowAmbient: 0.68,
+      shadowIbl: 0.80,
     });
     // The rig brings its own sun/hemi/ambient and needs its sun to be
     // directional light index 0 — retire the engine's originals and adopt the
@@ -548,6 +556,9 @@ export class Engine {
       Math.min(1, base[1] * 1.7 + 0.1),
       Math.min(1, base[2] * 1.7 + 0.1),
     ];
+    // [night] w4: lit sign-letter twins (models/core.js SIGN_LIT, 204+) glow
+    // in their own day colour; materials.js decides when and how bright.
+    for (let i = 204; i < this._palLin.length; i++) if (this._palLin[i]) this._glowLin[i] = this._palLin[i].slice();
     // The PBR material library derives roughness/metalness from the same palette.
     if (this._matLib) this._matLib.setPalette(paletteArray);
   }

@@ -646,3 +646,126 @@ lower band faint.
 - Bush crease (shrub foot cube) still a little dark; could take aoDist 0.2.
 - Watch voxel.js DEFAULTS: new defaults silently change every veg bake —
   VEG_AO / ROCK_AO now pin aoSpread explicitly.
+
+## 2026-09-26 — wave 4 round 1 (builder)
+
+Lineup close-up (scratchpad rounds/veg/lineup.sh) at start: shapes already on
+brief (column / round / 3-lobe / sapling with band + sparse dots, rock = big
+block + ledges + 8 chips, tiny flower trios). Two real defects, both from
+OTHER passes, found by A/B toggles:
+
+**Diagnosis**
+- Rock low shelves / chips near-black (#15-#1d) and warm-black shade faces:
+  NOT baked AO (ao:false: no change), NOT SSAO, NOT world AO, NOT shadows. It
+  was post.js's ASPHALT ops (deepDark + asphalt pull to 0.08, no floor lift)
+  which key on "neutral dark AND world y < 1.0" — every knee-high grey rock
+  face qualified. This is the old "black skirt / dark lumps" complaint.
+- Tree "ghost" rectangles on the grass (critics r7/r8 "diamond ghosting",
+  "grid decals"): lighting.js's top-down world-AO height volume treats each
+  canopy as an overhang and stamps its footprint with a crisp rim. Confirmed
+  by worldAO=false (gone).
+
+**Changed**
+- `post.js` (1 surgical line in the grade's above-ground key): scene alpha
+  < -0.5 (props rocks only) -> aboveK = full, i.e. rocks are not asphalt.
+- `lighting.js` (1 surgical condition in _aoRender): meshes with
+  `userData.noWorldAO` stay out of the AO height volume. `props.js` sets it
+  on tree types (NO_WORLD_AO: oak/column/cluster/pine/blossom/sapling);
+  rocks / bushes (solid to the ground) keep their contact AO on the grass.
+- `props.js` VERT_BODY tones re-solved: grey top 0.165 / lit 0.20 / shade
+  (1.12, 0.98, 0.84); lime top (0.53, 0.50, 0.02); bark lit (0.30, 0.24, 0.26).
+
+**Measured** (lineup, gal-deco-1 zoom; ref06 in brackets)
+- Rock: top 151 / lit 120 / shade 76, chips identical to the big block's
+  faces (141 / 115 / 79). Was 176 / 136 / (55,49,45) with chips 21-36.
+- Canopy top #c5e231 (#c4dd00), lit #bed80e, shade #86a205, bands #a0c30e /
+  #678906; trunk lit #cc7543 (#c27642).
+- Zero console errors on iso-park / iso-mid / gal-deco-1 (fps 23 / 2 / 23 on
+  a heavily shared machine). Before/after: rounds/veg/w4r1-corner.png.
+
+**Coherence #4 [ground / veg]** (field lattice of identical tiny trees): the
+ground builder rewrote the field scatter this same round (quincunx, per-tree
+round/cluster/column mix, larger sizes, ref05-counted ~0.8 trees/tile) — left
+placement to them; the "identical" part is now fixed by that dispatch.
+
+**Next**
+- If critics call trunks bare at the foot: trees lost the world-AO contact
+  line with the canopy exclusion; a baked trunk-foot term would be veg-local.
+- Any other knee-high neutral grey prop (bins, hydrants) likely has the same
+  asphalt-crush; post could generalise the alpha gate.
+
+### Coordinator note (2026-09-26 16:15, wave 4) — w4r1 "washed-out lime-on-lime"
+Measured ref06 canopy luminance bands: top 10% #c1db00, next #b1d000, mid #7cb901, darkest 40% #62a201. Your last logged render: top #d4e902 (already brighter than ref — don't push the top further), shade #6f9600. So the fix is NOT a brighter top: it's the SPREAD — make sure the shaded side and the lower band actually reach the #62a201–#7cb901 range at iso-park/iso-mid (after lighting/post), with a clearly darker bottom band, and a few dark pixels. Do NOT flip which face is dark: ref06 is a separate sheet lit from the right; our world key light comes from the upper left (ref05) — keep consistency with it. Forked/visible trunks under the canopy are a fair ask.
+
+## 2026-09-26 — wave 4 round 2 (builder)
+
+Critic w4r1 (picked the reference): canopies "lime on lime" — top barely
+brighter than the lit face, weak lower band; ref06 top vivid ~#c5e000,
+trunks fork visibly; dots a bit big / frequent.
+
+**Diagnosis** (critic crop, PIL): top #c7e430 / lit #c0da0e / shade #88a405,
+lawn #b6de6f. The top's blue (0x30) was the sky SPECULAR (F0 0.04 x bright
+dome) added after the albedo — no albedo tone could remove it. The lit face
+was only ~0.95x of the top and the same value as the lawn.
+
+**Changed** (props.js model/material side, vegetation.js, core.js veg block)
+- `FRAG_VEG_SPEC`: lime canopies (same lime test as VERT_BODY) zero
+  material.specularColor / specularF90 — matte leaves like ref06.
+- lime litT (1.05,0.95,0.30) -> (0.78,0.76,0.30); vegLeafBand 0x7a9814 -> 0x72900f.
+- bark topT (0.20,0.14,0.10): fork-arm tops rendered pale peach #fab579
+  (deep in the tone-map shoulder; 0.81/0.53 factors barely moved them).
+- NEW `uPropWallComp` (update(): reads lighting's shared uCsmWallFill):
+  shade-side tones are normalised to the away-wall cut they were solved at
+  (VEG_WALL_REF 0.75). Light w4r2 briefly set 0.95 -> every canopy / rock /
+  trunk shade face went near-black (#3f5101, rock #0b0b0c). Now robust to
+  their tuning; at night (z = 0) the gain is 1.
+- Shapes: round tree's limb 3 voxels tall and 2 lower (taller open loop,
+  ref06 tree 2); cluster arms 3 tall. A Y on the column tree was tried and
+  dropped (arms hide inside a 14-wide canopy's iso silhouette; ref06 tree 1
+  has a plain trunk). Dots: single voxels only, <= 4 per face (area/32).
+
+**Measured** (gal-deco-1 + lineup; ref06 in brackets)
+- top #c3e104 (#c4dd00), lit #afd003 (#b0cf00), shade #87a302 (#85ab00),
+  band lit #8bb404 (#98bc11, deliberately a bit darker), band shade #618402
+  (#6c930c), trunk #c76f3f / #913e25, rock 96 / 73 / 47 unchanged.
+- props selfTest PASS (library 3742 < 4000). Zero console errors on
+  iso-park / iso-mid / gal-deco-1 (fps 19 / 1 / 9, machine load ~11).
+
+**Next**
+- ref06 lights from the right (its LEFT face is the olive one); ours keeps
+  the scene key from the left per ART-DIRECTION — a critic may still say
+  "darken the left face". Don't flip it; the step sizes now match.
+- Parking-pad / lot "trees" in terrain.js and the building lots are still
+  plain lime cubes without these tones (ground / building builders).
+
+## 2026-09-26 — wave 4 round 3 (builder)
+
+Critic w4r2 (picked the reference): rocks "a busy heap of many small grey
+cubes, all about the same size" (ref06: 1-2 big stepped slabs + a few small
+base cubes); only two tree silhouettes in frame, dots faint.
+
+**Changed**
+- `vegetation.js` rock (22x12x22): 8 equal 2-3-voxel chips -> 5 chips of
+  three sizes (4, 3, 3, 2, 2) + one small cube on the mid step; big block
+  9x12x9 on a 14-wide mid tier; the mid step (7x9x8, top 3/4) moved from the
+  big block's diagonal to the +x SIDE and the slab to +z, so no 90-degree yaw
+  hides both steps behind the big block (yaw 0 read as a top hat).
+- `cluster` tree: + a 4th lobe (ref06 tree 3's back lobe) off the tall lobe's
+  -z face, y 24-33 -> a 4-lobe crown from every yaw (a front lobe under two);
+  dots 0.9 -> 1.1.
+- `sapling`: dropped the second grass tuft (read as a stray floating cube).
+- `props.js`: OAK_FAMILY_CDF [0.26,0.58,0.88,1] -> [0.24,0.52,0.86,1]
+  (cluster 30 -> 34 %, sapling 12 -> 14 %).
+
+**Measured**
+- Rock faces (lineup, L): top 150 / lit 114 / shade 72 (ref06 141/114/77).
+- props selfTest PASS: library 3604 tris (was 3742, rocks got cheaper than
+  the new lobe), street 19 draws, region 9. Zero console errors on iso-park /
+  iso-mid / gal-deco-1 (fps 20 / 18 / 50). Lineups: rounds/veg/w4r3-line3,
+  w4r3-rocks2.png, w4r3-trees3.png.
+
+**Next**
+- iso-mid "single-cube lollipop" trees are roof-garden / lot planting in the
+  building models (other builders); they could use stampVeg(..., 0.5).
+- If rocks are called "plain" next: add a second rock geometry (ref06 rock 3,
+  long slab) — library has ~400 tris headroom now.

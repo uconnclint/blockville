@@ -533,3 +533,196 @@ For POST / coordinator (I did not touch post.js)
 Next
 - If far walls read muddy: wallFillAway 0.75 -> 0.6 (tint stays).
 - If tops lose to lit walls (L/T neutral now 0.92): elevation 50 -> 54.
+
+### Coordinator note (2026-09-26 13:25, wave 4)
+The post critic measured our lower midtones lifted vs ref05 (p25 luminance 0.42 vs 0.27). Your faceratio right face is still ~0.69 vs the 0.63 target — close that (measured with faceratio.sh), which is the physically right half of the fix; post will add a gentle midtone curve for the rest. Re-measure after post's change lands so you two don't double-darken.
+
+### Coordinator note (2026-09-26 14:20) — SUPERSEDES the 13:25 note
+Post WON w4r2 with its lower-mid curve; that critic said shadowed faces/canyons now read slightly HEAVY (dim navy/brown) — the opposite of w4r1. So the tonal gap is closed at the midpoint: do NOT darken the right face further. Hold the right-face ratio where it is (or lift the fill a hair if faceratio shows <0.63), and keep dark sides colourful (sky-fill tinted, not navy/brown). Focus your remaining effort on cast-shadow shape/softness and contact shadows.
+
+## 2026-09-26 — wave 4 round 1 (builder)
+
+User direction relayed this round: once the piece wins, stop; no chasing "wow". So this
+was a measure-first pass, and I changed only what measurement said was still off.
+
+Measured (current tree, before my edit)
+- faceratio (white probe, iso-close): top (248,246,235) left (227,226,215) right
+  (158,160,155) -> 1 : 0.92 : 0.65 (ref04 1 : 0.89 : 0.63). Key/fill left as they are.
+- Cast shadows, shadows on/off A/B in one boot (scratchpad lt/sh1, ratio.png): 12 % of
+  iso-close pixels shadowed, median shadow/lit 0.70 (ref04 0.58-0.69). Shadows fall
+  screen-right / slightly down, in front of each right face: clearly read on sidewalks,
+  lot paving, rooftops (AC units, parapets: clean shapes, no smear, no acne). On the
+  near-black asphalt they are not visible, same as in ref05 (whose ground shows almost
+  no cast shadow at all). Lighting cannot fix asphalt legibility without lighter asphalt.
+- Contact / crevices: prop feet, benches, bins, wall feet have soft clean contact
+  darkening; luma<25 pixels that are not neutral asphalt = 0.14 % of iso-close. Only the
+  under-awning shop bays read dark navy (glass/material, also as in ref05).
+- Dusk (coherence #5): the wave-2 dusk palette already stopped the salmon wash; at
+  night 0.40/0.47 whites read cream-gold with cool shade faces.
+
+Changed (sky.js only)
+- duskKey #ffc584 -> #ffd6a0, duskSky #bfc8ec -> #c8d2ee: a softer gold on lit whites,
+  a bit less peach on the asphalt and lots. Daytime is untouched (faceratio after:
+  1 : 0.91 : 0.65, same within noise).
+
+Checked: check.sh clean; iso-mid / iso-close / iso shoot with zero console errors;
+BVSELF: every module passes except roads' known GL error 0x501 (cross-talk, coherence
+#11). fps in the shoot runs (2-8) is not meaningful, because many headless Chromes were
+running at once. The change only alters colour constants.
+
+Next (only if a critic reports a real gap)
+- Longer or more visible ground shadows would need el 58 -> ~52. That lifts the left face
+  above 0.92, so re-measure with faceratio first.
+- Top white still sits at 248 (near clip). Try key 3.3 -> 3.1 only if critics say
+  white roofs have lost their detail.
+
+### Coordinator note (2026-09-26 15:00) — amends 14:20; go by MEASUREMENT
+Critics now pull both ways (post w4r2: canyons "heavy"; light w4r1: "cast shadows too faint, face values too close"). Resolve with numbers, not adjectives:
+- Faces: land exactly on the ref04 target 1 : 0.89 : 0.63 with faceratio.sh (last measured ~1 : 0.92 : 0.69, so a small, measured step darker on left/right is correct). Keep dark faces colourful (sky-tinted blue, not brown/navy mud).
+- Cast shadows on the GROUND are a separate knob from face shading: measure in ref05 the luminance ratio of shadowed vs sunlit grass and shadowed vs sunlit lot paving (pick 3-4 spots each with PIL), then match those ratios in iso-mid. Shadows should be clearly visible, soft-edged, slightly blue-grey, falling back-right.
+- AO in deep canyons stays where post left it; don't add darkening there.
+Log all numbers in your notes.
+
+## 2026-09-26 — wave 4 round 2 (builder)
+
+Critic w4r1 (picked ref): downtown right faces only a bit darker than left, towers
+flat/pastel; almost no visible cast shadow on lots/roads; wants right face 15-20%
+deeper and cooler, darker shadows on light surfaces.
+
+New instrument (scratchpad lt/): ab.mjs variants + a MeshNormalMaterial variant
+(engine.render swapped for a plain renderer.render with overrideMaterial) ->
+an.py: exact TOP/LEFT/RIGHT masks; median luma ratio across real vertical CORNERS
+(left-face pixel vs right-face pixel 7 px either side of the same edge = same
+building, same material), frame + downtown box; shadow coverage and shadow/lit
+on up-facing pixels vs a shadowStrength-0 twin; shadow hue on light paving.
+
+Reference measured (ref05, PIL): right/left on real buildings ~0.57 (hotel cream
+242 -> 137, fire-station brick 124-131 -> 69-76). Shadow on tan plinth (bank
+lot): lit ~(211,192,148) vs shadow ~(126,130,130): ratio ~0.6-0.67, B/R 1.03
+(blue-grey) vs 0.70 lit.
+
+Before (iso-mid): corner R/L frame 0.654, downtown 0.670; up-facing in shadow
+24.0 %, shadow/lit 0.578; light paving in shadow B/R 0.88 (olive, lit 0.82).
+faceratio 1 : 0.91 : 0.65.
+
+Sweep (one boot each, numbers are corner R/L frame/downtown, shadow %):
+  wallFillAway 0.9 / 1.0 -> 0.605/0.630, 0.567/0.595 (shadows unchanged)
+  az -115 -> R/L 0.687, shadow 25.5 %, L/T down; az -85 -> 0.638, 21.6 %
+  el 50 -> shadow 28.6 %, L/T 0.868 -> 0.894
+  spec cut on away walls: small (0.632 -> 0.620 at 1.0)
+  material skyFill 0 / half -> 0.495 / 0.556 (and shadows 0.50 / 0.55)
+  bounce 0 -> 0.452 (too dark/uncoloured; not used)
+  key intensity 3.3 -> 3.9: ~no change (post normalises), not used.
+
+Changed
+- engine.js: key -100/58 -> -110/52; DAY_SKYFILL_SCALE 0.36 -> 0.30;
+  DAY_BOUNCE_SCALE 0.1 -> 0.08.
+- lighting.js: wallFillAway 0.75 -> 0.95; new wallFillSpec 0.6 (csmWallSpec():
+  same away-wall cut on the sky SPECULAR, uCsmWallFill.w); new shadowFillTint
+  [0.76,0.96,1.45] x shadowFillTintAmount 1 (uCsmShadowTint, applied in
+  csmWallFill to hemi+IBL fill of up-facing fragments in cast shadow, gated by
+  the daytime art amount).
+
+After (iso-mid, defaults): corner R/L frame 0.568, downtown 0.596 (-13 % / -11 %);
+L/T 0.854; up-facing in shadow 27.3 % (+14 %), shadow/lit 0.565; light paving in
+shadow B/R 1.03 (= ref05). faceratio 1 : 0.89 : 0.59 (left on the ref04 target;
+right 0.04 under ref04, deliberately toward ref05's measured ~0.57).
+Frame p10/50/90 .139/.475/.855 -> .117/.444/.835 (ref05 .086/.548/.895; the
+mid/high gap is post's curve, key intensity does not move it).
+Checked: check.sh clean; iso-mid/iso-close/iso zero console errors; BVSELF all
+pass except roads' known 0x501 cross-talk. fps in shoot runs (2-18) is load noise;
+the change adds one small function per fragment (no taps/passes).
+
+Next (only on a real critic gap)
+- If far walls read heavy/navy: DAY_SKYFILL_SCALE 0.30 -> 0.33 first (probe R
+  ~0.61), then wallFillAway 0.95 -> 0.85.
+- If shadows read too blue on grass: shadowFillTint toward [0.84,0.97,1.28]
+  (measured B/R 0.97 on paving).
+- Contact AO at mid zoom untouched (coordinator: canyon AO stays where post left it).
+
+### Coordinator note (2026-09-26 18:00) — after w4r2: overshot; land exactly on target
+Critics swung faint (r1) → heavy (r2). I measured now: faceratio 1 : 0.89 : 0.59, right face RGB (148,146,139) — neutral grey. Target 1 : 0.89 : 0.63. So: (1) lift the right face back to 0.63 exactly (left is already on target — don't move it); (2) give shade colour: the fill/sky contribution on right faces and in cast shadows should carry a cool sky tint (right face on the white cube roughly B > R by ~8-12, e.g. ~(150,156,168)), so dark sides stay "clearly coloured" instead of grey; (3) cast shadows light cool-grey and soft, measured against ref05 shadowed/sunlit ground ratios per the 15:00 note, so adjacent shadows don't merge into one dark mass. Stop after landing these numbers — no further swings.
+
+## 2026-09-26 — wave 4 round 3 (builder)
+
+Critic w4r2 (picked ref): right faces and canyon shade read "heavy", cast shadows merge
+into one mid-dark mass; wants ref05's light, cool-grey shadows and right faces that stay
+coloured. w4r1 had asked for the opposite (deeper faces and shadows). So I took the MIDPOINT
+of the two measured states and checked it against the reference numbers.
+
+Measured before (iso-mid, scratchpad lt/r3a, one boot, normal-masked): corner R/L 0.561
+(w4r1 saw 0.654), up-facing shadow/lit 0.565, coverage 27 %. faceratio 1 : 0.89 : 0.59.
+Right-face chroma scales with luma (C 40 vs left 68 = same ratio as luma), so the right
+faces are not desaturated, only dark.
+Sweep: wallFillAway 0.85 -> R/L 0.597; material skyFill x1.1 -> +0.008 (weak);
+shadowAmbient/Ibl 0.68/0.80 -> shadow/lit 0.627 (coverage unchanged); aoBroad 0.12 and
+softness 0.045 / maxPenumbra 0.9 -> no measurable change. The iso grid filter clamps r to
+K = 3 texels, so softness/maxPenumbra do nothing in iso. Softer edges would need K 4,
+which means more taps and the blocker loop bound (j < 4) too. I did not do that, to keep
+perf's savings.
+
+Changed
+- lighting.js: wallFillAway 0.95 -> 0.80.
+- engine.js (rig opts): shadowAmbient 0.8 -> 0.68, shadowIbl 0.92 -> 0.80.
+
+After: faceratio 1 : 0.89 : 0.63 (the ref04 target exactly). iso-mid corner R/L ~0.61
+(the midpoint of 0.654 and 0.561; ref05 ~0.57). Up-facing shadow/lit 0.626 (ref05 tan
+plinth 0.60-0.67), coverage 26.7 %, shadow hue still blue-grey. iso-mid / iso-close / iso
+had zero console errors. check.sh clean.
+
+Not lighting (for coordinator): the critic's "roofs near-white" gap. Downtown L/T at
+corners is ~1.0 because the roof albedo (grey roofGray/gravel) is darker than the facades.
+The white probe top already sits at 248, so the key cannot lift the roofs further. That is
+a materials/models roof-colour change.
+Next: only if a critic calls shadow edges too crisp, try iso grid K 3 -> 4 (perf cost).
+
+### Coordinator note (2026-09-26 18:25) — ROOT CAUSE of "heavy" (r2, r3): the midtones, measured
+Luminance percentiles p5/p25/p50/p75 (iso-mid downscaled to ref05 scale):
+  ref05:                 0.09 0.27 0.55 0.75
+  ours now (w4r3):       0.08 0.27 0.45 0.63   <- median and upper mids ~0.10 too low
+  ours before post's fix: 0.09 0.42 0.57 0.71
+Post's lower-mid curve (post piece is DONE, won w4r2) landed p25 exactly but dragged the median and p75 down with it — that's the heaviness three critics see, not the face ratio. You may now make a surgical change to the post curve in src/render/post.js (note it in pieces/post.md too): hold p5 ~0.09 and p25 ~0.27, bring p50 back to ~0.55 and p75 to ~0.75 (i.e. the curve should bend only BELOW ~0.3, not across the midtones). Then land the white-cube right face at 0.63 with a cool sky tint (18:00 note). Re-measure these percentiles and log them. This should also fix what the materials/civic/downtown critics called "dark punched windows".
+
+### Coordinator note (2026-09-26 18:40) — shadow-map artifacts at close zoom (from surface w4r2)
+I looked at one-bakery (w4r2-critic, crop x1300-2300,y1300-1900 of the 3200px shot): (a) the tree-planter shadow on the lot paving has hard stair-stepped (texel-aliased) edges; (b) thin dark streaks run along the left plinth side band — looks like acne/peter-panning striping; both appear only close up. Please A/B them (shadow filter radius / bias / cascade texel density at close zoom) and fix without re-introducing the old res-4 acne. Log before/after crops.
+
+## 2026-09-26 — wave 4 round 4 (builder)
+
+Critic w4r3 (picked ref), agreeing with w4r2: tower canyons and right faces sink to a
+"dim, desaturated navy-grey". Wants the shade airier and cool-tinted, not darker. Coordinator
+18:00: keep faceratio at 0.63, but tint the right face cool (B > R by ~8-12).
+
+Measured before (scratchpad lt4/, one boot, normal-masked downtown box of iso-mid):
+- faceratio 1 : 0.89 : 0.63, right (154,155,150): neutral and slightly warm.
+- World AO on/off: key-side walls 146 -> 165, roofs 135 -> 148, frame p25 65 -> 78.
+  The ratio map shows it mostly as grey bands over every recessed window column. The
+  narrow-gap term fires on the pilasters beside each pane, then aoPower 2 squares it.
+  aoWallGrad and aoDirect add to the same bands. aoCrease had no measurable effect.
+- Right-face light sources on the white probe: without the hemi/IBL wall fill the right
+  face is still 146/143/134, and without the bounce it is 137/144/148. So the WARM key
+  bounce (materials uBounce) is what greys the far wall.
+
+Changed
+- lighting.js: wallFillAway 0.80 -> 0.68, wallFillTint [0.88,0.98,1.16] ->
+  [0.80,0.97,1.36], aoGap 0.5 -> 0.85, aoWallGrad 0.3 -> 0.15, aoDirect 0.85 -> 0.6,
+  aoFillFloor 0 -> 0.45, aoFillSaturation 0.3 -> 0.5.
+- engine.js: DAY_BOUNCE_SCALE 0.08 -> 0.04 (only takes effect by day, via artAmount).
+
+After
+- faceratio 1 : 0.89 : 0.63 (unchanged), right face (149,156,162): B-R +13, sky-tinted.
+- iso-mid downtown, same boot, old vs new: key-side walls 161 -> 178, right faces 106 -> 110
+  with B-R -1 -> +14 (chroma 43 -> 38; the cooler fill takes a little hue off warm walls,
+  and fill saturation 0.5 wins most of it back). Roof p25 104 -> 114, frame p10/25/50
+  25/66/118 -> 28/75/123, "dark mass" share of the frame (luma 35-100, not asphalt)
+  0.254 -> 0.235.
+- iso-close, same boot: the wall-foot, prop-foot and plinth contact lines look the same
+  (the ground term and aoTight are untouched). The walls are only a little lighter.
+- check.sh clean; iso-mid / iso-close / iso had zero console errors. fps 3-12 is load noise
+  (load avg ~10). Only uniform values changed.
+
+Next (only on a real critic gap)
+- If right faces now read too cold/blue on warm walls: wallFillTint -> [0.84,0.97,1.28]
+  and/or aoFillSaturation 0.5 -> 0.6.
+- Lot/road "plinth seam" (w4r3 note): the seam lands on near-black asphalt, so the
+  lighting AO can't show it there. If it is still wanted, it belongs to the lot-side band
+  colour (models/core.js lotSide) or to a darker kerb foot.

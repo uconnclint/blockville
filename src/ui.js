@@ -36,6 +36,29 @@ const STICKER_SECTIONS = [
   { key: 'deco',      emoji: '🌼', label: 'Deco' },
 ];
 
+// Runtime icon art (icons.js renders our own voxel models into PNG data URLs
+// after boot and hands them over via ui.setArt). Keys: 'cat-<catalog id>' for
+// buildings, 'icon-*' / 'btn-multiplayer' for menu glyphs. Baked PNG art in
+// ART (art.js) always wins over a runtime icon with the same key.
+const RUNTIME_ART = {};
+function artUrl(key) {
+  if (!key) return null;
+  return (ART && ART[key]) || RUNTIME_ART[key] || null;
+}
+// Emoji that menus/missions/toasts receive from main.js → an art key. Anything
+// unmapped keeps its emoji (setGlyph fallback).
+const EMOJI_ART = {
+  '✋': 'icon-move', '🛣️': 'tool-road', '🌳': 'tool-tree', '🧹': 'tool-erase',
+  '🏠': 'cat-small-house', '🏘️': 'cat-big-house', '🏬': 'cat-mall', '🏪': 'cat-grocery',
+  '🏫': 'cat-school', '🚒': 'cat-fire-station', '🏞️': 'cat-park', '🏭': 'cat-toy-factory',
+  '💨': 'cat-wind-power', '🌬️': 'cat-wind-power', '🦆': 'cat-pond', '🎠': 'cat-carousel',
+  '🌉': 'icon-bridge', '🎯': 'icon-target', '✏️': 'icon-pencil', '📸': 'btn-photo', '📷': 'btn-photo',
+  '📖': 'btn-sticker-book', '🤝': 'btn-multiplayer', '🆕': 'btn-new-city', '🗂️': 'btn-cities',
+  '🎈': 'icon-balloon', '🔑': 'icon-key', '🚀': 'icon-rocket', '⭐': 'icon-star', '🗺️': 'icon-map',
+  '🙂': 'face-ok', '💼': 'stat-jobs', '🌿': 'stat-air', '▶️': 'btn-play', '❓': 'btn-help',
+};
+function emojiArt(emoji) { return emoji ? (EMOJI_ART[String(emoji)] || null) : null; }
+
 const CONFETTI_EMOJI = ['🎉', '⭐', '🎈', '✨', '🏆', '🌈', '🎊'];
 const CONFETTI_COLORS = ['#ffb703', '#fb8500', '#8ecae6', '#219ebc', '#ff7096', '#90e0a0', '#c77dff'];
 
@@ -111,6 +134,25 @@ const CSS = `
 #bv-ui .bv-em .bv-glyph-img { width: 1.7em; height: 1.7em; }
 #bv-ui .bv-bn-em .bv-glyph-img { width: 1.5em; height: 1.5em; }
 #bv-ui .bv-step-em .bv-glyph-img { width: 1.2em; height: 1.2em; }
+/* runtime voxel icons (icons.js) in cards, stickers, menus */
+#bv-ui .bv-c-em .bv-glyph-img { width: 50px; height: 50px; }
+#bv-ui .bv-cell-em .bv-glyph-img { width: 56px; height: 56px; }
+#bv-ui .bv-mission-em .bv-glyph-img { width: 48px; height: 48px; }
+#bv-ui .bv-t-em { display: inline-flex; align-items: center; }
+#bv-ui .bv-ss-em { display: inline-flex; }
+#bv-ui .bv-ss-em .bv-glyph-img { width: 30px; height: 30px; }
+#bv-ui .bv-il { display: inline-flex; align-items: center; justify-content: center; gap: .4em; }
+#bv-ui h2.bv-il { display: flex; }
+#bv-ui .bv-il-ic { display: inline-flex; flex: 0 0 auto; line-height: 1; }
+#bv-ui .bv-il-ic .bv-glyph-img { width: 1.6em; height: 1.6em; }
+#bv-ui .bv-favs-tag { display: inline-flex; align-items: center; gap: 3px; }
+#bv-ui .bv-favs-ic .bv-glyph-img { width: 20px; height: 20px; }
+#bv-ui .bv-city-sub-ic { display: inline-flex; vertical-align: middle; }
+#bv-ui .bv-city-sub-ic .bv-glyph-img { width: 16px; height: 16px; }
+#bv-ui .bv-project-btn { display: flex; align-items: center; gap: 10px; }
+#bv-ui .bv-project-btn .bv-project-ic { display: inline-flex; flex: 0 0 auto; margin: 0; opacity: 1; font-size: 30px; }
+#bv-ui .bv-project-btn .bv-project-ic .bv-glyph-img { width: 46px; height: 46px; }
+#bv-ui .bv-project-btn .bv-project-tx { margin: 0; opacity: 1; font-size: 15px; }
 #bv-ui .bv-mode-em .bv-glyph-img { width: 2.4em; height: 2.4em; }
 #bv-ui .bv-menu-overlay { background-size: cover; background-position: center; }
 #bv-ui .bv-menu-logo { text-align: center; margin: -6px 0 2px; }
@@ -418,6 +460,9 @@ const CSS = `
 .bv-cta:active { transform: scale(.95); }
 .bv-choices { display: flex; gap: 12px; }
 .bv-choices .bv-cta { width: auto; flex: 1; }
+#bv-ui .bv-choices { flex-wrap: wrap; }
+#bv-ui .bv-choices .bv-cta.bv-il { flex: 1 1 44%; justify-content: flex-start; text-align: left; }
+#bv-ui .bv-choices .bv-il ~ .bv-cta:not(.bv-il) { flex-basis: 100%; }
 .bv-cta.bv-soft {
   background: #eef4f8; color: var(--bv-text);
   box-shadow: 0 6px 16px rgba(43,106,153,.16);
@@ -824,7 +869,7 @@ export function initUI(hooks) {
       setFavorites: noop, setMission: noop, hideMission: noop,
       showCityManager: noop, announce: noop,
       // v3.5 multiplayer
-      showMultiplayer: noop, setMultiplayer: noop,
+      showMultiplayer: noop, setMultiplayer: noop, setArt: noop,
       showSplash: (o) => { try { if (o && typeof o.onPlay === 'function') o.onPlay(); } catch (_) {} },
       hideSplash: noop,
     };
@@ -852,7 +897,10 @@ export function initUI(hooks) {
   function setGlyph(container, key, emoji) {
     if (!container) return;
     container.textContent = '';
-    const url = (ART && key) ? ART[key] : null;
+    if (key) { container.dataset.artKey = key; container._bvEmoji = emoji; }
+    else if (container.dataset) delete container.dataset.artKey;
+    const url = artUrl(key);
+    if (!url && key) wantArt(key);
     if (url) {
       const img = document.createElement('img');
       img.className = 'bv-glyph-img';
@@ -863,6 +911,43 @@ export function initUI(hooks) {
     } else {
       container.textContent = emoji || '';
     }
+  }
+
+  // Keys shown as emoji because their runtime icon isn't drawn yet: batch them
+  // to main (→ icons.want) so what's on screen is rendered first.
+  let wantQ = null;
+  function wantArt(key) {
+    if (typeof h.onArtWanted !== 'function') return;
+    if (!wantQ) {
+      wantQ = [];
+      Promise.resolve().then(() => { const q = wantQ; wantQ = null; call(h.onArtWanted, q); });
+    }
+    wantQ.push(key);
+  }
+  // A glyph span for an emoji (+ optional explicit art key) — used where menus
+  // used to print the emoji as text.
+  function glyphSpan(cls, emoji, key) {
+    const s = el('span', cls);
+    setGlyph(s, key || emojiArt(emoji), emoji);
+    s.setAttribute('aria-hidden', 'true');
+    return s;
+  }
+  // "icon + label" button content (help menu, splash, city manager …)
+  function iconLabel(btn, emoji, text, key) {
+    btn.textContent = '';
+    btn.classList.add('bv-il');
+    btn.appendChild(glyphSpan('bv-il-ic', emoji, key));
+    btn.appendChild(el('span', 'bv-il-tx', text));
+    return btn;
+  }
+  // runtime icon arrived: upgrade every glyph that asked for this key
+  function applyArt(key, url) {
+    if (!key || !url) return;
+    RUNTIME_ART[key] = url;
+    if (ART && ART[key]) return;            // baked PNG already shown
+    let nodes = [];
+    try { nodes = root.querySelectorAll('[data-art-key="' + String(key).replace(/"/g, '') + '"]'); } catch (_) { /* ignore */ }
+    nodes.forEach((n) => { setGlyph(n, key, n._bvEmoji); });
   }
 
   function iconBtn(cls, glyph, ariaLabel, title, artKey) {
@@ -1042,7 +1127,7 @@ export function initUI(hooks) {
   newBtn.addEventListener('click', showNewConfirm);
   top.appendChild(newBtn);
 
-  const findBtn = iconBtn('bv-btn-round', '🎯', 'Find my city', 'Center the camera on what you built');
+  const findBtn = iconBtn('bv-btn-round', '🎯', 'Find my city', 'Center the camera on what you built', 'icon-target');
   findBtn.addEventListener('click', () => call(h.onFocusCity));
   top.appendChild(findBtn);
 
@@ -1163,7 +1248,7 @@ export function initUI(hooks) {
   mpBadge.style.display = 'none';
   const mpBadgeCode = el('span', 'bv-mpbadge-code', '');
   const mpBadgePeers = el('span', 'bv-mpbadge-peers', '');
-  mpBadge.appendChild(el('span', 'bv-mpbadge-ic', '🤝'));
+  mpBadge.appendChild(glyphSpan('bv-mpbadge-ic', '🤝', 'btn-multiplayer'));
   mpBadge.appendChild(mpBadgeCode);
   mpBadge.appendChild(mpBadgePeers);
   mpBadge.addEventListener('click', () => showMultiplayer());
@@ -1235,7 +1320,9 @@ export function initUI(hooks) {
   // ===== FAVORITES ROW ("⭐ Recent") =====
   const favs = el('div', 'bv-favs');
   favs.setAttribute('aria-label', 'Recent buildings');
-  const favsTag = el('span', 'bv-favs-tag', '⭐ Recent');
+  const favsTag = el('span', 'bv-favs-tag');
+  favsTag.appendChild(glyphSpan('bv-favs-ic', '⭐', 'icon-star'));
+  favsTag.appendChild(document.createTextNode('Recent'));
   const favsStrip = el('div', 'bv-favs-strip');
   favs.appendChild(favsTag);
   favs.appendChild(favsStrip);
@@ -1246,7 +1333,8 @@ export function initUI(hooks) {
   mission.setAttribute('role', 'region');
   mission.setAttribute('aria-label', 'City Helper');
   const misTop = el('div', 'bv-mission-top');
-  const misEm = el('span', 'bv-mission-em', '🙂');
+  const misEm = el('span', 'bv-mission-em');
+  setGlyph(misEm, 'face-ok', '🙂');
   misEm.setAttribute('aria-hidden', 'true');
   const misTitle = el('div', 'bv-mission-title', '');
   misTop.appendChild(misEm); misTop.appendChild(misTitle);
@@ -1287,7 +1375,7 @@ export function initUI(hooks) {
   // Toolbar tab/tool → custom-art key. (Declared before the calls below so it's
   // not in the temporal dead zone when addDirectTool/addCategoryTab run.)
   const TAB_ART = {
-    move: null, road: 'tool-road', tree: 'tool-tree', bulldoze: 'tool-erase',
+    move: 'icon-move', road: 'tool-road', tree: 'tool-tree', bulldoze: 'tool-erase',
     homes: 'tab-homes', shops: 'tab-shops', factories: 'tab-factories',
     fun: 'tab-fun', downtown: 'tab-downtown', deco: 'tab-deco',
   };
@@ -1488,7 +1576,7 @@ export function initUI(hooks) {
       b.dataset.entry = String(entry.id);
       b.setAttribute('role', 'listitem');
       b.setAttribute('aria-pressed', 'false');
-      const em = el('span', 'bv-c-em', entry.emoji || '🏢'); em.setAttribute('aria-hidden', 'true');
+      const em = el('span', 'bv-c-em'); setGlyph(em, 'cat-' + entry.id, entry.emoji || '🏢'); em.setAttribute('aria-hidden', 'true');
       b.appendChild(em);
       b.appendChild(el('span', 'bv-c-lbl', entry.name || String(entry.id)));
       const tw = Math.max(1, Math.round(Number(entry.tw) || 1));
@@ -1567,14 +1655,14 @@ export function initUI(hooks) {
   function toolEmojiName(tool) {
     if (tool == null) return null;
     if (typeof tool === 'string') {
-      if (tool === 'move') return { em: DIRECT_MOVE.emoji, nm: DIRECT_MOVE.label };
-      if (tool === 'road') return { em: DIRECT_ROAD.emoji, nm: DIRECT_ROAD.label };
-      if (tool === 'tree') return { em: DIRECT_TREE.emoji, nm: DIRECT_TREE.label };
-      if (tool === 'bulldoze') return { em: DIRECT_ERASE.emoji, nm: DIRECT_ERASE.label };
+      if (tool === 'move') return { em: DIRECT_MOVE.emoji, nm: DIRECT_MOVE.label, art: TAB_ART.move };
+      if (tool === 'road') return { em: DIRECT_ROAD.emoji, nm: DIRECT_ROAD.label, art: TAB_ART.road };
+      if (tool === 'tree') return { em: DIRECT_TREE.emoji, nm: DIRECT_TREE.label, art: TAB_ART.tree };
+      if (tool === 'bulldoze') return { em: DIRECT_ERASE.emoji, nm: DIRECT_ERASE.label, art: TAB_ART.bulldoze };
       return { em: '🧱', nm: String(tool) };
     }
     if (typeof tool === 'object') {
-      return { em: tool.emoji || '🏢', nm: tool.name || String(tool.id || '') };
+      return { em: tool.emoji || '🏢', nm: tool.name || String(tool.id || ''), art: tool.id != null ? 'cat-' + tool.id : null };
     }
     return null;
   }
@@ -1585,7 +1673,7 @@ export function initUI(hooks) {
       root.classList.remove('bv-banner-on');
       return;
     }
-    bannerEm.textContent = info.em;
+    setGlyph(bannerEm, info.art, info.em);
     bannerNm.textContent = info.nm;
     banner.classList.remove('bv-show');
     void banner.offsetWidth;
@@ -1725,7 +1813,7 @@ export function initUI(hooks) {
   function pushToast(text, emoji, variant) {
     const t = el('div', 'bv-toast' + (variant === 'blocked' ? ' bv-toast-blocked' : ''));
     if (variant === 'blocked') t.setAttribute('role', 'alert');
-    if (emoji) { const e = el('span', 'bv-t-em', String(emoji)); e.setAttribute('aria-hidden', 'true'); t.appendChild(e); }
+    if (emoji) t.appendChild(glyphSpan('bv-t-em', String(emoji)));
     t.appendChild(el('span', 'bv-t-tx', text == null ? '' : String(text)));
     toastLayer.appendChild(t);
     while (toastLayer.children.length > 3) {
@@ -1755,7 +1843,7 @@ export function initUI(hooks) {
       let secGot = 0;
       const secWrap = el('div', 'bv-sticker-sec');
       const title = el('div', 'bv-sticker-sec-title');
-      title.appendChild(el('span', 'bv-ss-em', sec.emoji));
+      title.appendChild(glyphSpan('bv-ss-em', sec.emoji, TAB_ART[sec.key] || null));
       title.appendChild(el('span', null, sec.label));
       const countEl = el('span', 'bv-ss-count', '');
       title.appendChild(countEl);
@@ -1769,7 +1857,8 @@ export function initUI(hooks) {
         const cell = el('div', 'bv-cell ' + (has ? 'bv-got' : 'bv-locked'));
         const tw = Math.max(1, Number(entry.tw) || 1), td = Math.max(1, Number(entry.td) || 1);
         const clue = (tw > 1 || td > 1) ? ('Mystery ' + tw + '×' + td) : ('Mystery ' + sec.label.slice(0, -1));
-        cell.appendChild(el('span', 'bv-cell-em', entry.emoji || '🏢'));
+        const cem = el('span', 'bv-cell-em'); setGlyph(cem, 'cat-' + entry.id, entry.emoji || '🏢');
+        cell.appendChild(cem);
         cell.appendChild(el('span', 'bv-cell-lbl', has ? (entry.name || String(entry.id)) : clue));
         grid.appendChild(cell);
       });
@@ -1778,7 +1867,7 @@ export function initUI(hooks) {
       stickerBodyEl.appendChild(secWrap);
     });
     if (stickerHeadEl) {
-      stickerHeadEl.textContent = '📖 Sticker Book — ' + got + ' / ' + total + ' collected';
+      iconLabel(stickerHeadEl, '📖', 'Sticker Book — ' + got + ' / ' + total + ' collected', 'btn-sticker-book');
     }
   }
 
@@ -1795,7 +1884,7 @@ export function initUI(hooks) {
       closeStickerBook();
       const ov = el('div', 'bv-overlay');
       const card = el('div', 'bv-card bv-sticker-card');
-      stickerHeadEl = el('h2', 'bv-sticker-head', '📖 Sticker Book');
+      stickerHeadEl = iconLabel(el('h2', 'bv-sticker-head'), '📖', 'Sticker Book', 'btn-sticker-book');
       card.appendChild(stickerHeadEl);
       card.appendChild(el('p', 'bv-sticker-head', 'Place a building to discover it. Your discoveries stay safe if you use Undo.'));
       stickerBodyEl = el('div', 'bv-sticker-scroll');
@@ -1905,11 +1994,11 @@ export function initUI(hooks) {
     closeOverlay();
     const ov = el('div', 'bv-overlay');
     const card = el('div', 'bv-card');
-    card.appendChild(el('h2', null, 'Welcome to Blockville! 🏙️'));
+    card.appendChild(iconLabel(el('h2'), '🏙️', 'Welcome to Blockville!', 'tab-downtown'));
     card.appendChild(el('p', null, "Let's build an awesome city together!"));
     const steps = el('div', 'bv-steps');
     [
-      ['✋', '1. Use Move to explore the map', null],
+      ['✋', '1. Use Move to explore the map', 'icon-move'],
       ['🛣️', '2. Roads draw when you drag', 'step-1-roads'],
       ['🏠', '3. Buildings place when you tap', 'step-2-build'],
     ].forEach(([emo, tx, art]) => {
@@ -1930,13 +2019,13 @@ export function initUI(hooks) {
     closeOverlay();
     const ov = el('div', 'bv-overlay');
     const card = el('div', 'bv-card');
-    card.appendChild(el('h2', null, 'How can I help? ❓'));
+    card.appendChild(iconLabel(el('h2'), '❓', 'How can I help?', 'btn-help'));
     card.appendChild(el('p', null, 'Choose one—nothing will be reset unless you ask.'));
     const choices = el('div', 'bv-choices');
-    const how = el('button', 'bv-cta bv-soft', '🎮 How to play');
-    const projects = el('button', 'bv-cta bv-soft', '🗺️ Choose a project');
-    const modes = el('button', 'bv-cta bv-soft', '🧸 Change play mode');
-    const restart = el('button', 'bv-cta bv-soft', '🎯 Restart helper missions');
+    const how = iconLabel(el('button', 'bv-cta bv-soft'), '🎮', 'How to play', 'btn-help');
+    const projects = iconLabel(el('button', 'bv-cta bv-soft'), '🗺️', 'Choose a project', 'icon-map');
+    const modes = iconLabel(el('button', 'bv-cta bv-soft'), '🧸', 'Change play mode', 'mode-picture-play');
+    const restart = iconLabel(el('button', 'bv-cta bv-soft'), '🎯', 'Restart helper missions', 'icon-target');
     const close = el('button', 'bv-cta', 'Back to my city');
     [how, projects, modes, restart, close].forEach((b) => { b.type = 'button'; choices.appendChild(b); });
     how.addEventListener('click', showWelcomeOverlay);
@@ -1954,13 +2043,17 @@ export function initUI(hooks) {
     closeOverlay();
     const ov = el('div', 'bv-overlay');
     const card = el('div', 'bv-card bv-mode-card');
-    card.appendChild(el('h2', null, 'Choose a city project 🗺️'));
+    card.appendChild(iconLabel(el('h2'), '🗺️', 'Choose a city project', 'icon-map'));
     card.appendChild(el('p', null, 'Try one idea, or close this and keep free-building.'));
     const list = el('div', 'bv-project-list');
     (Array.isArray(projects) ? projects : []).forEach((p) => {
       if (!p || !p.id) return;
-      const b = el('button', 'bv-project-btn', (p.emoji || '🎯') + ' ' + (p.title || 'Project'));
-      b.type = 'button'; b.appendChild(el('span', null, p.say || ''));
+      const b = el('button', 'bv-project-btn');
+      b.appendChild(glyphSpan('bv-project-ic', p.emoji || '🎯', p.art || emojiArt(p.emoji || '🎯')));
+      const bt = el('span', 'bv-project-tx');
+      bt.appendChild(el('b', null, p.title || 'Project'));
+      bt.appendChild(el('span', null, p.say || ''));
+      b.type = 'button'; b.appendChild(bt);
       b.addEventListener('click', () => { closeOverlay(); call(onPick || h.onProject, p.id); });
       list.appendChild(b);
     });
@@ -2009,18 +2102,19 @@ export function initUI(hooks) {
     const primary = el('button', 'bv-splash-btn');
     primary.type = 'button';
     const nm = (o.cityName && String(o.cityName).slice(0, 16)) || '';
-    primary.textContent = o.hasSave ? ('▶️  Continue' + (nm ? ' — ' + nm : ' Building')) : '🚀  Start Building!';
+    if (o.hasSave) iconLabel(primary, '▶️', 'Continue' + (nm ? ' — ' + nm : ' Building'), 'btn-play');
+    else iconLabel(primary, '🚀', 'Start Building!', 'icon-rocket');
     primary.addEventListener('click', () => { closeSplash(); call(o.onPlay); });
     actions.appendChild(primary);
 
     if (o.hasSave) {
-      const nc = el('button', 'bv-splash-btn bv-sec', '🆕  New City');
+      const nc = iconLabel(el('button', 'bv-splash-btn bv-sec'), '🆕', 'New City', 'btn-new-city');
       nc.type = 'button';
       nc.addEventListener('click', () => { closeSplash(); call(o.onNew); });
       actions.appendChild(nc);
     }
 
-    const friend = el('button', 'bv-splash-btn bv-friend', '🤝  Play With a Friend');
+    const friend = iconLabel(el('button', 'bv-splash-btn bv-friend'), '🤝', 'Play With a Friend', 'btn-multiplayer');
     friend.type = 'button';
     friend.addEventListener('click', () => { closeSplash(); call(o.onJoin); });
     actions.appendChild(friend);
@@ -2111,7 +2205,8 @@ export function initUI(hooks) {
       b.type = 'button';
       b.setAttribute('aria-pressed', 'false');
       b.setAttribute('aria-label', item.label || String(item.id));
-      const em = el('span', 'bv-pic-em', item.emoji || '🧱'); em.setAttribute('aria-hidden', 'true');
+      const em = el('span', 'bv-pic-em'); em.setAttribute('aria-hidden', 'true');
+      setGlyph(em, item.kind === 'entry' ? 'cat-' + item.id : (TAB_ART[item.id] || emojiArt(item.emoji)), item.emoji || '🧱');
       b.appendChild(em);
       b.appendChild(el('span', 'bv-pic-lbl', item.label || String(item.id)));
       b.addEventListener('click', () => onPicClick(item));
@@ -2166,7 +2261,7 @@ export function initUI(hooks) {
       const b = el('button', 'bv-fav-btn');
       b.type = 'button';
       b.setAttribute('aria-label', 'Place ' + (entry.name || String(entry.id)));
-      const em = el('span', 'bv-fav-em', entry.emoji || '🏢'); em.setAttribute('aria-hidden', 'true');
+      const em = el('span', 'bv-fav-em'); setGlyph(em, 'cat-' + entry.id, entry.emoji || '🏢'); em.setAttribute('aria-hidden', 'true');
       b.appendChild(em);
       b.appendChild(el('span', 'bv-fav-lbl', entry.name || String(entry.id)));
       b.addEventListener('click', () => {
@@ -2183,7 +2278,7 @@ export function initUI(hooks) {
   // ---------- city helper (mission) ----------
   function setMissionData(m) {
     const d = m || {};
-    misEm.textContent = d.emoji || '🎯';
+    setGlyph(misEm, d.art || emojiArt(d.emoji || '🎯'), d.emoji || '🎯');
     misTitle.textContent = d.title == null ? '' : String(d.title);
     missionSay = d.say == null ? '' : String(d.say);
     const total = Math.max(0, Math.round(Number(d.total) || 0));
@@ -2220,7 +2315,7 @@ export function initUI(hooks) {
     closeMultiplayer();
     const ov = el('div', 'bv-overlay');
     const card = el('div', 'bv-card');
-    card.appendChild(el('h2', null, '🤝 Build Together'));
+    card.appendChild(iconLabel(el('h2'), '🤝', 'Build Together', 'btn-multiplayer'));
 
     if (mpState.online) {
       card.appendChild(el('p', null, 'Share this code so friends can build with you:'));
@@ -2238,13 +2333,13 @@ export function initUI(hooks) {
       const choices = el('div', 'bv-mp-choices');
       const hostBtn = el('button', 'bv-mp-choice');
       hostBtn.type = 'button';
-      hostBtn.appendChild(el('span', 'bv-mp-ce', '🎈'));
+      hostBtn.appendChild(glyphSpan('bv-mp-ce', '🎈', 'icon-balloon'));
       hostBtn.appendChild(el('span', null, 'Build Together'));
       hostBtn.appendChild(el('span', 'bv-mode-age', 'Get a code'));
       hostBtn.addEventListener('click', () => { call(h.onHost); });
       const joinBtn = el('button', 'bv-mp-choice');
       joinBtn.type = 'button';
-      joinBtn.appendChild(el('span', 'bv-mp-ce', '🔑'));
+      joinBtn.appendChild(glyphSpan('bv-mp-ce', '🔑', 'icon-key'));
       joinBtn.appendChild(el('span', null, 'Join a Friend'));
       joinBtn.appendChild(el('span', 'bv-mode-age', 'Type a code'));
       joinBtn.addEventListener('click', () => showJoinForm(card));
@@ -2266,7 +2361,7 @@ export function initUI(hooks) {
   }
   function showJoinForm(card) {
     card.textContent = '';
-    card.appendChild(el('h2', null, '🔑 Join a Friend'));
+    card.appendChild(iconLabel(el('h2'), '🔑', 'Join a Friend', 'icon-key'));
     card.appendChild(el('p', null, "Type your friend's code:"));
     const input = el('input', 'bv-mp-input');
     input.type = 'text'; input.placeholder = 'SUNNY-TIGER'; input.maxLength = 40;
@@ -2329,13 +2424,16 @@ export function initUI(hooks) {
       info.appendChild(el('div', 'bv-city-name', c.name || 'City'));
       const day = Math.max(1, Math.round(Number(c.day) || 1));
       const pop = Math.max(0, Math.round(Number(c.pop) || 0));
-      info.appendChild(el('div', 'bv-city-sub', 'Day ' + day + ' · 👥 ' + pop));
+      const sub = el('div', 'bv-city-sub', 'Day ' + day + ' · ');
+      sub.appendChild(glyphSpan('bv-city-sub-ic', '👥', 'stat-people'));
+      sub.appendChild(document.createTextNode(' ' + pop));
+      info.appendChild(sub);
       row.appendChild(info);
       const acts = el('div', 'bv-city-acts');
       if (isCurrent) {
         acts.appendChild(el('span', 'bv-city-current-tag', 'Playing'));
       } else {
-        const load = iconBtn('bv-city-act', '▶️', 'Play ' + (c.name || 'city'), 'Play');
+        const load = iconBtn('bv-city-act', '▶️', 'Play ' + (c.name || 'city'), 'Play', 'btn-play');
         load.addEventListener('click', () => {
           const cb = cityArgs.onLoad || h.onCityLoad;
           call(cb, c.id);
@@ -2343,7 +2441,7 @@ export function initUI(hooks) {
         });
         acts.appendChild(load);
       }
-      const ren = iconBtn('bv-city-act', '✏️', 'Rename ' + (c.name || 'city'), 'Rename');
+      const ren = iconBtn('bv-city-act', '✏️', 'Rename ' + (c.name || 'city'), 'Rename', 'icon-pencil');
       ren.addEventListener('click', () => {
         showNameDialog(c.name || '', (name) => {
           const cb = cityArgs.onRename || h.onCityRename;
@@ -2353,7 +2451,7 @@ export function initUI(hooks) {
         });
       });
       acts.appendChild(ren);
-      const del = iconBtn('bv-city-act', '🗑️', 'Delete ' + (c.name || 'city'), 'Delete');
+      const del = iconBtn('bv-city-act', '🗑️', 'Delete ' + (c.name || 'city'), 'Delete', 'icon-trash');
       del.addEventListener('click', () => {
         const cb = cityArgs.onDelete || h.onCityDelete;
         call(cb, c.id);
@@ -2370,10 +2468,10 @@ export function initUI(hooks) {
     cityArgs = opts || {};
     const ov = el('div', 'bv-overlay');
     const card = el('div', 'bv-card bv-cities-card');
-    card.appendChild(el('h2', null, 'My Cities 🗂️'));
+    card.appendChild(iconLabel(el('h2'), '🗂️', 'My Cities', 'btn-cities'));
     const listWrap = el('div', 'bv-cities-list');
     card.appendChild(listWrap);
-    const newC = el('button', 'bv-cta', '➕ New City');
+    const newC = iconLabel(el('button', 'bv-cta'), '➕', 'New City', 'btn-new-city');
     newC.type = 'button';
     newC.addEventListener('click', () => {
       showNameDialog('', (name) => {
@@ -2581,6 +2679,9 @@ export function initUI(hooks) {
     showCityManager(opts) {
       try { showCityManagerOverlay(opts); } catch (_) { /* ignore */ }
     },
+
+    // runtime icon art from icons.js (key → PNG data URL); upgrades live glyphs
+    setArt(key, url) { try { applyArt(key, url); } catch (_) { /* ignore */ } },
 
     showMultiplayer() { try { showMultiplayer(); } catch (_) { /* ignore */ } },
     setMultiplayer(s) { try { applyMultiplayer(s); } catch (_) { /* ignore */ } },

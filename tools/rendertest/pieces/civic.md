@@ -393,3 +393,59 @@ the rest of the lot as forecourt/stairs/apron/parking. Sprawl horizontally, not 
 - If the budget bites, cut fire coursing to step 6 or the lit faces only, and thin the school's dormers and quoins.
 - The museum picked up dark reveals automatically; it could also use inkBand under its entablature.
 - Zoo, carnival and water slide are still pure res 4 with no ink.
+
+## 2026-09-26 — wave 4 round 1 (builder)
+**Direction (user, relayed):** if it wins, stop — no chasing "wow". So this round is a small consolidation pass, not a rebuild.
+**Changed (civic.js only):**
+- Fire station is now broad and LOW (coordinator 19:10): a 2-storey hall (bays plus one office floor, TOP = y+23, was y+30) that is deeper (Z16..46). The second office row and its stone course are gone. The tower is TOP+13 and has shifted to z13..27, with end and tower windows respaced to match.
+- Monument obelisk: the pedestal is broader and more decisive (a wide plaque stage, corner buttresses with finials, a fluted collar). The shaft is THICK and tapers smoothly 18→10 fine, where before it was slim with bands ("lighthouse"). It has one carved relief panel low on all 4 sides.
+- Monument plaques are civBronze on every variant. The v1 gold rendered as flat orange tiles on the white pedestal.
+- civText letters go through `signLit()` (night-lit signs; same colour by day).
+**Coherence list:** no items are tagged civic.
+**Measured:** 6 shots (gal-fun-1/2/3, gal-deco-1, one-stadium, one-school) all have 0 console errors. FPS was 14–42 at dpr 2 under load average ~7–17 (other builders), so it isn't a budget reading. gal-fun-1 has 567k scene tris.
+**Self-judged vs ref05 civic crop:** gal-fun-1 (city hall, fire station, obelisk plaza, lido) matches ref05 composition and beats it on crispness/detail → stopping here.
+**Not ours:** a flat unshaded white box turned up again on the pool lot's back-right corner in gal-fun-1. It was absent in the 12:00 run of the same shot, so it is non-deterministic and outside the model (see the r10 note).
+**Next (only if a critic loses us the round):** give the 1×1 fun items (water slide, mini golf, skate park) more lot coverage, and consider a 2×2 playground.
+
+### Coordinator note (2026-09-26 14:35, wave 4) — lot fill + gallery scale
+w4r1 critic: "buildings sit small in oversized road-framed blocks with wide empty plinth margins". I looked at the pair: detail quality is close; two things lose it.
+1. Scale: gal-fun-* frames 6 buildings, so buildings render ~1.5x smaller than the ref05 crop the critic picks. In tools/demo-city.js gallery() (road-framed categories), you may tighten the camera so one gallery page shows buildings at iso-mid scale (~232 px/tile at 2x) — fewer per frame is fine. Don't change homes/shops/deco/factories layouts (other pieces own those judgments).
+2. Lot fill: in a mixed row, a building shallower than the row's depth leaves empty tiles that terrain fills as parking/infill, and your own lots keep a wide empty rim. Ref05 landmarks fill the block edge to edge: plaza paving, hedges, fountains, flag poles and benches run right up to the kerb; the building mass takes ~70% of the lot. Grow footprint dressing to the lot edge; heavier cornices and rooftop clutter as the critic says.
+
+## 2026-09-26 — wave 4 round 2 (builder)
+**Critic gap (w4r1 lost):** the civic buildings looked like tiny models on oversized, empty lots. Buildings should cover about 80% of the lot, and the fire station and city hall roofs need clutter. The zoo and pool lots were flat.
+**Changed:**
+- **Fire station (civic.js):** the hall now runs kerb to kerb, X 2..60 × Z 12..50 (was 4..57 × 16..46). Building coverage went from 42% to about 59%, and the rest is aprons full of engines.
+  - Piers are now [22..58] and bays shifted to match. The tower moved to x2..12 × z9..25. End, left and tower windows were respaced.
+  - Aprons are 11 deep: 9-long engines fill the bays to the kerb, and the engine in the open bay noses half out of the door. A hatched keep-clear box sits in front of the tower.
+  - Roof kit: 10 AC units, a skylight, a 3-row solar array, a water tank on legs with a red band, a stair hatch, vents, duct runs and a radio mast with a red light.
+- **Pool (fun.js):** the hall spans the whole back edge (x 2..60, was 2..30), like ref05's hotel over its pool. Signs read SWIM CLUB front and back and POOL on the right. The barrel vault runs longer and there is more roof gear, including solar rows and a hatch. The kiddie pool moved into the court at x4..17 × z27..40, the umbrella deck was re-spaced at x50/57 × z3..33, and the crowd and swimmers were re-targeted.
+- **City hall:** 6 fine AC units plus 2 glazed skylights on the main block's flat roof tops, either side of the tower.
+- **Monument:** a small cuboid lot tree in every corner garden on the kerb side, so the plaza crowds up to the kerb (ref05).
+**Measured:** tris (base + parts, v0/v1) fire 36.7k, pool 30.2k (was ~24k), school v2 48k, fountain 23k. 6 shots have 0 console errors. buildMs for gal-fun-1 was 64 s (78 s last round) under load average ~17, and fps is not a budget reading. **Snap:** the lens saw authored front + right. Note that the pool hall now blocks part of the water on the flipped snap (back + left).
+**Self-judged:** gal-fun-1 now reads as filled lots: fire station and lido are lot-wide buildings, and the city hall and monument were already dense.
+**Next (only if a critic loses us the round):** give the zoo more height (an aviary dome or visitor centre on its back edge), and deepen the city hall if it is called small again. The school mirror constant `54 - z` is hard-coded, so shift MZ carefully.
+
+### Coordinator note (2026-09-26 17:10) — after w4r2: windows read as dark holes
+w4r2 critic: facades are "flat grey/red slabs with dark punched window holes"; ref05 civic windows are glassy blue with pale stone frames. Check what your windows render as (PIL-sample a few panes on city hall/fire station at gal-fun scale): they should land in the measured ref05 glass range (#245a76 … #6cb6ce, with a lighter top/streak pane), framed by pale stone (not darkGray/metalDark), with recess depth only 1 voxel so the pane catches light. Pale stone pilasters + cornices on the big grey/red faces. The lot-fill note from 14:35 still stands.
+
+## 2026-09-26 — wave 4 round 3 (builder)
+**Critic gap (w4r2 lost), agreed with w4r1:** the facades read as flat slabs with dark punched window holes. ref05's windows are glassy blue with light reflections, set in trim. (The "cars and buses scattered" on our lots are life.js traffic stopping at the kerb; the school buses are not in the model.)
+**Changed:**
+- **`fineWin` (civic.js), which every caller shares** (hall, fire, pool, museum):
+  - Default glass is now `dtGlass` (mid blue), not `dtGlassDark`. The top res-4 row of the glass is `civGlass`, a lighter sky catch.
+  - A fine diagonal `dtGlassHi` reflection streak (2 wide, plus a thin second line on wide panes) replaces the 3-voxel corner glint.
+  - The dark reveal is **1 fine deep by default** (it was 2). At 2, its side and top faces hid most of the glass at the iso angle; that is where the "punched holes" came from. Pass `deep: true` to get the old reveal back.
+  - 2-wide windows have no centre mullion now.
+- **School and fire station:** glass switched from `dtGlassDark` to `dtGlass`.
+- **Pool hall (fun.js):** pilasters every 8 instead of every 4. Windows are framed in the band colour instead of ink, with no mullion. It now reads as blue glass in a white and red frame rather than red stripes round dark slots.
+**Measured:**
+- Tris (base + parts): school v2 50.0k (was ~48k), fire v1 36.6k (unchanged), pool v2 32.1k (was 30.2k), museum 41.9k.
+- 6 shots, 0 console errors. FPS 6–43 at dpr 2 under load (not a budget reading). gal-fun-1 has 613k scene tris.
+- Before/after crop of gal-fun-1: the city hall now shows a clear grid of blue glass windows with highlights, and the fire station and pool hall both show blue glass. No regressions in gal-fun-2/3, gal-deco-1 or one-school.
+**Next (only if a critic loses us the round):**
+- Compose the lots further: twin small fountains in the city hall lawns, a marked parking row on the pool lot.
+- The core 3×5 "M" reads as "H" in SWIM CLUB. It could get a civText override like GLYPH_S.
+
+### Coordinator note (2026-09-26 19:55) — gallery fixed for you
+The "small islands in oversized asphalt blocks" verdict (w4r1, w4r3) was mostly the test gallery: enclosed grass tiles next to 1×1 items and in the spare edge columns were dressed by terrain as car parks/paving. tools/demo-city.js now fills them with parks on gal-fun-* pages, so every block is full. Don't spend effort on that point; focus on multi-material facades (stone, brick, trim, glass) and busy lots as the critic says.

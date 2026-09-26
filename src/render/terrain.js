@@ -442,13 +442,19 @@ const MTN_PEAK_K = 1.3;      // r8: summit up to 2.3x its linear height ...
 const MTN_PEAK_MAX = 96;     // ... but never above this many world units
 const MTN_SUB = 2.0;         // wave-2: half-tile cells snap to 2-unit terraces
 const MTN_APRON = 10;        // wave-2: tiles of off-map apron a border range steps down over
+const MTN_TIER = 4.0;        // w4: terrace height. Cells snap to 4-unit tiers on a SMOOTHED height
+                             // field, so a range reads as clean concentric stepped tiers (ref06),
+                             // not 2-unit rubble; wall strata still band every MTN_SUB.
 // Mountain stone strata (sRGB). Two bands per zone alternate every MTN_SUB
 // units up a riser. Values are pre-lighting albedos: under this scene's sun a
 // 0x6e6a64 top lands ~#aaa6a0 on screen (ref06 rock tops ~0.8x grass value).
 const STONE_HEX = {
-  earth: [0x756857, 0x6f6352],   // warm earthy stone at the foot (ties to the lime field)
-  warm:  [0x686460, 0x63605b],   // warm grey mid-slopes
-  cool:  [0x62666f, 0x5d616a],   // cool blue-grey under the snow
+  // w4 (critic: "a grey rubble heap with dull muddy terraces"): the brown
+  // earth band is gone -- clean light stone at the foot, ref06's neutral
+  // mid grey above, a faintly cool grey under the snow.
+  earth: [0x7c7a74, 0x75736d],   // light warm stone at the foot
+  warm:  [0x6e6d6a, 0x686764],   // neutral mid grey
+  cool:  [0x666a71, 0x61656c],   // faintly cool grey under the snow
   turf:  [0x6f8c3c, 0x6f8c3c],   // grass lip down a terrace riser
 };
 
@@ -915,13 +921,17 @@ export function lawnPark(state, lawn) {
       }
       zone[hub] = LZ_HUB;
     }
-    // zones for the rest, from a 2x2-tile patch hash so groves CLUMP
+    // zones for the rest. w4 r2 (critic w4r1: park trees "bunched into a few
+    // clumps and bare stretches between them"): nearly every tile is now
+    // GROVE, which props plants as the open field's EVEN quincunx of small
+    // trees, rocks and cube bushes; a few flower-bed and picnic tiles remain
+    // as accents (no more 2x2 grove patches, no bare CLEARING tiles).
     for (const i of cells) {
       if (zone[i]) continue;
       const x = i % N, z = (i / N) | 0;
-      const hp = hash2(x >> 1, z >> 1, seed ^ 0x6a2d), ht = hash2(x, z, seed ^ 0x1b77);
-      if (path[i]) zone[i] = ht < 0.35 ? LZ_FLOWER : LZ_GROVE;
-      else zone[i] = hp < 0.5 ? LZ_GROVE : (ht < 0.3 ? LZ_FLOWER : ht < 0.6 ? LZ_PICNIC : LZ_CLEAR);
+      const ht = hash2(x, z, seed ^ 0x1b77);
+      if (path[i]) zone[i] = ht < 0.18 ? LZ_FLOWER : LZ_GROVE;
+      else zone[i] = ht < 0.10 ? LZ_FLOWER : ht < 0.16 ? LZ_PICNIC : LZ_GROVE;
     }
   }
   return { path, zone };
@@ -1120,7 +1130,7 @@ void thTerrain() {
   alb *= 1.0 + 0.22 * wR * paint * clamp( wn.y, 0.0, 1.0 ) * ( 1.0 - snowAmt );
 
   // ---- off-map open sea ------------------------------------------------------
-  float sea = clamp( vMask.y - 1.0, 0.0, 1.0 );
+  float sea = smoothstep( 0.40, 0.60, vMask.y - 1.0 );   // w4: crisp off-map coastline, not a smear
   alb = mix( alb, uSeaFar, sea );
   thGrassW = ( 1.0 - wS ) * ( 1.0 - wD ) * ( 1.0 - wR ) * ( 1.0 - snowAmt ) * ( 1.0 - paint ) *
              ( 1.0 - sea ) * smoothstep( 0.7, 0.95, wn.y );
@@ -2289,7 +2299,10 @@ export class Terrain {
     const out = [8, 20, 44, 92, 180, 340, 620, 1080, R];
     const c = [];
     for (let k = out.length - 1; k >= 0; k--) c.push(-out[k]);
-    for (let i = 0; i <= 8; i++) c.push(W * i / 8);
+    // w4: one vertex per TILE along the border (was 8 per side = 80 units),
+    // so a sea / land / range border hands over at its own tile instead of
+    // smearing its weights across an 80-unit quad (the iso-wide "hazy smear").
+    for (let i = 0; i <= N; i++) c.push(W * i / N);
     for (let k = 0; k < out.length; k++) c.push(W + out[k]);
     return c;
   }
@@ -2343,7 +2356,11 @@ export class Terrain {
       return 2;
     }
     let a;
-    if (c === C_ROCK) a = [0.16, 0.00, 0.16, 0.68];
+    // w4: a range border is continued by the rock APRON's own geometry
+    // (_buildRock); the flat skirt beside it is plain field. Painting it with
+    // rock weight smeared a pale grey-lavender band ~400 units out across the
+    // lawn (critic: "the bottom-left edge is a blurry, hazy smear").
+    if (c === C_ROCK) a = [0.90, 0.03, 0.04, 0.03];
     else if (c === C_SAND) a = [0.14, 0.80, 0.06, 0.00];
     else if (c === C_DIRT) a = [0.96, 0.02, 0.02, 0.00];
     else a = [0.90, 0.03, 0.04, 0.03];
@@ -2657,25 +2674,48 @@ export class Terrain {
         const d = Math.max(Math.abs(sx - csx), Math.abs(sz - csz));
         const D = 12 + 8 * vnoiseW(sx * 0.13, sz * 0.13, 2203);
         const st = MTN_SUB;
-        q = Math.round(qe * Math.max(0, 1 - d / D) * (1 - 0.35 * Math.min(1, d / D)) / st) * st;
-        const r = hash2(sx, sz, 6607);
-        if (q > st * 2) { if (r < 0.06) q += st; else if (r > 0.95) q -= st; }
+        q = Math.round(qe * Math.max(0, 1 - d / D) * (1 - 0.35 * Math.min(1, d / D)) / MTN_TIER) * MTN_TIER;
         if (q < st) q = 0;
       }
     }
     else if (h <= 0) q = 0;
     else {
+      // w4: sample a 3x3-SMOOTHED tile height field (the sim's per-tile
+      // levels are noisy, which meshed as rubble), bilinearly a quarter of
+      // the way toward the neighbours, and snap to MTN_TIER tiers. No random
+      // crags / notches: the contours are clean concentric rings.
       const dx = (sx & 1) ? 1 : -1, dz = (sz & 1) ? 1 : -1;
-      const g = (x, z) => { const v = this._mtnH(state, x, z); return v === null ? h : v; };
-      const v = h * 0.5625 + (g(tx + dx, tz) + g(tx, tz + dz)) * 0.1875 + g(tx + dx, tz + dz) * 0.0625;
-      const st = MTN_SUB;
-      q = Math.round(v / st) * st;
-      const r = hash2(sx, sz, 6607);
-      if (q > st * 2) { if (r < 0.06) q += st; else if (r > 0.95) q -= st; }
-      q = Math.max(st, q);
+      const g = (x, z) => this._mtnHs(state, x, z, h, memo);
+      const v = g(tx, tz) * 0.5625 + (g(tx + dx, tz) + g(tx, tz + dz)) * 0.1875 + g(tx + dx, tz + dz) * 0.0625;
+      q = Math.round(v / MTN_TIER) * MTN_TIER;
+      q = Math.max(MTN_SUB, q);
     }
     memo.set(key, q);
     return q;
+  }
+
+  // 3x3-smoothed mountain tile height (world units), memoised per build.
+  // Off-map neighbours take `self`; non-mountain tiles count as 0, so the
+  // range's rim eases down instead of ending in a one-tile cliff.
+  _mtnHs(state, x, z, self, memo) {
+    const tm = memo.tiles || (memo.tiles = new Map());
+    const key = z * 4096 + x;
+    if (tm.has(key)) return tm.get(key);
+    const c = this._mtnH(state, x, z);
+    let r;
+    if (c === null) r = self;
+    else if (c <= 0) r = 0;
+    else {
+      let s = 0, w = 0;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const k = (dx ? 1 : 2) * (dz ? 1 : 2);
+        const v = this._mtnH(state, x + dx, z + dz);
+        s += (v === null ? c : v) * k; w += k;
+      }
+      r = Math.max(MTN_SUB, s / w);
+    }
+    tm.set(key, r);
+    return r;
   }
 
   _stone(y, hTop) {
@@ -2697,6 +2737,7 @@ export class Terrain {
     const sl = Math.max(6, Math.min(this.snowLevel, this._mtnMax - 2));
     const snowH = this._mtnY(sl) - st * 0.5;
     const grassH = this._mtnY(2) + 0.1;
+    const grassTop = Math.max(grassH, Math.min(peak * 0.24, snowH - MTN_TIER * 3));
     // Height where a neighbour cell's wall should stop (ground / bed / border).
     const baseOf = (nsx, nsz, nh) => {
       if (nh === null) return this.borderY;
@@ -2720,12 +2761,14 @@ export class Terrain {
         if (!q) continue;
         const wx0 = sx * S, wx1 = wx0 + S, wz0 = sz * S, wz1 = wz0 + S;
         const tone = 0.30 + 0.40 * hash2(sx, sz, 1777);
-        const snowy = q >= snowH + (hash2(sx, sz, 4441) - 0.5) * st * 1.2 ? 1 : 0;
+        const snowy = q >= snowH ? 1 : 0;   // w4: a clean snow contour on the tiers
         const hg = hash2(sx >> 1, sz >> 1, 5153);
         // green lower slopes thinning out with height (tile-clustered ledges)
         const tq = q / peak;
-        const grassy = !snowy && (q <= grassH || (q <= grassH + st * 1.5 && hg < 0.6) ||
-          hash2(sx >> 1, sz >> 1, 8123) < 0.62 * (1 - sstep(0.12, 0.50, tq)));
+        // w4: the green foothill tiers follow a clean contour (the old
+        // per-tile hashed ledges read as patchy muddy rubble)
+        void hg; void tq;
+        const grassy = !snowy && q <= grassTop;
         const capCol = this._stone(q - 0.01, peak);
         // cap, with AO in corners that meet a taller cell
         const cAO = (dx, dz) => {
@@ -2778,7 +2821,7 @@ export class Terrain {
         // the odd boulder on a bare rock ledge
         if (!grassy && !snowy) {
           const r = hash2(sx, sz, 991);
-          if (r < 0.08) {
+          if (r < 0.0) {   // w4: no loose boulders on the tiers (read as rubble)
             const hs = (k) => hash2(sx * 7 + k, sz * 13 - k, 211);
             const bx = 1.2 + Math.floor(hs(1) * 2) * 0.6, bz = 1.2 + Math.floor(hs(2) * 2) * 0.6;
             const by = 0.8 + Math.floor(hs(3) * 2) * 0.6;

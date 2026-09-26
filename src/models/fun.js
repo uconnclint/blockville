@@ -197,7 +197,10 @@ function bSwimmingPool(rng, v) {
   // contrast … no crisp outline". Now three storeys (a glazed arcade and two
   // office floors), a grid of colour-band pilasters between dark-reveal
   // windows, and an ink line under every band, canopy and the roof lip.
-  const HX0 = 2, HX1 = 30, HZ0 = 41, HZ1 = 60, G2 = y + 8, RT = y + 22, ink = INK();
+  // (w4r2) critic: "the pool lot is flat and underfilled". The hall now runs
+  // the whole back edge (x 2..60) like ref05's hotel over its pool, so the
+  // lot reads as a building with a pool court, not a pool with a kiosk.
+  const HX0 = 2, HX1 = 60, HZ0 = 41, HZ1 = 60, G2 = y + 8, RT = y + 22, ink = INK();
   g.box(HX0, y, HZ0, HX1, RT - 1, HZ1, C.signWhite);
   g.box(HX0, G2 - 1, HZ0, HX1, G2 - 1, HZ1, band);
   g.walls(HX0 - 1, RT, HZ0 - 1, HX1 + 1, RT, HZ1 + 1, C.signWhite);                 // roof slab lip
@@ -217,21 +220,27 @@ function bSwimmingPool(rng, v) {
     E.box(2 * u0, 2 * (y + 6) - 1, 0, 2 * u1 + 1, 2 * (y + 6) - 1, 4, ink);            // shadow line under the canopy
     E.box(2 * u0, 2 * y + 11, -1, 2 * u1 + 1, 2 * y + 11, -1, ink);                  // dark head of the arcade glazing
     // two office floors: pilasters in the band colour, dark-reveal windows
-    for (let u = u0 + 4; u < u1; u += 4) F.box(u, G2, 1, u, RT - 2, 1, band);
+    // (w4r3) critic w4r2: the hall read as a red slab striped by pilasters
+    // round dark window holes. Pilasters only every 8 (white stone between
+    // window pairs) and glassy blue windows with a reflection streak.
+    for (let u = u0 + 8; u < u1; u += 8) F.box(u, G2, 1, u, RT - 2, 1, band);
     for (const u of [u0, u1]) F.box(u, G2, 1, u, RT - 2, 1, band);
-    for (const fy of [G2 + 1, G2 + 7]) for (let u = u0 + 1; u + 2 < u1; u += 4) fineWin(g, side, pl, u, fy, 3, 5, { frame: C.signWhite, trim: C.signWhite, glass: C.dtGlass, hood: false });
+    for (const fy of [G2 + 1, G2 + 7]) for (let u = u0 + 1; u + 2 < u1; u += 4) fineWin(g, side, pl, u, fy, 3, 5, { frame: C.signWhite, trim: C.signWhite, surround: band, glass: C.dtGlass, hood: false, mullion: false });
     E.box(2 * u0 - 2, 2 * (G2 + 6), 0, 2 * u1 + 3, 2 * (G2 + 6), 2, C.signWhite);    // floor ledge
     E.box(2 * u0 - 2, 2 * (G2 + 6) - 1, 0, 2 * u1 + 3, 2 * (G2 + 6) - 1, 0, ink);
   }
   const FB = facade(g, 'front', HZ0);
-  FB.box(9, G2 - 2, 2, 23, G2, 2, band);
-  hiText(g, 'front', HZ0, 16, G2 - 1.5, 'POOL', C.signWhite, 2);
+  FB.box(20, G2 - 2, 2, 42, G2, 2, band);
+  hiText(g, 'front', HZ0, 31, G2 - 1.5, 'SWIM CLUB', C.signWhite, 2);
   const FL = facade(g, 'left', HX0);
   FL.box(43, G2 - 2, 2, 57, G2, 2, band);
   hiText(g, 'left', HX0, 50, G2 - 1.5, 'POOL', C.signWhite, 2);
   const FK = facade(g, 'back', HZ1);
-  FK.box(9, G2 - 2, 2, 23, G2, 2, band);
-  hiText(g, 'back', HZ1, 16, G2 - 1.5, 'POOL', C.signWhite, 2);
+  FK.box(20, G2 - 2, 2, 42, G2, 2, band);
+  hiText(g, 'back', HZ1, 31, G2 - 1.5, 'SWIM CLUB', C.signWhite, 2);
+  const FR = facade(g, 'right', HX1);
+  FR.box(43, G2 - 2, 2, 57, G2, 2, band);
+  hiText(g, 'right', HX1, 50, G2 - 1.5, 'POOL', C.signWhite, 2);
   fineDentils(g, HX0, HZ0, HX1, HZ1, 2 * (RT - 1), C.signWhite);
   fineBand(g, HX0, HZ0, HX1, HZ1, 2 * (RT - 1) - 1, band, 1, 1);
   inkBand(g, HX0, HZ0, HX1, HZ1, 2 * (RT - 1) - 2, 1, 1);
@@ -247,11 +256,11 @@ function bSwimmingPool(rng, v) {
   // (r9) a smooth fine glass barrel vault: semicircular section, white ribs
   // every 4 fine, a ridge rail and a white curb (the res-4 vault was steps)
   { const Hp = hiGrid(g), Y0 = 2 * (RT + 1), Zc = 2 * 50 + 1, R = 8;
-    Hp.box(10, Y0, Zc - R - 1, 55, Y0, Zc + R, C.signWhite);
-    for (let x = 10; x <= 55; x++) for (let k = -R; k < R; k++) {
+    Hp.box(10, Y0, Zc - R - 1, 75, Y0, Zc + R, C.signWhite);
+    for (let x = 10; x <= 75; x++) for (let k = -R; k < R; k++) {
       const zc = k + 0.5, hgt = Math.sqrt(Math.max(0, R * R - zc * zc));
       const top = Y0 + 1 + Math.round(hgt * 0.9);
-      const rib = (x - 10) % 5 === 0 || x === 55;
+      const rib = (x - 10) % 5 === 0 || x === 75;
       for (let yy = Y0 + 1; yy <= top; yy++) {
         const surf = yy >= top - 1 || Math.abs(k + 0.5) >= R - 1.5;
         if (!surf && !rib) continue;
@@ -259,31 +268,35 @@ function bSwimmingPool(rng, v) {
       }
     }
   }
-  for (const [ax, az] of [[10, 112], [18, 112], [46, 112], [54, 112], [10, 84], [54, 84]]) fineAC(g, ax, 2 * (RT + 1), az, 6, 5);   // (r9) fine roof gear
-  // ---- kiddie pool with a mushroom fountain, back-middle
-  g.walls(35, y, 42, 48, y, 55, C.signWhite);
-  g.box(36, y - 1, 43, 47, y - 1, 54, C.civPoolLt);
-  g.box(39, y - 1, 46, 44, y - 1, 51, C.civPool);
-  g.box(41, y, 48, 42, y + 3, 49, C.signWhite); g.box(39, y + 4, 46, 44, y + 4, 51, C.red); g.box(40, y + 5, 47, 43, y + 5, 50, C.red);
-  for (const [dx, dz] of [[40, 47], [43, 50]]) g.set(dx, y + 5, dz, C.signWhite);
+  for (const [ax, az] of [[10, 112], [18, 112], [46, 112], [54, 112], [10, 84], [54, 84], [84, 86], [92, 86], [100, 86], [84, 110], [92, 110]]) fineAC(g, ax, 2 * (RT + 1), az, 6, 5);   // (r9) fine roof gear
+  { const Hr = hiGrid(g), RY = 2 * (RT + 1);                     // (w4r2) solar rows + a stair hatch on the new east roof
+    for (let r = 0; r < 3; r++) { const z0 = 92 + r * 6; Hr.box(100, RY, z0, 117, RY, z0 + 4, C.signWhite); Hr.box(101, RY + 1, z0, 116, RY + 1, z0 + 3, C.civNavy); }
+    Hr.box(106, RY, 86, 113, RY + 3, 90, C.offwhite); Hr.box(106, RY + 4, 86, 113, RY + 4, 90, C.metalDark); }
+  // ---- kiddie pool with a mushroom fountain, in the court by the hall
+  const KX = -31, KZ = -15;                                           // (w4r2) moved from under the hall's new east wing
+  g.walls(35 + KX, y, 42 + KZ, 48 + KX, y, 55 + KZ, C.signWhite);
+  g.box(36 + KX, y - 1, 43 + KZ, 47 + KX, y - 1, 54 + KZ, C.civPoolLt);
+  g.box(39 + KX, y - 1, 46 + KZ, 44 + KX, y - 1, 51 + KZ, C.civPool);
+  g.box(41 + KX, y, 48 + KZ, 42 + KX, y + 3, 49 + KZ, C.signWhite); g.box(39 + KX, y + 4, 46 + KZ, 44 + KX, y + 4, 51 + KZ, C.red); g.box(40 + KX, y + 5, 47 + KZ, 43 + KX, y + 5, 50 + KZ, C.red);
+  for (const [dx, dz] of [[40, 47], [43, 50]]) g.set(dx + KX, y + 5, dz + KZ, C.signWhite);
   // ---- sun deck on the right: umbrellas over pairs of loungers
-  for (const [ux, uz, k] of [[50, 8, 0], [57, 8, 1], [50, 20, 1], [57, 20, 0], [50, 32, 0], [57, 32, 1], [55, 46, 1], [55, 57, 0]]) {
+  for (const [ux, uz, k] of [[50, 3, 1], [57, 3, 0], [50, 13, 0], [57, 13, 1], [50, 23, 1], [57, 23, 0], [50, 33, 0], [57, 33, 1]]) {
     fineUmbrella(g, ux, y, uz + 2, umb[k], umb[1 - k], 5, 5);        // (r9) fine umbrellas + loungers
     fineLounger(g, ux - 3, y, uz, 'z', C.signWhite, umb[k]); fineLounger(g, ux + 2, y, uz, 'z', C.signWhite, C.civSeat);
   }
   // ---- clipped hedge beds (ref05) along the front and the deck edges
-  for (const [x0, z0, x1, z1] of [[2, 1, 12, 1], [16, 1, 30, 1], [34, 1, 46, 1], [33, 60, 48, 60], [4, 25, 20, 26]])
+  for (const [x0, z0, x1, z1] of [[2, 1, 12, 1], [16, 1, 30, 1], [34, 1, 46, 1], [19, 24, 26, 25]])
     bush(g, x0, y, z0, x1, z1, 3);
-  for (const [x0, z0, x1, z1] of [[5, 29, 12, 35], [15, 29, 22, 35]]) {
+  for (const [x0, z0, x1, z1] of [[19, 29, 25, 38]]) {
     g.walls(x0, y, z0, x1, y, z1, C.lotRim); g.box(x0 + 1, y, z0 + 1, x1 - 1, y + 1, z1 - 1, V.bush);
     fineBlooms(g, x0 + 1, z0 + 1, x1 - 1, z1 - 1, y + 2, [V.petals[0], V.petals[2], V.petals[3], V.petals[4]]);
   }
-  tree(g, 23, y, 32, { w: 5, h: 4, trunk: 8, tier: false }); tree(g, 59, y, 40, { w: 5, h: 4, trunk: 8, tier: false });
+  tree(g, 23, y, 26, { w: 5, h: 4, trunk: 8, tier: false }); tree(g, 45, y, 37, { w: 5, h: 4, trunk: 8, tier: false });
   bin(g, 45, y, 38); bin(g, 3, y, 22);
   // ---- people: bathers on the deck and terrace, swimmers
-  crowd(g, [[48, 2, 61, 40], [3, 22, 26, 27], [44, 38, 60, 44], [26, 36, 44, 40]], y, 12, 6 + vi);
+  crowd(g, [[48, 2, 61, 39], [3, 22, 18, 25], [48, 36, 60, 39], [26, 35, 44, 39], [5, 36, 26, 39]], y, 14, 6 + vi);
   swimmers(g, 5, 5, 41, 32, y, 16, 1 + vi);
-  swimmers(g, 37, 44, 46, 53, y, 4, 5 + vi);
+  swimmers(g, 6, 29, 15, 38, y, 4, 5 + vi);
   return doneHi(g);
 }
 

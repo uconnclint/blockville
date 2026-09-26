@@ -63,7 +63,8 @@ const COPE_FACE = 0.2;          // pale coping face at the top of every deck wal
 // screen-right (shade) under the default iso camera, like every building.
 // Round 8: px 0.58 -> 0.8 (the shade face went navy); both faces now also
 // carry WALL_GLOW (self-lit share of their colour, see bankMaterial).
-const WALL_TONE = { px: 0.86, pz: 0.72, nx: 0.86, nz: 0.80 };   // round 14: the shade pair reads darker (ref05 #0087cc lit / #004d95 shade)   // round 11: both near-equal like ref05 (#0087c9 / #008bd4)
+const WALL_TONE = { px: 0.92, pz: 0.84, nx: 0.92, nz: 0.88 };   // wave4: w3 critic 'near-black navy band' -> mid azure
+//   // round 14: the shade pair reads darker (ref05 #0087cc lit / #004d95 shade)   // round 11: both near-equal like ref05 (#0087c9 / #008bd4)
 const WALL_GLOW = 0.25;          // wave2: 0.65 clipped the wall to one flat #0994f8 (ref #0081bf -> #033f7e)
 const GROUND_TOP = 0.03;        // wall top where the bank is plain ground
 const WALL_SINK = 0.45;          // walls run this far below the surface
@@ -83,11 +84,13 @@ const BANK_COLORS = {
   copeTop: 0xdcd8cc,            // light concrete coping (ART-DIRECTION kerb colour)
   copeSide: 0xa9a293,           // its outer faces: a crisp grey edge on the sand
   copeFace: 0xe6e2d6,           // its face over the water, capping the wall
-  wall: 0x034f8a,               // round 14: top tile row; lower rows step darker (ROW_K)               // ref05 wall #0087c9..#008bd4 (lit side) — pool tiles
-  wallAlt: 0x045591,            // alternate tile column (subtle)
-  wallSeam: 0x033f74,           // seams between the wall tiles (round 13: softer)
+  wall: 0x0a7cc6,               // round 14: top tile row; lower rows step darker (ROW_K)               // ref05 wall #0087c9..#008bd4 (lit side) — pool tiles
+  wallAlt: 0x0c84ce,            // alternate tile column (subtle)
+  wallSeam: 0x086cb2,           // seams between the wall tiles (round 13: softer)
   wallWet: 0xd6f6ff,             // round 14: a bright foam edge line where the water meets the wall            // round 13: bright waterline strip where the water laps the wall
-  wallGrout: 0x022c58,          // shadow line tucked under the coping lip
+  wallGrout: 0x04447e,          // (unused since w4r2: the top of the wall is a light lip, wallLip)
+  wallLip: 0x7fdcff,            // w4r2: light highlight along the top edge of the pool wall (critic w4r1)
+  deckKerb: 0xe8e2d2,           // w4r2: light concrete kerb on the deck's outer edge (lot-plinth rim)
   pier: 0xdcd8cc,               // bridge piers: light concrete like the kerbs
   pierSide: 0xb9b4a6,
   wallTop: 0x6fcdef,            // thin light band where a grass bank meets the wall
@@ -490,46 +493,87 @@ void main() {
   // screen #04a8c8 -> ~#07d0f4, #0590b4 -> ~#07c4ef, #035c90 -> ~#0698ee,
   // #02487c -> ~#0587e2 (the grade lifts and saturates blue hard, so every
   // body colour is authored with B well under 0xd0).
-  vec2 pd = p;   // smooth ramp (a 4 u block staircase read as diamond contour rings)
+  // ---- wave 4: a MOSAIC gradient (ref05's pool, measured) -----------------
+  // Critic w3: "one flat very saturated blue broken only by a few hard-edged
+  // dark rectangles; ref05 goes from bright cyan shallows along the walls to
+  // deeper blue toward the middle; soften / blend the depth patches so they
+  // step down gradually". Looked at closely, ref05's pool IS its gradient,
+  // drawn in tiles: quarter-tile squares, each one of a few pool blues, the
+  // light ones crowding the walls and the deep ones the middle, mixed along
+  // the way (an ordered dither of shallow -> deep). So: the smooth depth
+  // ramp is read at the centre of every 2 u tile, a per-tile jitter of about
+  // one step (a 4 u block term + a 2 u term, so tiles clump into 1-3 tile
+  // patches) is added, and the sum is quantised into five levels. No random
+  // foreign-tone rectangles any more: every patch is simply a neighbouring
+  // depth step, so the lake always reads shallow rim -> deep middle. Each
+  // tile's jitter breathes slowly, so a few tiles on a level boundary fade
+  // one step up or down at a time — the gentle "shimmer" of the pool floor.
+  // ---- wave 4 round 2: SHELF RING + one smooth deep + sparse big tiles -----
+  // Critic w4r1: "the quarter-tile mosaic is a random noisy checker of darker
+  // squares, so the shallow -> deep change does not read; ref05 has a clearly
+  // lighter shallow shelf band along the rim that steps down to ONE smooth,
+  // deeper blue with a few bright glints". Critic w3r1 agreed ("lighter
+  // shallow band along every wall; blend the depth so it steps down
+  // gradually"). So the per-tile dither is gone. Tone is now:
+  //  1. a continuous light shelf ring (Chebyshev, square corners) inside
+  //     every wall, with a brighter lip right against the wall;
+  //  2. a hard step down off the shelf onto a smooth, broad ramp that keeps
+  //     darkening toward the middle (5-tap averaged shore distance, read
+  //     per pixel so there are no contours or rings);
+  //  3. a SPARSE scatter of LARGE (1-2 tile) half-step-lighter/darker square
+  //     tiles, slowly fading in and out (ref05's big pool-floor tiles).
   float r5 = 10.0;
-  float dAvg = texture2D(uShoreMap, pd / uWorldSize).r * 2.0;
-  dAvg += texture2D(uShoreMap, (pd + vec2( r5, 0.0)) / uWorldSize).r;
-  dAvg += texture2D(uShoreMap, (pd + vec2(-r5, 0.0)) / uWorldSize).r;
-  dAvg += texture2D(uShoreMap, (pd + vec2(0.0,  r5)) / uWorldSize).r;
-  dAvg += texture2D(uShoreMap, (pd + vec2(0.0, -r5)) / uWorldSize).r;
+  float dAvg = texture2D(uShoreMap, p / uWorldSize).r * 2.0;
+  dAvg += texture2D(uShoreMap, (p + vec2( r5, 0.0)) / uWorldSize).r;
+  dAvg += texture2D(uShoreMap, (p + vec2(-r5, 0.0)) / uWorldSize).r;
+  dAvg += texture2D(uShoreMap, (p + vec2(0.0,  r5)) / uWorldSize).r;
+  dAvg += texture2D(uShoreMap, (p + vec2(0.0, -r5)) / uWorldSize).r;
   dAvg *= uFar / 6.0;
-  float dBlk = texture2D(uShoreMap, pd / uWorldSize).r * uFar;
-  float gD = smoothstep(uDepth.x, uDepth.y, dAvg);
-  vec3 body = mix(uShallowColor, uMidColor, smoothstep(0.0, 0.45, gD));
-  body = mix(body, uDeepColor, smoothstep(0.40, 1.0, gD));
-
-  // Sparse large tile patches: two drifting layers of big rectangles, sized
-  // and placed on the 4 u tile block (1 - 3 map tiles across). Mostly a step
-  // DARKER (ref05's #04abdf / #0290d2 blocks on the #10cdef body), some a
-  // step lighter; never dark hard against a wall.
-  float k = 0.0;
+  // the ramp drops quickly off the shelf, then keeps deepening slowly
+  float dR = mix(min(dAvg, dS * 1.4 + 3.0), dAvg, smoothstep(10.0, 15.0, dS));
+  float Ls = 1.25 + 1.75 * smoothstep(uDepth.x, 20.0, dR)
+                  + 0.95 * smoothstep(14.0, uDepth.y + 14.0, dR);
   float pDetA = 1.0 - smoothstep(0.8, 1.6, pxw);
-  float aaP = pxw * 0.55 + 1e-3;
-  if (pDetA > 0.001) {
-    float sp = t * uPatchMix.y;
-    k += patchLayer(p, uPatch.xy, vec2(0.83, 0.31) * sp, 3.7, 0.55, aaP);
-    k += patchLayer(p, uPatch.zw, vec2(-0.42, 0.66) * sp, 19.1, 0.42, aaP);
-    // calm on the coastal strip by the map edge (read as speckle in iso-wide)
-    vec2 eqP = min(p, uWorldSize - p);
-    k = clamp(k, -2.0, 1.0) * pDetA * uPatchMix.x * smoothstep(20.0, 44.0, min(eqP.x, eqP.y))
-      * (1.0 - 0.75 * smoothstep(0.0, 0.7, uNight));   // night: calm, no black squares
+  vec2 eqP = min(p, uWorldSize - p);
+  float calm = smoothstep(20.0, 44.0, min(eqP.x, eqP.y)) * pDetA
+             * (1.0 - 0.6 * smoothstep(0.0, 0.7, uNight));
+  // sparse big tiles: one candidate per cell, 1-2 tiles, snapped to 4 u
+  float shelfW = max(uFoam.y, pxw * 2.0);
+  {
+    vec2 S = uPatch.xy;
+    vec2 c = floor(p / S);
+    float h0 = hash21(c + 3.7);
+    if (h0 < 0.30) {
+      vec2 f = p - c * S;
+      vec2 h1 = vec2(hash21(c + 17.3), hash21(c + 41.9));
+      vec2 sz = floor(mix(vec2(8.0), vec2(16.0), h1) / 4.0 + 0.5) * 4.0;
+      vec2 lo = floor((S - sz) * vec2(hash21(c + 73.1), hash21(c + 5.7)) / 4.0 + 0.5) * 4.0;
+      vec2 cov2 = smoothstep(lo - aaD, lo + aaD, f) * (1.0 - smoothstep(lo + sz - aaD, lo + sz + aaD, f));
+      float cov = cov2.x * cov2.y;
+      // shallows lean light, the deep middle leans dark
+      float pL = mix(0.7, 0.2, smoothstep(1.4, 3.6, Ls));
+      float sgn = hash21(c + 29.3) < pL ? -1.0 : 1.0;
+      float per = 16.0 + 10.0 * hash21(c + 12.3);
+      float env = 0.65 + 0.35 * sin(t * 6.2832 / per + h0 * 40.0);
+      // never on the shelf or right beside it
+      cov *= smoothstep(shelfW + 3.0, shelfW + 6.0, dS);
+      Ls += sgn * 0.5 * cov * env * uPatchMix.x * calm;
+    }
   }
-  float nearW = smoothstep(2.0, 6.0, dBlk);
-  float kd = max(-k, 0.0) * nearW, kl = max(k, 0.0);
-  body = mix(body, uCoreColor, clamp(kd, 0.0, 1.0) * 0.70);
-  body = mix(body, uAbyssColor, clamp(kd - 1.0, 0.0, 1.0) * 0.55);
-  body = mix(body, uEdgeColor, kl * 0.42);
+  float Lv = clamp(Ls, 0.0, 4.0);
+  vec3 body = mix(uEdgeColor, uShallowColor, clamp(Lv, 0.0, 1.0));
+  body = mix(body, uMidColor, clamp(Lv - 1.0, 0.0, 1.0));
+  body = mix(body, uDeepColor, clamp(Lv - 2.0, 0.0, 1.0));
+  body = mix(body, uCoreColor, clamp(Lv - 3.0, 0.0, 1.0));
 
-  // the rim step: a narrow Chebyshev band hugging every wall (square
-  // corners), a step lighter than the shallows — sunlit pool shallows
-  float rimW = max(uFoam.y, pxw * 2.0);
-  float rim = 1.0 - smoothstep(rimW - aaD, rimW + aaD, dS);
-  body = mix(body, uPatchColor, rim * 0.85);
+  // the shelf: a continuous light ring hugging every wall (square corners),
+  // with a brighter lip right against the wall
+  float shelf = 1.0 - smoothstep(shelfW - aaD, shelfW + aaD, dS);
+  body = mix(body, uEdgeColor, shelf);
+  float lipW = max(shelfW * 0.36, pxw * 1.5);
+  float lip = 1.0 - smoothstep(lipW - aaD, lipW + aaD, dS);
+  body = mix(body, uPatchColor, lip * 0.9);
+  float rimW = shelfW;
   vec3 bodyBase = body;
   // coarse depth on a half-tile block, only used to step the open sea in
   float B = 4.0;
@@ -617,7 +661,7 @@ void main() {
       ctr += ax * (ph * 1.6 - 0.8);                 // a slow slide along the bar
       float L = floor(2.0 + 2.5 * hash21(fc + 4.4) + 0.5) * 0.5;
       float wB = max(0.34, pxw * 0.8);
-      float nb = hash21(fc + 6.2) < 0.5 ? 2.0 : 3.0;
+      float nb = hash21(fc + 6.2) < 0.6 ? 1.0 : 2.0;   // wave4: 3-bar stacks read as a menu glyph
       for (int i = 0; i < 3; i++) {
         float fi = float(i);
         if (fi >= nb) break;
@@ -637,7 +681,7 @@ void main() {
     vec2 Gs = vec2(uSpark.w, uSpark.w * 0.85);
     vec2 sc = floor(p / Gs);
     float sh2 = hash21(sc + 57.1);
-    if (sh2 < 0.10) {
+    if (sh2 < 0.16) {
       vec2 sp2 = floor(sc * Gs + 1.0 + (Gs - 2.0) * vec2(hash21(sc + 1.7), hash21(sc + 9.3)) + 0.5);
       float per = 1.8 + 2.2 * hash21(sc + 5.9);
       float ph = fract(t / per + sh2 * 31.0);
@@ -647,8 +691,8 @@ void main() {
       core = max(core, boxMask(d, vec2(r), aaF) * tw * keepBase);
       halo = max(halo, boxMask(d, vec2(r + 0.4), aaF) * tw * keepBase);
     }
-    col = mix(col, uCausticHi, halo * 0.85);
-    col = mix(col, uFoamColor, core);
+    col = mix(col, uCausticHi, halo * 0.55);   // wave4: softer shimmer
+    col = mix(col, uFoamColor, core * 0.92);
   }
 
   // ---- splash halos around the bobbing floats (ref05's balls and rings) ----
@@ -988,12 +1032,12 @@ export class WaterFX {
       // that darkens steadily toward the centre"): five saturated steps keyed
       // to distance from the walls (uTerr), rim -> abyss. Samples off ref05's
       // pool: by the wall #13d0ee, then #0cc3eb, #00b0df, #029cd2, #0087c9.
-      uEdgeColor: { value: srgb(0x1cc8dc) },   // wave2: light-patch target
-      uPatchColor: { value: srgb(0x0cc0d4) },   // rim step hugging every wall (saturated, not pale)
-      uShallowColor: { value: srgb(0x04a8c8) },   // wave2: ref05 pool #10d0f0
-      uMidColor: { value: srgb(0x0590b4) },       // ref05 median #0ccaec
-      uDeepColor: { value: srgb(0x035c90) },
-      uCoreColor: { value: srgb(0x02487c) },      // dark tile patches (ref #0290d2)
+      uEdgeColor: { value: srgb(0x0cbcd0) },   // wave4: mosaic level 0 (wall shallows, screen ~#0cdcee)
+      uPatchColor: { value: srgb(0x2cc8d8) },   // rim step hugging every wall (saturated, not pale)
+      uShallowColor: { value: srgb(0x04a8c8) },   // wave4: level 1 (ref05 pool #10d0f0)
+      uMidColor: { value: srgb(0x0488b0) },       // wave4: level 2 (ref05 median #0ccaec)
+      uDeepColor: { value: srgb(0x036c9c) },      // wave4: level 3 (ref05 #00a0d8)
+      uCoreColor: { value: srgb(0x035c90) },      // wave4: level 4, deepest tiles (ref #008bd2)
       uAbyssColor: { value: srgb(0x023460) },     // two overlapping dark patches
       uTerr: { value: new THREE.Vector4(6.0, 12.0, 19.0, 28.0) },
       uTerr2: { value: new THREE.Vector2(5.0, 0.0) },
@@ -1014,14 +1058,14 @@ export class WaterFX {
       uDepth: { value: new THREE.Vector2(2.0, 30.0) },
       // patch cell sizes (world units; a tile is 8): layer A 19x13, layer B
       // 11x16, layer C is B scaled to ~7x7 — odd sizes so no grid lines up.
-      uPatch: { value: new THREE.Vector4(26.0, 18.0, 18.0, 28.0) },   // wave2: 1-3 tile patches   // round 13: bigger blocks
+      uPatch: { value: new THREE.Vector4(24.0, 20.0, 18.0, 28.0) },   // w4r2: .xy = sparse big-tile cell   // wave2: 1-3 tile patches   // round 13: bigger blocks
       // (tone strength, drift u/s, -)
       uPatchMix: { value: new THREE.Vector3(1.0, 0.12, 0.0) },
       // specular flecks (strength, density per cell, cell size, -)
       // round 13: (strength, streak-cell density, streak cell size, sparkle cell size)
-      uSpark: { value: new THREE.Vector4(1.0, 0.18, 14.0, 7.0) },
+      uSpark: { value: new THREE.Vector4(1.0, 0.26, 14.0, 7.0) },   // wave4: more glints (critic w3)
       // (foam line width, pale ledge width, lap breathing reach, lap strength)
-      uFoam: { value: new THREE.Vector4(0.45, 1.6, 0.6, 0.45) },   // round 14: .y = rim step width
+      uFoam: { value: new THREE.Vector4(0.45, 3.0, 0.6, 0.45) },   // w4r2: .y = shelf ring width (critic: 'light continuous shallow ring')   // round 14: .y = rim step width
       // (depth wobble amplitude, noise scale, drift speed) — see the shader
       uEdgeFade: { value: 20.0 },
       uTileSize: { value: this.TILE },
@@ -1109,8 +1153,10 @@ export class WaterFX {
         // Round 11: the wall tiles (full glow) also write post.js's WATER KEY
         // alpha, so the grade's upper-mid dip / cool-hue cut spare them like
         // the surface (they went a greyed #358ef2 / #1075c8). Off at night.
+        // wave4: threshold 0.5 -> 0.2 — WALL_GLOW dropped to 0.25 in wave 2,
+        // which silently took the walls OUT of the key (greyed to #1c7ac2).
         .replace('#include <dithering_fragment>',
-          '#include <dithering_fragment>\nif (vGlow > 0.5 && uWallGlow > 0.5) gl_FragColor.a = 0.625;');
+          '#include <dithering_fragment>\nif (vGlow > 0.2 && uWallGlow > 0.5) gl_FragColor.a = 0.625;');
     };
     this.bankMaterial.customProgramCacheKey = () => 'waterbank-glow';
     const bc = Object.assign({}, BANK_COLORS, o.bankColors || {});
@@ -1578,6 +1624,22 @@ export class WaterFX {
               const sc = lawn ? C.lawnSide : C.deckSide;
               if (dx !== 0) faceX(dx > 0 ? X1 : X0, Z0, Z1, SIDE_BOT, DECK_Y, dx, sc);
               else faceZ(dz > 0 ? Z1 : Z0, X0, X1, SIDE_BOT, DECK_Y, dz, sc);
+              // w4r2 (critics w3r1 + w4r1: "the sand band is a plain tan strip
+              // with a hard edge against the grass; no plinth / kerb step"):
+              // a light concrete kerb along the outer edge, like every lot
+              // plinth's rim (ART-DIRECTION), raised a hair with its own faces.
+              const KW = 0.55, KY = DECK_Y + 0.08;
+              if (dx !== 0) {
+                const xa = dx > 0 ? X1 - KW : X0, xb = dx > 0 ? X1 : X0 + KW;
+                top(xa, Z0, xb, Z1, KY, C.deckKerb);
+                faceX(dx > 0 ? X1 : X0, Z0, Z1, DECK_Y, KY, dx, C.copeSide);
+                faceX(dx > 0 ? xa : xb, Z0, Z1, DECK_Y, KY, -dx, C.copeSide);
+              } else {
+                const za = dz > 0 ? Z1 - KW : Z0, zb = dz > 0 ? Z1 : Z0 + KW;
+                top(X0, za, X1, zb, KY, C.deckKerb);
+                faceZ(dz > 0 ? Z1 : Z0, X0, X1, DECK_Y, KY, dz, C.copeSide);
+                faceZ(dz > 0 ? za : zb, X0, X1, DECK_Y, KY, -dz, C.copeSide);
+              }
             }
           }
           // coping corner square where the water only touches diagonally
@@ -1618,7 +1680,7 @@ export class WaterFX {
             // per-orientation tone (outward normal is -dx / -dz)
             const k = dx < 0 ? WALL_TONE.px : dx > 0 ? WALL_TONE.nx : dz < 0 ? WALL_TONE.pz : WALL_TONE.nz;
             const tone = (c) => new THREE.Color(Math.min(1, c.r * k), Math.min(1, c.g * k), Math.min(1, c.b * k));
-            const cWet = tone(C.wallWet), cWall = tone(C.wall), cAlt = tone(C.wallAlt), cGrout = tone(C.wallGrout);
+            const cWet = tone(C.wallWet), cWall = tone(C.wall), cAlt = tone(C.wallAlt), cGrout = tone(C.wallLip);
             const cSeam = tone(C.wallSeam);
             // the pale coping face only dims half as much — it stays a light lip
             const kb = 0.5 + 0.5 * Math.min(1, k);
@@ -1629,7 +1691,7 @@ export class WaterFX {
             // thin darker seams, both ways, counted down from the coping so
             // the top row is always whole (ref05's tiled pool wall), then a
             // shadow line tucked under the lip and the coping/bank band.
-            const yWet = wy + WET_BAND, yGrout = yTop - band - 0.09, yBand = yTop - band;
+            const yWet = wy + WET_BAND, yGrout = yTop - band - 0.14, yBand = yTop - band;
             const vert = (a, b, ya, yb, col) => {
               if (dx !== 0) faceX(dx > 0 ? X1 - WALL_EPS : X0 + WALL_EPS, a, b, ya, yb, -dx, col);
               else faceZ(dz > 0 ? Z1 - WALL_EPS : Z0 + WALL_EPS, a, b, ya, yb, -dz, col);
@@ -1645,7 +1707,7 @@ export class WaterFX {
             // face runs #105097 at the top to #052b6a at the waterline), in
             // 2 u columns with soft seams. The rows are separated by the tone
             // step alone — no grout lines (critic r12: "grid too strong").
-            const ROW_H = 1.0, ROW_K = [1.0, 0.84, 0.70, 0.60];
+            const ROW_H = 1.0, ROW_K = [1.0, 0.95, 0.90, 0.86];   // wave4: gentler (rows went navy at the waterline)
             const rowsY = [yGrout];
             while (rowsY[rowsY.length - 1] - ROW_H > yWet + 0.3) rowsY.push(rowsY[rowsY.length - 1] - ROW_H);
             rowsY.push(yWet);

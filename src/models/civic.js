@@ -13,7 +13,7 @@
 import {
   C, grid, mulberry32, windowsOn, pk, facade, windowFramed, door, awning, signPanel,
   pixelText, wallLamp, wallAC, acBox, parapet, solarPanel, ventPipe, planter, bench,
-  lotPlinth, pyramidRoof, flipZ,
+  lotPlinth, pyramidRoof, flipZ, signLit,
 } from './core.js';
 import { miniTree, stampVeg } from './vegetation.js';
 import { stampCar, stampPerson } from './vehicles.js';
@@ -307,6 +307,7 @@ function course(g, x0, z0, x1, z1, y, c, out = 1) { g.walls(x0 - out, y, z0 - ou
 // gets a squarer glyph here and everything else defers to pixelText.
 const GLYPH_S = '####..###..####';
 export function civText(f, u, y, text, c, out = 2) {
+  c = signLit(c);   // [night] lit sign letters (same colour by day)
   let col = 0;
   for (const ch of String(text).toUpperCase()) {
     if (ch === 'S') {
@@ -374,14 +375,29 @@ export function fineWin(g, side, plane, u0, y0, w, h, o = {}) {
   // fine layers deep (one res-4 voxel), so the flush glass sits in a real
   // box; the sill and hood step one fine further out; a pale glint in the
   // top-left pane reads as glass (ref05's windows are dark with a highlight).
+  // (w4r3) critic w4r2: "flat slabs with dark punched window holes … in
+  // ref05 windows are glassy blue with light reflections". Dark glass is now
+  // only on request: the default is a mid reflective blue whose top res-4 row
+  // catches the sky (lighter), crossed by a fine diagonal reflection streak
+  // (ref05's glass highlight), still inside the dark reveal.
   const F = facade(g, side, plane), E = hiFacade(g, side, plane);
-  const glass = o.glass != null ? o.glass : C.dtGlassDark;
+  const glass = o.glass != null ? o.glass : C.dtGlass;
   const frame = o.frame != null ? o.frame : C.signWhite, trim = o.trim != null ? o.trim : frame;
   const sc = o.surround != null ? o.surround : INK();
-  const D = o.deep === false ? 0 : 1;
+  // (w4r3) the reveal is one fine deep by default: at two, its side and top
+  // faces hid most of the glass at the iso angle (the "punched holes")
+  const D = o.deep === true ? 1 : 0;
   const u1 = u0 + w - 1, y1 = y0 + h - 1;
   F.box(u0, y0, 0, u1, y1, 0, glass);
+  if (o.sky !== false && h >= 3 && glass !== C.dtGlassHi) F.box(u0, y1, 0, u1, y1, 0, C.civGlass);
   const a0 = 2 * u0, a1 = 2 * u1 + 1, b0 = 2 * y0, b1 = 2 * y1 + 1;
+  if (o.glint !== false && h >= 3) {                                // the diagonal reflection streak
+    const Wf = a1 - a0 + 1, Hf = b1 - b0 + 1, k = Math.round((Wf + Hf) * 0.42);
+    for (let x = a0; x <= a1; x++) for (let yy = b0; yy <= b1 - 2; yy++) {
+      const s = (x - a0) + (yy - b0);
+      if (s === k || s === k + 1 || (Wf >= 5 && s === k + 4)) E.set(x, yy, 0, C.dtGlassHi);
+    }
+  }
   E.box(a0 - 1, b0 - 1, 0, a0 - 1, b1 + 1, D, sc); E.box(a1 + 1, b0 - 1, 0, a1 + 1, b1 + 1, D, sc);
   E.box(a0, b1 + 1, 0, a1, b1 + 1, D, sc);
   if (h >= 4 && o.transom !== false) { const t = b0 + Math.round((b1 - b0) * 0.62); E.box(a0, t, 0, a1, t, 0, frame); }
@@ -390,8 +406,6 @@ export function fineWin(g, side, plane, u0, y0, w, h, o = {}) {
   else if (w === 4) E.box(a0 + 3, b0, 0, a0 + 4, b1, 0, frame);
   else if (w === 5) { E.box(a0 + 3, b0, 0, a0 + 3, b1, 0, frame); E.box(a0 + 6, b0, 0, a0 + 6, b1, 0, frame); }
   else if (w >= 6) for (let m = a0 + 3; m < a1 - 1; m += 4) E.box(m, b0, 0, m, b1, 0, frame);
-  else if (w === 2 && h >= 3) E.box(a0 + 2, b0, 0, a0 + 2, b1, 0, frame);   // (r10) a slim centre mullion
-  if (o.glint !== false && h >= 3) { E.set(a0, b1, 0, C.dtGlassHi); E.set(a0 + 1, b1, 0, C.dtGlassHi); E.set(a0, b1 - 1, 0, C.dtGlassHi); }
   E.box(a0 - 1, b0 - 1, 0, a1 + 1, b0 - 1, D, trim);               // sill
   E.box(a0 - 2, b0 - 2, 0, a1 + 2, b0 - 2, D + 1, trim);            // + a proud lip
   E.box(a0 - 2, b0 - 3, 0, a1 + 2, b0 - 3, 0, INK());               // its dark shadow line
@@ -711,13 +725,18 @@ function svcSchool(rng, v) {
   // + cream stone, v2 sandstone + navy.
   // (w2r1) the gallery shows v2: it now carries ref05's mint-grey hall wall
   // (the cream civStone read as white-on-white behind white trim); v0 cream.
-  const wall = [C.civStone, C.civBrick, C.civHall][vi];
+  // (w4r4) critic w4r3: "the school facade reads as one flat blue-grey …
+  // give it warm stone or cream walls with contrasting trim". ref05's hall
+  // (PIL: walls #f0f0e0 warm cream, pilasters #709080 mint-grey, roof #104050)
+  // → v0 (the variant the gallery shows) is now warm cream walls with the
+  // grey-teal pilasters under the dark slate; civStone read cool grey-blue.
+  const wall = [C.cream, C.civBrick, C.civHall][vi];
   const trim = [C.signWhite, C.cream, C.signWhite][vi];
   const quoin = [C.civHallDk, C.brickDark, C.civSlate][vi];
   const accent = [C.civSlate, C.roofGreen, C.civNavy][vi];
   const slate = [C.civSlate, C.civSlate, C.civSlate][vi], slateTop = C.stone, mb = C.civMarble, mbDk = C.civPanel;
   // (w2r1) ref05's hall windows are DARK navy glass in white frames
-  const winG = C.dtGlassDark;
+  const winG = C.dtGlass;                                         // (w4r3) glassy blue, reflection streak (fineWin)
   // ---- massing: main block, two end wings (proud front and back), centre
   // pavilion (proud front and back), all three storeys
   const MX0 = 5, MX1 = 57, MZ0 = 16, MZ1 = 38;                    // main block (r10: wider, taller)
@@ -875,6 +894,13 @@ function svcSchool(rng, v) {
   g.box(TC, BT + 5, 27, TC, BT + 8, 27, C.gold);
   // roof gear, kept to a couple of quiet pieces (critic r7: noisy roofs)
   for (const x of [12, 50]) ventPipe(g, x, 27, TOP + 7, TOP + 8);
+  // (w4r2) critic: ref05's civic roofs carry "rooftop AC units, vents and roof
+  // clutter". AC banks and a skylight on the main block's flat top, each side
+  // of the tower (fine x 24..47 and 78..101, z 46..63 are the free flats).
+  { const Hr = hiGrid(g), RY = 2 * (TOP + 1) + 14;
+    for (const [ax, az] of [[27, 48], [35, 48], [84, 48], [92, 48], [27, 56], [92, 56]]) fineAC(g, ax, RY, az, 6, 5);
+    for (const sx of [36, 82]) { Hr.box(sx, RY, 56, sx + 7, RY, 62, trim); Hr.box(sx + 1, RY + 1, 57, sx + 6, RY + 1, 61, C.civGlass); }
+  }
   // ---- forecourt: two lawns boxed by clipped hedges with flower beds, cone
   // topiaries, lamps at the stair, benches, a flag, kids on the stair
   for (const [a, b] of [[2, 18], [44, 60]]) {
@@ -978,9 +1004,14 @@ function svcFire(rng, v) {
   const pierC = [C.crimson, C.brickDark, C.crimson][vi];
   const stone = [C.cream, C.signWhite, C.cream][vi];
   const corn = C.civCornice, deck = C.civFireRoof, ink = INK();
-  const X0 = 4, X1 = 57, Z0 = 18, Z1 = 44;
-  const BAYH = 11, SB = y + BAYH, UW = SB + 2, UW2 = y + 20, FRZ = y + 26, TOP = y + 30;
-  const PIERS = [20, 29, 38, 47, 56], BAYS = [[22, 28], [31, 37], [40, 46], [49, 55]];
+  // (w4) broad and LOW (coordinator: 2-3 storeys, sprawl not up): a deeper
+  // two-storey hall — the engine bays plus one office floor — under the tower.
+  // (w4r2) critic: "tiny models on oversized lots … buildings should take
+  // ~80% of the lot". The hall now runs kerb to kerb across X (2..60) and is
+  // 39 deep (12..50): with the aprons full of engines it fills the lot.
+  const X0 = 2, X1 = 60, Z0 = 12, Z1 = 50;
+  const BAYH = 11, SB = y + BAYH, UW = SB + 2, FRZ = y + 19, TOP = y + 23;
+  const PIERS = [22, 31, 40, 49, 58], BAYS = [[24, 30], [33, 39], [42, 48], [51, 57]];
   // ---- aprons: yellow bay lines to the kerb, white centre dashes, a pale
   // forecourt strip at the doors, a hatched box in front of the office
   for (const back of [false, true]) {
@@ -990,21 +1021,20 @@ function svcFire(rng, v) {
     for (const p of PIERS) g.box(p, y - 1, Z(2), p + 1, y - 1, Z(Z0 - 5), C.yellow);
     for (const [u0, u1] of BAYS) {
       const m = (u0 + u1) >> 1;
-      for (let z = 3; z < Z0 - 6; z += 4) g.box(m, y - 1, Z(z), m, y - 1, Z(z + 1), C.signWhite);
+      for (let z = 2; z < Z0 - 5; z += 3) g.set(m, y - 1, Z(z), C.signWhite);
     }
-    g.box(4, y - 1, Z(2), 16, y - 1, Z(2), C.yellow); g.box(4, y - 1, Z(12), 16, y - 1, Z(12), C.yellow);
-    g.box(4, y - 1, Z(2), 4, y - 1, Z(12), C.yellow); g.box(16, y - 1, Z(2), 16, y - 1, Z(12), C.yellow);
-    for (let x = 5; x <= 15; x++) for (let z = 3; z <= 11; z++) if (((x + z) % 4) === 0) g.set(x, y - 1, Z(z), C.yellow);   // hatched keep-clear box
+    g.box(2, y - 1, Z(1), 20, y - 1, Z(1), C.yellow); g.box(2, y - 1, Z(7), 20, y - 1, Z(7), C.yellow);
+    g.box(20, y - 1, Z(1), 20, y - 1, Z(7), C.yellow);
+    for (let x = 2; x <= 19; x++) for (let z = 2; z <= 6; z++) if (((x + z) % 4) === 0) g.set(x, y - 1, Z(z), C.yellow);   // hatched keep-clear box
   }
   // ---- the hall
   g.box(X0, y, Z0, X1, TOP, Z1, wall);
   course(g, X0, Z0, X1, Z1, y, C.civPanel);
   course(g, X0, Z0, X1, Z1, SB, stone);                           // stone band over the bays
-  course(g, X0, Z0, X1, Z1, UW2 - 2, stone);                      // stone course between the office floors
   course(g, X0, Z0, X1, Z1, FRZ - 1, stone);
   course(g, X0, Z0, X1, Z1, TOP - 1, corn); course(g, X0, Z0, X1, Z1, TOP, corn, 2); course(g, X0, Z0, X1, Z1, TOP, corn);
   // ink under every stone band and under the cornice (ref05's dark trim lines)
-  for (const yy of [SB, UW2 - 2, FRZ - 1]) inkBand(g, X0 - 1, Z0 - 1, X1 + 1, Z1 + 1, 2 * yy - 1, 1, 0);
+  for (const yy of [SB, FRZ - 1]) inkBand(g, X0 - 1, Z0 - 1, X1 + 1, Z1 + 1, 2 * yy - 1, 1, 0);
   fineDentils(g, X0, Z0, X1, Z1, 2 * (TOP - 2), stone);
   fineBand(g, X0, Z0, X1, Z1, 2 * (TOP - 2) + 2, stone, 1, 1);
   inkBand(g, X0 - 1, Z0 - 1, X1 + 1, Z1 + 1, 2 * (TOP - 1) - 1, 1, 0);
@@ -1013,7 +1043,7 @@ function svcFire(rng, v) {
   g.walls(X0, TOP + 2, Z0, X1, TOP + 2, Z1, stone);
   g.box(X0 + 1, TOP + 1, Z0 + 1, X1 - 1, TOP + 1, Z1 - 1, deck);
   inkEdges(g, X0, Z0, X1, Z1, y + 1, SB - 1);
-  const win = (f, u, fy, w = 3, h = 5) => fineWin(g, f.side, f.plane, u, fy, w, h, { frame: C.signWhite, trim: stone, key: stone, glass: C.dtGlassDark });
+  const win = (f, u, fy, w = 3, h = 5) => fineWin(g, f.side, f.plane, u, fy, w, h, { frame: C.signWhite, trim: stone, key: stone });
   // ---- both long faces: brick piers with stone quoins, four bays, office end
   for (const back of [false, true]) {
     const side = back ? 'back' : 'front', PZ = back ? Z1 : Z0;
@@ -1025,7 +1055,7 @@ function svcFire(rng, v) {
       // (r11) critic r10: the cream quoin ladder on every pier made the
       // front garish. ref05's piers are plain brick with two slim white
       // bands (at the bay head and the office sill) and a dark-green cap.
-      for (const r of [2 * UW - 3, 2 * UW2 - 3]) Eq.box(2 * u - 1, r, 2, 2 * u + 4, r + 1, 2, stone);
+      for (const r of [2 * UW - 3]) Eq.box(2 * u - 1, r, 2, 2 * u + 4, r + 1, 2, stone);
       Eq.box(2 * u - 1, 2 * (FRZ - 2) + 1, 2, 2 * u + 4, 2 * (FRZ - 2) + 2, 3, corn);   // capital
       Eq.box(2 * u - 1, 2 * (FRZ - 2), 2, 2 * u + 4, 2 * (FRZ - 2), 2, ink);
     }
@@ -1049,28 +1079,28 @@ function svcFire(rng, v) {
         E.box(2 * u0 + 2, 2 * y + 12, -2, 2 * u1 - 1, 2 * y + 13, -2, C.dtGlassDark);
         E.box(2 * u0, 2 * y, -2, 2 * u1 + 1, 2 * y, -2, C.darkGray);
       }
-      win(F, u0 + 2, UW); win(F, u0 + 2, UW2);
+      win(F, u0 + 2, UW);
     });
-    door(F, 16, y, 2, 7, { color: C.crimson, frame: stone, step: null, canopy: corn });
-    win(F, 15, UW, 3); win(F, 15, UW2, 3);
-    wallLamp(F, 30, SB - 1); wallLamp(F, 48, SB - 1);
+    door(F, 17, y, 2, 7, { color: C.crimson, frame: stone, step: null, canopy: corn });
+    win(F, 16, UW, 3);
+    wallLamp(F, 32, SB - 1); wallLamp(F, 50, SB - 1);
     // frieze: the name in red on a cream band, ink-edged
-    F.box(15, FRZ, 1, X1, FRZ + 2, 1, stone);
-    F.box(23, FRZ, 1, 54, FRZ + 2, 1, C.signWhite);
-    hiText(g, side, PZ, 38.5, FRZ + 0.5, 'FIRE STATION', C.fireRed, 1);
+    F.box(14, FRZ, 1, X1, FRZ + 2, 1, stone);
+    F.box(25, FRZ, 1, 57, FRZ + 2, 1, C.signWhite);
+    hiText(g, side, PZ, 41, FRZ + 0.5, 'FIRE STATION', C.fireRed, 1);
     brickCourse(g, side, PZ, X0, X1, y + 1, FRZ - 2, wall, pierC);
   }
   // ---- ends
   const R = facade(g, 'right', X1);
-  for (const u of [22, 27, 34, 39]) { win(R, u, UW, 2); win(R, u, UW2, 2); }
+  for (const u of [15, 20, 25, 36, 41, 46]) win(R, u, UW, 2);
   door(R, 30, y, 2, 7, { color: C.crimson, frame: stone, step: null, canopy: corn });
-  for (const u of [23, 37]) win(R, u, y + 3, 2, 4);
-  wallAC(R, 26, y + 9, { w: 3, h: 2, d: 1 });
+  for (const u of [16, 24, 37, 45]) win(R, u, y + 3, 2, 4);
+  wallAC(R, 20, y + 8, { w: 3, h: 2, d: 1 }); wallAC(R, 40, y + 8, { w: 3, h: 2, d: 1 });
   brickCourse(g, 'right', X1, Z0, Z1, y + 1, FRZ - 2, wall, pierC);
   inkEdges(g, X0, Z0, X1, Z1, SB + 1, FRZ - 2);
   // ---- watch tower on the left end, proud of the front: quoins, stone
   // bands, tall windows, clocks front and back, a louvred lantern and flag
-  const tx0 = 4, tx1 = 14, tz0 = 15, tz1 = 29, TT = TOP + 14;
+  const tx0 = 2, tx1 = 12, tz0 = 9, tz1 = 25, TT = TOP + 13;
   g.box(tx0, y, tz0, tx1, TT, tz1, wall);
   course(g, tx0, tz0, tx1, tz1, y, C.civPanel);
   for (const [x, z] of [[tx0, tz0], [tx1, tz0], [tx0, tz1], [tx1, tz1]]) g.box(x, y + 1, z, x, TT - 3, z, pierC);   // (r11) plain dark-brick corners, no quoin ladder
@@ -1081,16 +1111,16 @@ function svcFire(rng, v) {
   g.box(tx0, TT + 1, tz0, tx1, TT + 1, tz1, stone);
   inkEdges(g, tx0, tz0, tx1, tz1, TOP + 3, TT - 3);
   { const f = facade(g, 'front', tz0);
-    door(f, 8, y, 3, 8, { color: C.crimson, frame: stone, step: null, glass: C.civGlass });
-    win(f, 8, UW, 3, 5); win(f, 8, UW2, 3, 5); win(f, 8, TOP + 4, 3, 6);
-    clockFace(f, 9, TT - 6, C.civNavy);
+    door(f, 6, y, 3, 8, { color: C.crimson, frame: stone, step: null, glass: C.civGlass });
+    win(f, 6, UW, 3, 5); win(f, 6, TOP + 4, 3, 6);
+    clockFace(f, 7, TT - 6, C.civNavy);
     brickCourse(g, 'front', tz0, tx0, tx1, y + 1, TT - 3, wall, pierC); }
-  { const f = facade(g, 'back', tz1); win(f, 8, TOP + 4, 3, 6); clockFace(f, 9, TT - 6, C.civNavy); }
+  { const f = facade(g, 'back', tz1); win(f, 6, TOP + 4, 3, 6); clockFace(f, 7, TT - 6, C.civNavy); }
   { const f = facade(g, 'left', tx0);
-    for (const u of [18, 24]) { win(f, u, y + 3, 2, 5); win(f, u, UW, 2, 5); win(f, u, UW2, 2, 5); win(f, u, TOP + 4, 2, 6); }
-    for (const u of [33, 38]) { win(f, u, y + 3, 2, 5); win(f, u, UW, 2, 5); win(f, u, UW2, 2, 5); }
+    for (const u of [13, 19]) { win(f, u, y + 3, 2, 5); win(f, u, UW, 2, 5); win(f, u, TOP + 4, 2, 6); }
+    for (const u of [29, 34, 39, 44]) { win(f, u, y + 3, 2, 5); win(f, u, UW, 2, 5); }
     brickCourse(g, 'left', tx0, tz0, Z1, y + 1, TT - 3, wall, pierC); }
-  { const f = facade(g, 'right', tx1); for (const u of [18, 24]) win(f, u, TOP + 4, 2, 6);
+  { const f = facade(g, 'right', tx1); for (const u of [13, 19]) win(f, u, TOP + 4, 2, 6);
     brickCourse(g, 'right', tx1, tz0, tz1, TOP + 3, TT - 3, wall, pierC); }
   // lantern + hip cap + flag (one clean silhouette)
   g.box(tx0 + 2, TT + 2, tz0 + 2, tx1 - 2, TT + 7, tz1 - 2, corn);
@@ -1105,31 +1135,50 @@ function svcFire(rng, v) {
   }
   inkEdges(g, tx0 + 2, tz0 + 2, tx1 - 2, tz1 - 2, TT + 2, TT + 6);
   fineHipRoof(g, tx0 + 1, tz0 + 1, tx1 - 1, tz1 - 1, TT + 8, 4, deck);
-  flagPole(g, 9, TT + 12, 22, 8, [C.red, C.signWhite, C.civSeat], { w: 6, fh: 4 });
+  flagPole(g, 7, TT + 12, 17, 8, [C.red, C.signWhite, C.civSeat], { w: 6, fh: 4 });
   // ---- roof kit on the deck: AC bank, framed skylight, vents, hatch, ducts
   { const Hr = hiGrid(g), RY = 2 * (TOP + 2);
-    for (const [ax, az] of [[36, 46], [44, 46], [36, 54], [44, 54], [100, 76], [100, 46], [108, 76]]) fineAC(g, ax, RY, az, 6, 5);
-    Hr.box(66, RY, 50, 85, RY + 1, 75, stone);
-    Hr.box(67, RY + 2, 51, 84, RY + 2, 74, C.civGlass);
-    for (let x = 70; x <= 82; x += 4) Hr.box(x, RY + 2, 51, x, RY + 3, 74, stone);
-    for (const [vx, vz] of [[58, 80], [92, 44], [112, 82], [54, 44]]) { Hr.box(vx, RY, vz, vx + 1, RY + 5, vz + 1, C.metal); Hr.box(vx - 1, RY + 6, vz - 1, vx + 2, RY + 6, vz + 2, C.metalDark); }
-    Hr.box(90, RY, 78, 95, RY + 2, 83, C.offwhite); Hr.box(90, RY + 3, 78, 95, RY + 3, 83, C.metalDark);
-    Hr.box(50, RY + 1, 64, 97, RY + 2, 65, C.metal);
-    for (let x = 52; x <= 96; x += 8) Hr.box(x, RY, 64, x, RY, 65, C.metalDark);
-    Hr.box(96, RY + 1, 56, 97, RY + 2, 63, C.metal);
+    // (w4r2) critic: ref05 roofs carry "AC units, vents and roof clutter" —
+    // the bigger deck gets two AC banks, a framed skylight, a solar array, a
+    // water tank on legs, a stair hatch, vents, duct runs and a radio mast.
+    for (const [ax, az] of [[34, 34], [42, 34], [34, 42], [42, 42], [104, 84], [112, 84], [104, 92], [112, 92], [60, 90], [34, 88]]) fineAC(g, ax, RY, az, 6, 5);
+    Hr.box(62, RY, 34, 85, RY + 1, 57, stone);
+    Hr.box(63, RY + 2, 35, 84, RY + 2, 56, C.civGlass);
+    for (let x = 66; x <= 82; x += 4) Hr.box(x, RY + 2, 35, x, RY + 3, 56, stone);
+    for (let r = 0; r < 3; r++) {                                   // solar rows, dark panels in pale frames
+      const z0 = 62 + r * 8;
+      Hr.box(92, RY, z0, 117, RY + 1, z0 + 5, stone);
+      Hr.box(93, RY + 2, z0, 116, RY + 2, z0 + 4, C.civNavy);
+      for (let x = 97; x < 116; x += 5) Hr.box(x, RY + 2, z0, x, RY + 2, z0 + 4, C.civGlass);
+    }
+    { const tx = 76, tz = 78;                                       // water tank on four legs
+      for (const [lx, lz] of [[0, 0], [7, 0], [0, 7], [7, 7]]) Hr.box(tx + lx, RY, tz + lz, tx + lx, RY + 5, tz + lz, C.metalDark);
+      Hr.box(tx - 1, RY + 6, tz - 1, tx + 8, RY + 13, tz + 8, C.offwhite);
+      Hr.box(tx - 1, RY + 9, tz - 1, tx + 8, RY + 9, tz + 8, C.fireRed);
+      Hr.box(tx, RY + 14, tz, tx + 7, RY + 14, tz + 7, C.metalDark); }
+    for (const [vx, vz] of [[58, 70], [92, 40], [116, 50], [50, 56], [88, 96]]) { Hr.box(vx, RY, vz, vx + 1, RY + 5, vz + 1, C.metal); Hr.box(vx - 1, RY + 6, vz - 1, vx + 2, RY + 6, vz + 2, C.metalDark); }
+    Hr.box(46, RY, 70, 53, RY + 3, 77, C.offwhite); Hr.box(46, RY + 4, 70, 53, RY + 4, 77, C.metalDark);   // stair hatch
+    Hr.box(40, RY + 1, 64, 117, RY + 2, 65, C.metal);
+    for (let x = 42; x <= 116; x += 8) Hr.box(x, RY, 64, x, RY, 65, C.metalDark);
+    Hr.box(88, RY + 1, 40, 89, RY + 2, 63, C.metal);
+    Hr.box(116, RY, 38, 116, RY + 22, 38, C.metalDark);             // radio mast + light
+    for (const yy of [RY + 8, RY + 15]) Hr.box(114, yy, 36, 118, yy, 40, C.metal);
+    Hr.set(116, RY + 23, 38, C.red);
   }
   // ---- engines nosing out onto both aprons, a chief's car, ambulance,
   // hydrants, cones, hose reels, bollards, crew
-  fireTruck(g, 22, y, 1, 'z', { len: 13 }); fireTruck(g, 31, y, 1, 'z', { len: 13 });
-  fireTruck(g, 40, y, 3, 'z', { len: 13 });
-  fireTruck(g, 49, y, 48, 'z', { len: 13, rev: true }); fireTruck(g, 40, y, 48, 'z', { len: 13, rev: true });
-  fireTruck(g, 31, y, 46, 'z', { len: 13, rev: true });
-  car(g, 50, y, 3, 'z', C.fireRed, {}); car(g, 23, y, 50, 'z', C.signWhite, { rev: true });
-  hydrant(g, 2, y, 16); hydrant(g, 60, y, 46); hydrant(g, 60, y, 16);
-  for (const [cx, cz] of [[18, 3], [18, 59], [58, 10], [58, 52]]) { g.box(cx, y, cz, cx, y + 1, cz, C.orange); g.set(cx, y + 1, cz, C.signWhite); }
-  for (const z of [13, 47]) { g.box(12, y, z, 14, y + 2, z + 1, C.fireRed); g.box(13, y + 1, z, 13, y + 1, z + 1, C.metal); }
-  for (const x of [5, 9, 13]) { g.box(x, y, 1, x, y + 2, 1, C.yellow); g.box(x, y, 61, x, y + 2, 61, C.yellow); }
-  crowd(g, [[4, 3, 16, 11], [4, 51, 16, 59], [19, 14, 56, 16]], y, 10, 61 + vi, { shirts: [C.civNavy, C.fireRed, C.yellow] });
+  // (w4r2) the aprons are 11 deep now: engines (9 long) fill each bay to
+  // the kerb, and the one in the open bay noses half out of the door.
+  fireTruck(g, 24, y, 1, 'z', { len: 11 }); fireTruck(g, 33, y, 1, 'z', { len: 11 });
+  fireTruck(g, 42, y, 6, 'z', { len: 11 });
+  fireTruck(g, 51, y, 51, 'z', { len: 11, rev: true }); fireTruck(g, 42, y, 51, 'z', { len: 11, rev: true });
+  fireTruck(g, 33, y, 46, 'z', { len: 11, rev: true });
+  car(g, 52, y, 2, 'z', C.fireRed, {}); car(g, 25, y, 52, 'z', C.signWhite, { rev: true });
+  hydrant(g, 61, y, 10); hydrant(g, 61, y, 52); hydrant(g, 1, y, 52);
+  for (const [cx, cz] of [[21, 3], [21, 59], [60, 3], [60, 59]]) { g.box(cx, y, cz, cx, y + 1, cz, C.orange); g.set(cx, y + 1, cz, C.signWhite); }
+  for (const z of [9, 52]) { g.box(19, y, z, 21, y + 2, z + 1, C.fireRed); g.box(20, y + 1, z, 20, y + 1, z + 1, C.metal); }
+  for (const x of [4, 8, 12, 16]) { g.box(x, y, 1, x, y + 2, 1, C.yellow); g.box(x, y, 61, x, y + 2, 61, C.yellow); }
+  crowd(g, [[3, 2, 18, 7], [3, 53, 18, 60], [22, 8, 58, 10], [22, 52, 58, 54]], y, 12, 61 + vi, { shirts: [C.civNavy, C.fireRed, C.yellow] });
   return doneHi(g);
 }
 
@@ -1195,7 +1244,9 @@ function svcFountain(rng, v) {
   const y = lotPlinth(g, 0, 0, 62, 62, { fill: C.civPlaza });
   const vi = ((v % 3) + 3) % 3;
   const mb = C.civMarble, lip = C.signWhite, relief = C.civStone != null ? C.civStone : C.cream;
-  const plaque = [C.civBronze, C.gold, C.civBronze][vi];
+  // (w4) gold plaques rendered as flat orange tiles on the white pedestal
+  // (gallery shows v1); ref05's reliefs are dark carved panels.
+  const plaque = C.civBronze;
   const c = 31, H = hiGrid(g), O = 63;
   // fine helpers: x/z are centre-relative fine offsets, y absolute fine rows,
   // all ranges half-open. sb() boxes in a side frame: `a` outward along the
@@ -1230,6 +1281,9 @@ function svcFountain(rng, v) {
     g.box(gx, y - 1, gz, gx + 6, y - 1, gz + 6, C.lotGrass);
     g.walls(gx, y, gz, gx + 6, y, gz + 6, C.lotRim);
     g.box(gx + 1, y, gz + 1, gx + 5, y, gz + 5, V.bush);
+    // (w4r2) critic: ref05's plaza is "crowded right up to the kerb" — a small
+    // cuboid tree in each corner garden, on the kerb side of the statue
+    lotTree(g, 'round', gx < 31 ? gx - 1 : gx + 7, y, gz < 31 ? gz - 1 : gz + 7, gx + gz);
     const sx = gx + 3, sz = gz + 3;
     g.box(sx - 1, y, sz - 1, sx + 1, y + 2, sz + 1, C.civPanel); g.box(sx - 1, y + 3, sz - 1, sx + 1, y + 3, sz + 1, lip);
     fineStatue(H, 2 * sx + 1, 2 * (y + 4), 2 * sz + 1, C.civPanel);
@@ -1271,13 +1325,12 @@ function svcFountain(rng, v) {
       sb(n, 44, 48, b - 1, b + 3, F0 + 8, F0 + 9, lip); sb(n, 45, 47, b, b + 2, F0 + 9, F0 + 10, lip);
     }
     // ---- relief plaques on the pedestal's first stage
-    sb(n, 13, 14, -8, 8, T2 + 3, T2 + 9, lip);
-    sb(n, 14, 15, -5, 5, T2 + 4, T2 + 8, plaque);
+    sb(n, 14, 15, -9, 9, T2 + 3, T2 + 10, lip);
+    sb(n, 15, 16, -6, 6, T2 + 4, T2 + 9, plaque);
     // raised panels on the second stage, flutes on the collar
-    sb(n, 11, 12, -5, 5, T2 + 12, T2 + 18, lip);
-    for (let b = -8; b <= 7; b += 3) sb(n, 9, 10, b, b + 1, T2 + 21, T2 + 27, lip);
-    // relief panel low on the obelisk shaft
-    sb(n, 7, 8, -3, 3, T2 + 40, T2 + 62, lip); sb(n, 8, 9, -2, 2, T2 + 44, T2 + 58, relief);
+    sb(n, 12, 13, -5, 5, T2 + 14, T2 + 21, lip);
+    sb(n, 13, 14, -3, 3, T2 + 15, T2 + 20, relief);
+    for (let b = -9; b <= 8; b += 3) sb(n, 11, 12, b, b + 1, T2 + 25, T2 + 30, lip);
   }
   // ---- tier-1 corner statues (white, arms raised) and tier-2 corner posts
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
@@ -1298,26 +1351,37 @@ function svcFountain(rng, v) {
       if (r >= 24 && r < 25.6) H.set(O + i, T2, O + k, lip);
     }
   }
-  // ---- pedestal: three carved stages
-  sq(14, T2, T2 + 2, mb); sq(13, T2 + 2, T2 + 9, mb);
-  sq(15, T2 + 9, T2 + 10, lip); sq(14, T2 + 10, T2 + 11, lip);
-  sq(11, T2 + 11, T2 + 19, mb);
-  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) hb(sx > 0 ? 8 : -12, sx > 0 ? 12 : -8, T2 + 11, T2 + 19, sz > 0 ? 8 : -12, sz > 0 ? 12 : -8, mb);
-  sq(13, T2 + 19, T2 + 20, lip); sq(12, T2 + 20, T2 + 21, lip);
-  sq(9, T2 + 21, T2 + 27, mb);
-  sq(10, T2 + 27, T2 + 28, lip); sq(8, T2 + 28, T2 + 30, mb);
-  // ---- obelisk: chamfered shaft tapering 14 → 12 → 10 fine, carved band,
-  // pyramidion, gold tip
-  const S0 = T2 + 30, S1 = S0 + 112;
+  // ---- pedestal: three carved stages. (w4) Broader and more decisive, like
+  // ref05's: a wide plaque stage, a buttressed middle stage, a fluted collar,
+  // then a THICK shaft (the r10 one was a slim banded column — "lighthouse").
+  sq(15, T2, T2 + 2, mb); sq(14, T2 + 2, T2 + 11, mb);
+  sq(15, T2 + 11, T2 + 12, lip); sq(14, T2 + 12, T2 + 13, lip);
+  sq(12, T2 + 13, T2 + 23, mb);
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    hb(sx > 0 ? 9 : -14, sx > 0 ? 14 : -9, T2 + 13, T2 + 21, sz > 0 ? 9 : -14, sz > 0 ? 14 : -9, mb);   // corner buttresses
+    hb(sx > 0 ? 9 : -14, sx > 0 ? 14 : -9, T2 + 21, T2 + 22, sz > 0 ? 9 : -14, sz > 0 ? 14 : -9, lip);
+    hb(sx > 0 ? 10 : -13, sx > 0 ? 13 : -10, T2 + 22, T2 + 26, sz > 0 ? 10 : -13, sz > 0 ? 13 : -10, mb);   // urn-like finials
+    hb(sx > 0 ? 11 : -12, sx > 0 ? 12 : -11, T2 + 26, T2 + 28, sz > 0 ? 11 : -12, sz > 0 ? 12 : -11, lip);
+  }
+  sq(13, T2 + 23, T2 + 24, lip);
+  sq(11, T2 + 24, T2 + 31, mb);
+  sq(12, T2 + 31, T2 + 32, lip); sq(11, T2 + 32, T2 + 33, mb);
+  // ---- obelisk: a thick chamfered shaft tapering smoothly 18 → 10 fine
+  // (1-fine steps every ~24 rows), one carved band low down, pyramidion,
+  // gold tip
+  const S0 = T2 + 33, S1 = S0 + 100;
   for (let yy = S0; yy < S1; yy++) {
-    const h = yy < S0 + 38 ? 7 : yy < S0 + 76 ? 6 : 5;
+    const h = 9 - Math.floor(4 * (yy - S0) / (S1 - S0));
     for (let i = -h; i < h; i++) for (let k = -h; k < h; k++) {
       if ((i === -h || i === h - 1) && (k === -h || k === h - 1)) continue;   // chamfer
       H.set(O + i, yy, O + k, mb);
     }
   }
-  sq(8, S0, S0 + 3, lip);
-  sq(8, S0 + 36, S0 + 38, lip); sq(7, S0 + 74, S0 + 76, lip);
+  sq(10, S0, S0 + 2, lip); sq(10, S0 + 30, S0 + 31, lip);
+  for (const n of SIDES) {
+    sb(n, 9, 10, -5, 5, S0 + 5, S0 + 27, lip); sb(n, 10, 11, -3, 3, S0 + 8, S0 + 24, relief);   // relief panel
+    sb(n, 10, 11, -1, 1, S0 + 12, S0 + 20, plaque);
+  }
   for (let k = 0; k < 5; k++) sq(5 - k, S1 + 2 * k, S1 + 2 * k + 2, k === 4 ? lip : mb);
   sq(1, S1 + 10, S1 + 13, C.gold);
   // ---- benches and lamps on the plaza, visitors on the walks and tiers

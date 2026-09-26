@@ -51,7 +51,7 @@
 // it breaks a surface. Frames and mullions sit FLUSH with the wall (the glass
 // is recessed), stripes run along faces, and nothing is a checkerboard.
 
-import { C, PALETTE, pk, facade, lotPlinth, solarPanel } from './core.js';
+import { C, PALETTE, pk, facade, lotPlinth, solarPanel, signLit, flipZ } from './core.js';
 import { stampCar, stampPerson } from './vehicles.js';
 import { stampVeg } from './vegetation.js';
 
@@ -67,7 +67,7 @@ const UP = 16;        // upper storey height (r7: was 26; finer ref05 floor rhyt
 function grid(sx, sy, sz) {
   const cell = new Uint8Array(sx * sy * sz);
   const I = (x, y, z) => (y * sz + z) * sx + x;
-  return {
+  const self = {
     sx, sy, sz, res: R,
     set(x, y, z, c) {
       x = Math.round(x); y = Math.round(y); z = Math.round(z);
@@ -108,7 +108,60 @@ function grid(sx, sy, sz) {
         const v = cell[i];
         if (v) blocks.push([x, y, z, v - 1]);
       }
-      return { sx, sy, sz, blocks, res: R };
+      const m = { sx, sy, sz, blocks, res: R };
+      // w4r4: the res-16 FINE part (sign lettering) rides along as model.parts;
+      // stored UNflipped here — the catalog wrapper (BUILDERS) flips it with the base
+      if (self.__fine) { const p = self.__fine.done(); if (p.blocks.length) { m.parts = [p]; m.__fine = p; } }
+      return m;
+    },
+  };
+  return self;
+}
+// ---------------------------------------------------------------------------
+// w4r4 FINE SIGN PART (res 16 = half a shop voxel). Critics w4r2 + w4r3 +
+// coordinator 21:15: our names were "chunky, low-resolution pixel lettering"
+// while ref05's Mac Auto / SUPERMARKET signs are thin crisp letters on a slim
+// panel. A res-8 voxel is too coarse for a 5x7 glyph at 1/4-storey size, so
+// the name panels (board + frame + letters) are laid into a sparse res-16
+// grid that becomes model.parts (engine: a child mesh on the same footprint,
+// as civic hiText / industrial hiRes). Sparse: only sign voxels are stored and
+// the part's height is trimmed to its highest voxel.
+// ---------------------------------------------------------------------------
+const RF = 2 * R;
+function fineGrid(g) {
+  if (!g.__fine) {
+    const sx = g.sx * 2, sz = g.sz * 2, m = new Map();
+    g.__fine = {
+      sx, sz, res: RF,
+      set(x, y, z, c) {
+        x = Math.round(x); y = Math.round(y); z = Math.round(z);
+        if (c == null || x < 0 || y < 0 || z < 0 || x >= sx || z >= sz) return;
+        m.set((y * sz + z) * sx + x, c);
+      },
+      done() {
+        const blocks = []; let my = 0;
+        for (const [k, c] of m) {
+          const x = k % sx, t = (k - x) / sx, z = t % sz, y = (t - z) / sz;
+          blocks.push([x, y, z, c]); if (y > my) my = y;
+        }
+        return { sx, sy: my + 1, sz, blocks, res: RF };
+      },
+    };
+  }
+  return g.__fine;
+}
+// Fine facade from a res-8 facade handle: u / y in FINE voxels (res-8 u spans
+// fine 2u, 2u+1); o = fine layers out, o 0 = the OUTER fine layer of the wall
+// voxel itself, so a res-8 layer `out` k is fine o 2k-1 (inner) + 2k (outer).
+function fineFace(f) {
+  const H = fineGrid(f.g), p = f.plane, alongX = f.side === 'front' || f.side === 'back';
+  const neg = f.side === 'front' || f.side === 'left', w0 = neg ? 2 * p : 2 * p + 1, sg = neg ? -1 : 1;
+  const set = (u, y, o, c) => { const w = w0 + sg * o; if (alongX) H.set(u, y, w, c); else H.set(w, y, u, c); };
+  return {
+    rd: f.rd, set,
+    box(u0, y0, o0, u1, y1, o1, c) {
+      for (let o = Math.min(o0, o1); o <= Math.max(o0, o1); o++) for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++)
+        for (let u = Math.min(u0, u1); u <= Math.max(u0, u1); u++) set(u, y, o, c);
     },
   };
 }
@@ -124,6 +177,7 @@ function mirrorZ(g) {
     walls: (x0, y0, z0, x1, y1, z1, c) => g.walls(x0, y0, Z - z1, x1, y1, Z - z0, c),
   };
 }
+const SETT = C.stone, SETT_J = C.concrete;   // w4r2 shop-lot setts + joints
 function lot(g, x1, z1, fill = C.lotPave) { lotPlinth(g, 0, 0, x1, z1, { h: G, fill }); }
 // light paving grid (1-unit slabs) over an area
 function paveGrid(g, x0, z0, x1, z1, c = C.lotPaveDark, step = 8) {
@@ -150,7 +204,7 @@ const F7 = {
   K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
   L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
   M: ['#...#', '##.##', '#.#.#', '#.#.#', '#...#', '#...#', '#...#'],
-  N: ['#...#', '#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#'],
+  N: ['#...#', '##..#', '##..#', '#.#.#', '#..##', '#..##', '#...#'],   // w4r4: full diagonal (DINER read DIHER)
   O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
   P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
   Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#'],
@@ -191,6 +245,7 @@ function textW(s, big, sc = 1) {
 // Centred text on a facade; y = bottom row. Returns the width.
 function text(f, cu, y, s, c, out, big, sc = 1) {
   s = String(s).toUpperCase();
+  c = signLit(c);   // [night] sign letters light up after dusk; same colour by day
   const w = textW(s, big, sc);
   let u = cu - f.rd * Math.floor((w - 1) / 2);
   for (const ch of s) {
@@ -298,7 +353,7 @@ const F5B = {
   G: ['.####', '##...', '##.##', '##.##', '.####'], H: ['##.##', '##.##', '#####', '##.##', '##.##'],
   I: ['##', '##', '##', '##', '##'], J: ['...##', '...##', '...##', '##.##', '.###.'],
   K: ['##..#', '##.#.', '###..', '##.#.', '##..#'], L: ['##...', '##...', '##...', '##...', '#####'],
-  M: ['##...##', '###.###', '##.#.##', '##...##', '##...##'], N: ['##..##', '###.##', '##.###', '##..##', '##..##'],
+  M: ['##...##', '###.###', '##.#.##', '##...##', '##...##'], N: ['##...##', '###..##', '##.#.##', '##..###', '##...##'],
   O: ['.###.', '##.##', '##.##', '##.##', '.###.'], P: ['####.', '##.##', '####.', '##...', '##...'],
   Q: ['.###.', '##.##', '##.##', '##.#.', '.##.#'], R: ['####.', '##.##', '####.', '##.#.', '##.##'],
   S: ['.####', '##...', '.###.', '...##', '####.'], T: ['######', '..##..', '..##..', '..##..', '..##..'],
@@ -307,32 +362,70 @@ const F5B = {
   Y: ['##..##', '##..##', '.####.', '..##..', '..##..'], Z: ['#####', '...##', '.###.', '##...', '#####'],
   ' ': ['...', '...', '...', '...', '...'], '&': ['.##..', '#..#.', '.##.#', '#..#.', '.##.#'],
 };
-function stemW(s) { let w = -1; for (const ch of String(s).toUpperCase()) w += (F5B[ch] || F5B[' '])[0].length + 1; return w; }
+// w4r3 FINE SIGN FONT (critic w4r2: "the block-letter signs are oversized and
+// chunky"; ref05's Mac Auto / SUPERMARKET lettering is thin white strokes on a
+// coloured panel). 4×5 glyphs with 1-voxel strokes, FLUSH in the panel face
+// (so no AO / edge pass eats them) — at the 2x shots a voxel is ~9 px, so the
+// strokes stay crisp while the panel shrinks by a third. (The r10 3×5 font
+// read mushy at 1x: 3-wide counters close up; 4-wide ones stay open.)
+const F5T = {
+  A: ['.##.', '#..#', '####', '#..#', '#..#'], B: ['###.', '#..#', '###.', '#..#', '###.'],
+  C: ['.###', '#...', '#...', '#...', '.###'], D: ['###.', '#..#', '#..#', '#..#', '###.'],
+  E: ['####', '#...', '###.', '#...', '####'], F: ['####', '#...', '###.', '#...', '#...'],
+  G: ['.###', '#...', '#.##', '#..#', '.###'], H: ['#..#', '#..#', '####', '#..#', '#..#'],
+  I: ['###', '.#.', '.#.', '.#.', '###'], J: ['...#', '...#', '...#', '#..#', '.##.'],
+  K: ['#..#', '#.#.', '##..', '#.#.', '#..#'], L: ['#...', '#...', '#...', '#...', '####'],
+  M: ['#...#', '##.##', '#.#.#', '#...#', '#...#'], N: ['#...#', '##..#', '#.#.#', '#..##', '#...#'],
+  O: ['.##.', '#..#', '#..#', '#..#', '.##.'], P: ['###.', '#..#', '###.', '#...', '#...'],
+  Q: ['.##.', '#..#', '#..#', '#.#.', '.#.#'], R: ['###.', '#..#', '###.', '#.#.', '#..#'],
+  S: ['.###', '#...', '.##.', '...#', '###.'], T: ['#####', '..#..', '..#..', '..#..', '..#..'],
+  U: ['#..#', '#..#', '#..#', '#..#', '.##.'], V: ['#...#', '#...#', '.#.#.', '.#.#.', '..#..'],
+  W: ['#...#', '#...#', '#.#.#', '##.##', '#...#'], X: ['#..#', '#..#', '.##.', '#..#', '#..#'],
+  Y: ['#...#', '.#.#.', '..#..', '..#..', '..#..'], Z: ['####', '...#', '.##.', '#...', '####'],
+  ' ': ['..', '..', '..', '..', '..'], '&': ['.#..', '#.#.', '.#.#', '#.#.', '.#.#'],
+};
+const SF = F5T;
+function stemW(s) { let w = -1; for (const ch of String(s).toUpperCase()) w += (SF[ch] || SF[' '])[0].length + 1; return w; }
 function stemText(f, cu, y, s, c, out) {
   s = String(s).toUpperCase();
   const w = stemW(s);
   let u = cu - f.rd * Math.floor((w - 1) / 2);
   for (const ch of s) {
-    const rows = F5B[ch] || F5B[' '], gw = rows[0].length;
+    const rows = SF[ch] || SF[' '], gw = rows[0].length;
     for (let r = 0; r < 5; r++) for (let i = 0; i < gw; i++) if (rows[r][i] === '#') f.set(u + f.rd * i, y + 4 - r, out, c);
     u += f.rd * (gw + 1);
   }
   return w;
 }
-// Name panel, 9 rows (y0..y0+8): a 1-voxel border ring, 1 row / 2 columns of
-// padding, the 5-row letters FLUSH in the face (no relief, so nothing eats the
-// strokes). One voxel thick at `out`, so it stands 1 proud of the fascia band
-// and gets a crisp AO outline like a real sign board.
-const panelW = (s) => stemW(s) + 6;
+// w4r4 FINE NAME PANEL (res-16 part, see fineFace). Replaces the w2r1-w4r3
+// res-8 9-row panel whose 5-row 1-voxel-stroke letters the w4r2/w4r3 critics
+// called "oversized, chunky, low-resolution pixel lettering". Now: the 5x7
+// font (F7) with 1-FINE-voxel strokes (half a shop voxel), 7 fine rows tall
+// (~1/5 of a storey, Mac Auto size), FLUSH in a 1-fine-thick board face, a
+// 1-fine frame standing one fine layer proud, 2 fine rows / 3 columns of
+// padding: 13 fine rows = 6.5 shop rows (was 9). Still called with res-8
+// (cu, y0) and still returns / is sized by its width in res-8 voxels.
+const panelFW = (s) => textW(s, true) + 8;
+const panelW = (s) => Math.ceil(panelFW(s) / 2);
 function namePanel(f, cu, y0, s, o) {
   s = String(s).toUpperCase();
-  const w = stemW(s), out = o.out != null ? o.out : 2;
-  const ua = cu - f.rd * (Math.floor((w - 1) / 2) + 3), ub = ua + f.rd * (w + 5);
-  f.box(ua, y0, out, ub, y0 + 8, out, o.bd);
-  f.box(ua + f.rd, y0 + 1, out, ub - f.rd, y0 + 7, out, o.bg);
-  stemText(f, cu, y0 + 2, s, o.fg, out);
-  if (o.lamps) for (const u of [ua + f.rd * 4, ub - f.rd * 4]) { f.set(u, y0 + 9, out, C.comFrame); f.set(u, y0 + 9, out + 1, C.comFrame); f.set(u, y0 + 8, out + 2, C.lamp); }
-  return w + 6;
+  const H = fineFace(f), out = o.out != null ? o.out : 2;
+  const PW = panelFW(s), lo = 2 * cu + 1 - (PW >> 1), hi = lo + PW - 1;
+  // the board sits on the wall / band face: out k (res-8 layer k) -> the first
+  // fine layer in front of res-8 layer k-1 (out 0 = flush boxes: just proud)
+  const yb = 2 * y0 + (o.fy != null ? o.fy : 2), yt = yb + 12, ob = Math.max(1, 2 * out - 1);
+  H.box(lo, yb, ob, hi, yt, ob, o.bg);                         // board face
+  H.box(lo, yb, ob + 1, hi, yb, ob + 1, o.bd); H.box(lo, yt, ob + 1, hi, yt, ob + 1, o.bd);   // proud frame
+  H.box(lo, yb, ob + 1, lo, yt, ob + 1, o.bd); H.box(hi, yb, ob + 1, hi, yt, ob + 1, o.bd);
+  const fg = signLit(o.fg);
+  let u = f.rd > 0 ? lo + 4 : hi - 4;
+  for (const ch of s) {
+    const rows = glyph(ch, true), gw = rows[0].length;
+    for (let r = 0; r < 7; r++) for (let i = 0; i < gw; i++) if (rows[r][i] === '#') H.set(u + f.rd * i, yb + 9 - r, ob, fg);
+    u += f.rd * (gw + 1);
+  }
+  if (o.lamps) for (const lu of [lo + 6, hi - 6]) { H.box(lu, yt + 1, ob + 1, lu, yt + 2, ob + 3, C.comFrame); H.set(lu, yt, ob + 3, C.lamp); }
+  return panelW(s);
 }
 
 // 11-row board (y0..y0+10): a 1-voxel frame, 1 row / 3 columns of margin,
@@ -478,9 +571,23 @@ function upWin(f, u, y, w, h, o) {
   f.box(u - 1, y - 1, -1, u + w, y + h, -1, o.reveal != null ? o.reveal : fr);
   f.clear(u, y, -1, u + w - 1, y + h - 1, -1);
   f.box(u, y, -2, u + w - 1, y + h - 1, -2, o.glass != null ? o.glass : C.winCool);
-  if (w >= 6) f.box(u + (w >> 1), y, -1, u + (w >> 1), y + h - 1, -1, fr);
-  if (h >= 8) f.box(u, y + h - 3, -1, u + w - 1, y + h - 3, -1, fr);
-  f.set(u, y + h - 2, -2, C.dtGlassHi); f.set(u + 1, y + h - 5, -2, C.dtGlassHi);
+  if (o.arch && w >= 6) {                        // w4r1: round-headed window (ref05 brick café)
+    const hc = [[0, 1], [0, 2], [1, 1]];
+    for (const [du, dy] of hc) for (const uu of [u + du, u + w - 1 - du]) { f.set(uu, y + h - dy, 0, fr); f.set(uu, y + h - dy, -1, fr); }
+  }
+  const bar = o.bar != null ? o.bar : fr;
+  if (w >= 6) f.box(u + (w >> 1), y, -1, u + (w >> 1), y + h - 1, -1, bar);
+  if (h >= 8) f.box(u, y + h - 3, -1, u + w - 1, y + h - 3, -1, bar);
+  // w4r2 GLINT (critic w4r1: "reflective blue glass with highlights"): a
+  // diagonal sky streak across the lower sash of every pane (1 wide, down
+  // to the right) plus a short parallel one, instead of two stray dots
+  const gTop = h >= 8 ? y + h - 4 : y + h - 1, sw = w >= 6 ? (w >> 1) : w;
+  for (const p0 of w >= 6 ? [u, u + (w >> 1) + 1] : [u]) {
+    const pw = w >= 6 ? sw - (p0 === u ? 0 : 1) : sw;
+    for (let i = 0; i < Math.min(pw, gTop - y + 1, 4); i++) f.set(p0 + i, gTop - i, -2, C.dtGlassHi);
+    for (let i = 0; i < 2 && i + 3 < pw; i++) f.set(p0 + 3 + i, gTop - i, -2, C.dtGlassHi);
+  }
+  if (h >= 8) f.set(u, y + h - 2, -2, C.dtGlassHi);
   if (o.balc) {                                   // slab + glass balustrade + rails
     const a = u - 2, b = u + w + 1, rc = o.rail != null ? o.rail : C.signWhite;
     f.box(a, y - 1, 1, b, y - 1, 3, o.sill != null ? o.sill : fr);
@@ -496,13 +603,20 @@ function upWin(f, u, y, w, h, o) {
   if (o.box) {
     f.box(u - 1, y - 3, 1, u + w, y - 2, 2, C.woodDark);
     const fl = o.flowers || [C.pink, C.red];
-    f.box(u - 1, y - 1, 2, u + w, y - 1, 2, C.vegBush);          // r8: calm green box, 2 blooms (was a
-    f.set(u, y - 1, 2, fl[0]); f.set(u + w - 1, y - 1, 2, fl[1 % fl.length]);   // per-voxel colour stripe)
+    // w4r2: deep-green foliage with blooms every 2 (the lime vegBush row read
+    // as a neon bar under the window in-game)
+    f.box(u - 1, y - 1, 2, u + w, y - 1, 2, C.leafDark);
+    for (let uu = u, i = 0; uu <= u + w - 1; uu += 2, i++) f.set(uu, y - 1, 2, fl[i % fl.length]);
   }
   if (o.awn) awning(f, u - 1, u + w, y + h + 1, 2, o.awn);
 }
 // window sizes per style: [w, h, pitch]
-const WSTYLE = { grid: [4, 8, 7], tall: [4, 10, 7], pair: [7, 8, 10], shutter: [4, 8, 9], balc: [5, 10, 9], sash: [5, 9, 8] };
+// w4r1 'big': wide picture windows (centre bar + transom) for the first floor
+// over the shop, so floors differ in window size (critic w3: "uniform grids
+// of identical small windows; vary window sizes between floors")
+// w4r1 'arch': tall round-headed windows (ref05's brick café); 'mix' is a
+// deliberate rhythm of narrow / wide / narrow windows (see upRow)
+const WSTYLE = { arch: [8, 11, 12], big: [9, 11, 13], grid: [4, 8, 7], tall: [4, 10, 7], pair: [7, 8, 10], shutter: [4, 8, 9], balc: [5, 10, 9], sash: [5, 9, 8] };
 // Row of upper windows along [u0, u1] (style: WSTYLE key | 'ribbon'); returns
 // the window starts.
 function upRow(f, u0, u1, y, st, o) {
@@ -514,6 +628,24 @@ function upRow(f, u0, u1, y, st, o) {
     f.box(bays[0][0] - 2, y - 1, 1, bays[bays.length - 1][1] + 2, y - 1, 1, o.sill != null ? o.sill : o.frame);
     if (o.planters) for (let u = bays[0][0]; u <= bays[bays.length - 1][1]; u++) f.set(u, y, 1, (u % 6) ? C.vegBush : (o.flowers || [C.pink])[0]);
     return bays.map((b) => b[0]);
+  }
+  if (st === 'mix') {
+    // w4r1 (critic w3: "facades are uniform grids of identical small
+    // windows"): narrow 4-wide and wide 10-wide windows alternate, narrow at
+    // both ends, 4 apart, centred — one composed front instead of a grid
+    const WN = 4, WW = 10, GAP = 4, H = 10, Lm = u1 - u0 + 1;
+    let m = 1;
+    const spanM = (k) => { let t = 0; for (let i = 0; i < k; i++) t += i % 2 ? WW : WN; return t + (k - 1) * GAP; };
+    while (spanM(m + 2) <= Lm - 2) m += 2;
+    if (spanM(m) > Lm - 2) return [];
+    let u = u0 + ((Lm - spanM(m)) >> 1);
+    const out = []; out.pils = [];
+    for (let i = 0; i < m; i++) {
+      const w = i % 2 ? WW : WN;
+      upWin(f, u, y, w, H, { frame: o.frame, reveal: o.reveal, sill: o.sill, lintel: o.lintel, box: o.boxes && i % 2 === 1, flowers: o.flowers, awn: i % 2 ? o.winAwn : null });
+      out.push(u); u += w + GAP;
+    }
+    return out;
   }
   const [w, h, pitch] = WSTYLE[st] || WSTYLE.grid;
   // r9: windows come in GROUPS of o.group with a wider wall between groups,
@@ -531,7 +663,7 @@ function upRow(f, u0, u1, y, st, o) {
     const u = s + i * pitch + (k ? Math.floor(i / k) * GP : 0);
     if (k && i > 0 && i % k === 0) out.pils.push(Math.floor((out[i - 1] + w + u - 1) / 2));
     const balc = st === 'balc' && (o.balcAll || (i % 2 === (n % 2 ? 0 : 1)) || n <= 2);
-    upWin(f, u, y, w, h, { frame: o.frame, reveal: o.reveal, sill: o.sill, lintel: o.lintel, rail: o.rail, shutter: st === 'shutter' ? o.shutter : null,
+    upWin(f, u, y, w, h, { frame: o.frame, reveal: o.reveal, sill: o.sill, lintel: o.lintel, rail: o.rail, shutter: st === 'shutter' ? o.shutter : null, arch: st === 'arch',
       box: o.boxes && (balc || i % 2 === 0), flowers: o.flowers, awn: o.winAwn, balc });
     out.push(u);
   }
@@ -848,7 +980,90 @@ function roofScape(g, rng, x0, z0, x1, z1, y, plan, o = {}) {
 // is placed at its anchor (or the nearest free spot, 3 voxels clear of the
 // others) and the rest of the deck stays clean.
 // ---------------------------------------------------------------------------
+// w4r1 (critic w3: "large blank pale-grey roof slabs with one or two small
+// props ... ref05 crowds its roofs with AC clusters, vents, sign frames,
+// patio seating and coloured clutter"). Bigger COMPOSITE props, each one a
+// legible cluster, so a roof carries 5-7 of them and reads full without
+// turning into r7's field of little planter boxes. `o` = the shop's colours.
+// Raised plant room (a parapet step in the roofline) 16 × 12 × 10: wall with
+// a brand-colour band under a light cap, a door + louvre, an AC and a vent on top.
+function plantRoom(g, x, y, z, o = {}) {
+  const w = o.wall != null ? o.wall : C.offwhite, acc = o.acc != null ? o.acc : C.stone;
+  g.box(x, y, z, x + 15, y + 8, z + 11, w);
+  g.walls(x, y + 7, z, x + 15, y + 8, z + 11, acc);
+  g.box(x - 1, y + 9, z - 1, x + 16, y + 9, z + 12, C.signWhite);
+  for (const zz of [z, z + 11]) {
+    g.box(x + 3, y, zz, x + 6, y + 5, zz, C.comFrame); g.box(x + 4, y + 3, zz, x + 5, y + 4, zz, C.winCool);
+    for (let yy = y + 1; yy <= y + 5; yy += 2) g.box(x + 9, yy, zz, x + 13, yy, zz, C.stone);
+  }
+  for (const xx of [x, x + 15]) for (let yy = y + 1; yy <= y + 5; yy += 2) g.box(xx, yy, z + 3, xx, yy, z + 8, C.stone);
+  acUnit(g, x + 2, y + 10, z + 3);
+  vent(g, x + 12, y + 10, z + 4, 3);
+}
+// HVAC cluster 22 × 10 on a concrete pad: a big condenser, an AC unit, a pipe run.
+function hvacPad(g, x, y, z) {
+  g.box(x, y, z, x + 21, y, z + 9, C.concrete);
+  acBig(g, x + 1, y + 1, z + 1);
+  acUnit(g, x + 15, y + 1, z + 1);
+  g.box(x + 1, y + 2, z + 9, x + 20, y + 2, z + 9, C.stone);
+  for (const xx of [x + 2, x + 10, x + 19]) g.box(xx, y + 1, z + 9, xx, y + 1, z + 9, C.stoneDark);
+  g.box(x + 20, y + 2, z + 8, x + 20, y + 6, z + 9, C.stone);
+}
+// Stock on a pallet 11 × 7: cardboard boxes, a brand-colour crate, a gas bottle.
+function stockPile(g, x, y, z, o = {}) {
+  const a = o.acc != null ? o.acc : C.red, b = o.acc2 != null ? o.acc2 : C.yellow;
+  g.box(x, y, z, x + 10, y, z + 6, C.wood);
+  g.box(x + 1, y + 1, z + 1, x + 4, y + 4, z + 3, C.comDough);
+  g.box(x + 1, y + 1, z + 4, x + 4, y + 3, z + 5, C.comDough);
+  g.box(x + 2, y + 4, z + 4, x + 3, y + 4, z + 5, C.signWhite);
+  g.box(x + 5, y + 1, z + 1, x + 8, y + 3, z + 5, a);
+  g.box(x + 5, y + 4, z + 2, x + 7, y + 6, z + 4, b);
+  g.box(x + 9, y + 1, z + 2, x + 10, y + 5, z + 3, C.teal);
+  g.box(x + 9, y + 6, z + 2, x + 10, y + 6, z + 3, C.stone);
+}
+// Roof café corner 25 × 13: a tiled deck, two parasol tables in the shop's
+// colours, a planter bench along the back, two pots.
+function roofCafe(g, x, y, z, rng, o = {}) {
+  tiles(g, x, z, x + 24, z + 12, y - 1, o.deck != null ? o.deck : C.sand, o.line != null ? o.line : C.sandDark);
+  const cols = o.cols || [C.red, C.signWhite];
+  // w4r3: no parasols on roofs — small striped r4 domes seen from above read
+  // as FLOWERS (w4r2: "clumps of mismatched props (flowers, ...)"); ref05's
+  // Mac Auto roof terrace is plain tables and chairs on a warm deck
+  for (const tx of [x + 5, x + 12, x + 19]) tableSet(g, tx, z + 5, y, { top: C.signWhite, chair: o.chair != null ? o.chair : C.wood, par: false, cols, r: 4 });
+  g.box(x + 2, y, z + 10, x + 22, y + 1, z + 11, C.offwhite);
+  g.box(x + 3, y + 2, z + 10, x + 21, y + 3, z + 11, C.leafMid);     // w4r4: leafMid (the lime vegBush run read as a neon bar)
+  g.box(x + 3, y + 2, z + 10, x + 21, y + 2, z + 11, C.leafDark);
+  // w4r3: one bloom colour, no corner pots (w4r2: "noisy mismatched props")
+  for (let i = 0; i < 5; i++) g.set(x + 4 + i * 4, y + 4, z + 11 - (i & 1), i & 1 ? C.signWhite : C.pink);
+  if (rng && rng() < 0.7) person(g, rng, x + 10, z + 4, y);
+}
+// Satellite dish 6 × 6 on a stand.
+function dish(g, x, y, z) {
+  g.box(x + 2, y, z + 2, x + 3, y + 2, z + 3, C.stone);
+  g.box(x, y + 3, z + 1, x + 5, y + 6, z + 4, C.signWhite);
+  g.box(x + 1, y + 4, z, x + 4, y + 5, z, C.signWhite);
+  g.box(x + 2, y + 4, z + 5, x + 3, y + 5, z + 5, C.stone);
+  g.box(x + 2, y + 5, z - 1, x + 3, y + 5, z - 1, C.darkGray);
+}
+// Sign frame 14 × 4: a steel frame behind a lit logo board (both faces).
+function signFrame(g, x, y, z, o = {}) {
+  const bd = o.bd != null ? o.bd : C.comFrame, bg = o.bg != null ? o.bg : C.signWhite;
+  for (const xx of [x + 2, x + 11]) {
+    g.box(xx, y, z + 1, xx, y + 6, z + 2, C.stoneDark);
+    g.box(xx, y, z, xx, y + 1, z, C.stoneDark); g.box(xx, y, z + 3, xx, y + 1, z + 3, C.stoneDark);
+  }
+  g.box(x + 2, y + 4, z + 1, x + 11, y + 4, z + 2, C.stoneDark);
+  g.box(x, y + 7, z + 1, x + 13, y + 17, z + 2, bd);
+  if (o.logo) { logoTile(facade(g, 'front', z + 1), x + 7, y + 8, o.logo, bg, bd, 0); logoTile(facade(g, 'back', z + 2), x + 7, y + 8, o.logo, bg, bd, 0); }
+  g.box(x + 1, y + 18, z + 1, x + 12, y + 18, z + 2, C.signWhite);
+}
 const RPROP = {
+  plant: [16, 12, (g, x, y, z, r, o) => plantRoom(g, x, y, z, o)],
+  hvac: [22, 10, hvacPad],
+  stock: [11, 7, (g, x, y, z, r, o) => stockPile(g, x, y, z, o)],
+  cafe: [25, 13, (g, x, y, z, r, o) => roofCafe(g, x, y, z, r, o)],
+  dish: [6, 7, dish],
+  frame: [14, 4, (g, x, y, z, r, o) => signFrame(g, x, y, z, o)],
   solar: [20, 16, (g, x, y, z) => solar(g, x, y, z, 20, 16, 2, 2)],
   solar2: [20, 8, (g, x, y, z) => solar(g, x, y, z, 20, 8, 2, 1)],
   ac: [7, 6, acUnit], acBig: [13, 7, acBig], hatch: [7, 7, hatch], tank: [9, 9, tank],
@@ -859,8 +1074,60 @@ const RPROP = {
   garden: [16, 11, (g, x, y, z, r) => ROOFMOD.garden(g, r, x, z, x + 15, z + 10, y, {})],
   gardenL: [22, 13, (g, x, y, z, r) => ROOFMOD.garden(g, r, x, z, x + 21, z + 12, y, {})],
   planter: [12, 5, roofPlanter],
+  // w4r4 SIGNATURE roof pieces (critic w4r3: "almost every roof carries the
+  // same grey AC and vent clutter ... give each shop a distinct rooftop"):
+  // each catalog shop now gets ONE themed piece + 1-2 small neutral units
+  flue: [7, 7, (g, x, y, z) => flue(g, x, y, z)],
+  dogrun: [26, 16, (g, x, y, z, r, o) => dogRun(g, x, y, z, r, o)],
+  play: [26, 16, (g, x, y, z) => playMat(g, x, y, z)],
+  court: [30, 18, (g, x, y, z, r) => ROOFMOD.court(g, r, x, z, x + 29, z + 17, y)],
+  herbs: [24, 12, (g, x, y, z) => herbBeds(g, x, y, z)],
 };
-function roofProps(g, rng, x0, z0, x1, z1, y, list, block = []) {
+// brick chimney stack with a dark cap (bakery / pizza oven) — no smoke puff:
+// the w4r3 critic read the diner's grey smoke blob as a rock pile
+function flue(g, x, y, z) {
+  g.box(x + 1, y, z + 1, x + 5, y + 13, z + 5, C.brickDark);
+  g.box(x + 1, y + 11, z + 1, x + 5, y + 11, z + 5, C.brick);
+  g.box(x, y + 14, z, x + 6, y + 14, z + 6, C.stoneDark);
+  g.box(x + 2, y + 15, z + 2, x + 4, y + 15, z + 4, C.comFrame);
+}
+// roof dog run 26 × 16: lawn inside a low white fence, a red kennel, a bone
+function dogRun(g, x, y, z, r, o = {}) {
+  g.box(x, y - 1, z, x + 25, y - 1, z + 15, C.lotGrass);
+  g.walls(x, y, z, x + 25, y + 2, z + 15, C.signWhite);
+  g.box(x + 11, y, z, x + 14, y + 2, z, null);
+  for (let xx = x + 2; xx < x + 25; xx += 3) { g.set(xx, y + 1, z, null); g.set(xx, y + 1, z + 15, null); }
+  const kc = o.acc != null ? o.acc : C.red;
+  g.box(x + 16, y, z + 7, x + 23, y + 5, z + 13, kc);
+  g.box(x + 15, y + 6, z + 6, x + 24, y + 6, z + 14, C.signWhite);
+  g.box(x + 17, y + 7, z + 7, x + 22, y + 7, z + 13, C.signWhite);
+  g.box(x + 18, y, z + 7, x + 21, y + 3, z + 7, C.comFrame);
+  g.box(x + 4, y, z + 5, x + 7, y, z + 5, C.signWhite); g.set(x + 3, y, z + 5, C.signWhite); g.set(x + 8, y, z + 5, C.signWhite);
+  g.box(x + 4, y, z + 10, x + 6, y, z + 12, C.blue);
+  if (r) person(g, r, x + 9, z + 9, y);
+}
+// soft play mat 26 × 16: four big coloured rubber squares in a white rim,
+// a mini slide and a soft block
+function playMat(g, x, y, z) {
+  const cs = [C.red, C.yellow, C.blue, C.roofGreen];
+  g.box(x, y - 1, z, x + 25, y - 1, z + 15, C.signWhite);
+  for (let i = 0; i < 2; i++) for (let k = 0; k < 2; k++) g.box(x + 1 + i * 12, y - 1, z + 1 + k * 7, x + 12 + i * 12, y - 1, z + 7 + k * 7, cs[i * 2 + k]);
+  g.box(x + 13, y, z + 6, x + 15, y + 7, z + 9, C.signWhite);
+  g.box(x + 13, y + 7, z + 6, x + 16, y + 7, z + 9, C.red);
+  for (let k = 0; k < 6; k++) g.box(x + 16 + k, y + 6 - k, z + 6, x + 16 + k, y + 6 - k, z + 9, C.yellow);
+  g.box(x + 4, y, z + 4, x + 8, y + 4, z + 8, C.signWhite); g.box(x + 4, y + 5, z + 4, x + 8, y + 5, z + 8, C.blue);
+}
+// kitchen herb garden 24 × 12: three raised timber beds of lettuce/tomato rows
+function herbBeds(g, x, y, z) {
+  const rows = [[C.leafMid, C.leafDark], [C.red, C.leafDark], [C.lime, C.leafMid]];
+  for (let i = 0; i < 3; i++) {
+    const bx = x + i * 8;
+    g.walls(bx, y, z, bx + 6, y + 1, z + 11, C.wood);
+    g.box(bx + 1, y, z + 1, bx + 5, y + 1, z + 10, C.woodDark);
+    for (let k = z + 2; k <= z + 9; k += 2) { g.box(bx + 2, y + 2, k, bx + 4, y + 2, k, rows[i][1]); g.box(bx + 3, y + 3, k, bx + 3, y + 3, k, rows[i][0]); }
+  }
+}
+function roofProps(g, rng, x0, z0, x1, z1, y, list, block = [], opt = {}) {
   const W = x1 - x0 + 1, D = z1 - z0 + 1;
   if (W < 8 || D < 6) return;
   const occ = new Uint8Array(W * D);
@@ -874,7 +1141,7 @@ function roofProps(g, rng, x0, z0, x1, z1, y, list, block = []) {
     for (let i = x; i < x + w; i++) for (let k = z; k < z + d; k++) if (occ[(k - z0) * W + (i - x0)]) return false;
     return true;
   };
-  const m = 3;
+  const m = 2;
   for (const it of list) {
     const [kind, an] = Array.isArray(it) ? it : [it, 'c'];
     const spec = RPROP[kind]; if (!spec) continue;
@@ -890,17 +1157,25 @@ function roofProps(g, rng, x0, z0, x1, z1, y, list, block = []) {
         for (const dz of rz ? [-rz, rz] : [0]) if (free(ax + dx, az + dz, w, d)) { best = [ax + dx, az + dz]; break; }
       }
     }
+    if (globalThis.__RPLOG) globalThis.__RPLOG.push(best ? kind : '!' + kind);
     if (!best) continue;
-    draw(g, best[0], y, best[1], rng);
-    mark(best[0], best[1], w, d, 3);
+    draw(g, best[0], y, best[1], rng, opt);
+    mark(best[0], best[1], w, d, list.gap != null ? list.gap : 2);
   }
 }
 // default kits (3-4 props) for shops without their own list (zoned C growth)
+// w4r1: 5-6 composite props per roof (plant room, HVAC pad, café corner,
+// stock, dish, sign frame, solar) instead of 3-4 small ones
+// w4r3 (critic w4r2: "clumps of mismatched props (flowers, cubes, AC units)
+// look noisy next to the reference's tidy roofs"): 4 neutral pieces, no
+// coloured stock piles or flower beds
 const ROOFKITS = [
-  [['solar', 'cl'], ['ac', 'br'], ['vent', 'bc'], ['hatch', 'fr']],
-  [['garden', 'fl'], ['acBig', 'br'], ['vents', 'fr']],
-  [['solar', 'cr'], ['stair', 'bl'], ['ac', 'fl']],
-  [['gardenL', 'cl'], ['ac', 'br'], ['hatch', 'fr']],
+  // w4r4: one themed piece + 1-2 small neutral units (critic w4r3: the same
+  // grey AC / vent clutter on every roof)
+  [['solar', 'fl'], ['ac', 'bl']],
+  [['cafe', 'fl'], ['ac', 'bl']],
+  [['garden', 'fl'], ['sky', 'fr'], ['ac', 'bl']],
+  [['herbs', 'fl'], ['solar2', 'fr'], ['ac', 'bl']],
 ];
 // light rim band inside the parapet (ref02) on the deck row y
 const ROOFPLANS = [
@@ -1210,6 +1485,25 @@ const SLOT = {
     g.box(x + 9, G, 5, x + 10, G + 1, 6, C.orange);
     person(g, r, x + 2, 5);
   }],
+  // w4r1 (critic w3: "lots are mostly plain cream pavement ... ref05's busy
+  // seating"): a little ref05 street tree in a kerb planter, and a row of
+  // potted round shrubs (ref05 brick café's terrace edge)
+  tree: [9, (g, x, r, o) => {
+    g.box(x + 1, G, 2, x + 7, G + 1, 7, C.offwhite); paint(g, x + 2, 3, x + 6, 6, C.lotGrass);
+    g.box(x + 3, G + 2, 4, x + 4, G + 8, 5, C.vegTrunk);
+    g.box(x + 1, G + 9, 2, x + 7, G + 15, 7, C.vegLeaf); g.box(x + 1, G + 9, 2, x + 7, G + 10, 7, C.vegLeafBand);
+    g.box(x + 2, G + 16, 3, x + 6, G + 16, 6, C.vegLeaf);
+    g.set(x + 1, G + 13, 3, C.vegLeafDot); g.set(x + 5, G + 12, 2, C.vegLeafDot); g.set(x + 7, G + 14, 5, C.vegLeafDot);
+  }],
+  pots: [13, (g, x, r, o) => {
+    for (let k = 0; k < 3; k++) {
+      const px = x + 1 + k * 4;
+      g.box(px, G, 3, px + 2, G + 2, 5, k === 1 ? C.comTerra : C.offwhite);
+      g.box(px - (k === 1 ? 0 : 0), G + 3, 3, px + 2, G + 5, 5, C.vegBush); g.box(px, G + 3, 3, px + 2, G + 3, 5, C.vegBushDark);
+      if (k !== 1) g.set(px + 1, G + 6, 4, C.vegBush);
+      else g.set(px + 1, G + 6, 4, (o.flowers || [C.pink])[0]);
+    }
+  }],
   balloons: [8, (g, x, r, o) => { g.box(x + 3, G, 4, x + 3, G + 15, 4, C.signWhite); for (const [dx, dy, dz, col] of [[-2, 16, -1, C.red], [1, 18, 0, C.blue], [-1, 21, 1, C.yellow], [2, 20, -2, C.pink]]) g.box(x + 3 + dx, G + dy, 4 + dz, x + 4 + dx, G + dy + 2, 5 + dz, col); }],
 };
 function packSlots(g, rng, xa, xb, items, o) {
@@ -1228,7 +1522,7 @@ function packSlots(g, rng, xa, xb, items, o) {
 // The r7 apron: sidewalk band (z0-5..z0-1) + door path + displays + slots.
 function apron(c, sp) {
   const { g, rng, du, z0 } = c;
-  paint(g, 1, z0 - 6, 61, z0 - 1, sp.walk != null ? sp.walk : C.lotPaveDark);
+  paint(g, 1, z0 - 6, 61, z0 - 1, sp.walk != null ? sp.walk : C.lotPave);   // w4r2: a light sidewalk band on the setts
   paint(g, 1, z0 - 6, 61, z0 - 6, C.lotRim);
   if (du != null) paint(g, du - 1, 1, du + 8, z0 - 1, sp.path != null ? sp.path : C.lotRim);
   const disp = DISPLAY[sp.display || 'planter'];
@@ -1280,14 +1574,23 @@ function shop(rng, S) {
   const up = S.up || [x0, z0, x1, z1];
   const topY = L.TOP + (floors - 1) * UP;
   const g = grid(63, topY + (S.headroom || 44), 63);
-  lot(g, 62, 62, S.fill != null ? S.fill : C.lotPave);
-  if (S.grid !== false) paveGrid(g, 1, 1, 61, 61);
+  // w4r2 CONTRASTING PAVING (critic w4r1: "the pale cream paving in front of
+  // the shops blends into the walls"): shop lots are a mid-grey setts plaza
+  // with light joints (ref05's market-street cobbles), so the cream/white
+  // walls, the light kerb rim and the white parking lines all stand off it
+  lot(g, 62, 62, S.fill != null ? S.fill : SETT);
+  if (S.grid !== false) paveGrid(g, 1, 1, 61, 61, SETT_J);
 
   const wall = S.wall, trim = S.trim != null ? S.trim : C.signWhite, frame = S.frame != null ? S.frame : C.comFrame;
   const band = S.band != null ? S.band : S.stripe, stripe = S.stripe != null ? S.stripe : trim;
   const base = S.base != null ? S.base : C.comFrame;
   const cx = (x0 + x1) >> 1;
-  const bo = { frame, kick: S.kick != null ? S.kick : base, mull: S.mull, pane: S.pane, goods: S.goods };
+  // w4r3 LOW RETAIL BOX (coordinator 17:20 + critics w3r1/w4r1/w4r2: "repeated
+  // grids of blue windows on flat pale upper floors"; ref05's supermarket and
+  // Mac Auto are ONE tall glazed storey): a 1-storey shop gets a full-height
+  // shopfront of wide bays with FINE mullions (a pane every 5) and 2-wide piers
+  const low = floors === 1;
+  const bo = { frame, kick: S.kick != null ? S.kick : base, mull: S.mull, pane: S.pane || (low ? 5 : undefined), goods: S.goods };
   const edgeL = x0 <= 3, edgeR = x1 >= 59;          // party walls: no side awnings (they would clip)
 
   // ---- GF shell --------------------------------------------------------------
@@ -1301,6 +1604,11 @@ function shop(rng, S) {
   }
   g.walls(x0 - 1, L.STR, z0 - 1, x1 + 1, L.STR, z1 + 1, stripe);
   g.walls(x0 - 1, L.B0, z0 - 1, x1 + 1, L.B1, z1 + 1, band);
+  // w4r4 FINE TRIM (critic w4r3: "thin white trim bands" on ref05's Mac Auto):
+  // a 1-row white pinstripe along the foot of a coloured fascia band, so the
+  // band reads framed white-top (cornice) and white-bottom
+  const pinC = S.pin !== undefined ? S.pin : (lum(band) < 0.7 ? C.signWhite : null);
+  if (pinC != null) g.walls(x0 - 1, L.B0, z0 - 1, x1 + 1, L.B0, z1 + 1, pinC);
   g.walls(x0 - 2, L.TOP, z0 - 2, x1 + 2, L.TOP, z1 + 2, trim);
 
   const F = facade(g, 'front', z0), B = facade(g, 'back', z1), Lf = facade(g, 'left', x0), Rf = facade(g, 'right', x1);
@@ -1309,13 +1617,13 @@ function shop(rng, S) {
   // or one solid colour per bay cycling through S.awn (S.awnCycle)
   // w2r1: consensus "a few clean SOLID awnings" — stripes only on request
   // (S.awnStripe === 'force'); otherwise one solid colour with a light lip
-  const ao = { stripe: S.awnStripe === 'force' ? 6 : 0, lip: S.awnLip != null ? S.awnLip : (S.awnStripe && awn && awn[1] != null ? awn[1] : null) };
+  const ao = { stripe: S.awnStripe === 'force' ? (S.awnStripeW || 4) : 0, lip: S.awnLip != null ? S.awnLip : (S.awnStripe && awn && awn[1] != null ? awn[1] : null) };
   let awnI = 0;
   const awnCols = () => (S.awnCycle ? [awn[awnI++ % awn.length]] : awn);
   const runBays = (f, a0, a1, withAwn = true, out) => {
     // w2r1: BIG glass bays (one per side of the door on a 1×1 front, mullions
     // every ~5) — "mostly-glass shopfronts with mullions", fewer awnings
-    for (const [a, b] of splitBays(a0, a1, S.bayW || 16, S.pierW || 3)) {
+    for (const [a, b] of splitBays(a0, a1, S.bayW || (low ? 20 : 16), S.pierW || (low ? 2 : 3))) {
       bay(f, a, b, L.GY0, L.GY1, bo);
       const skip = S.noAwn && b + 1 >= S.noAwn[0] && a - 1 <= S.noAwn[1];
       if (awn && withAwn && !skip) awning(f, a - 1, b + 1, L.AWT, S.awnD || 4, awnCols(), ao);
@@ -1397,13 +1705,22 @@ function shop(rng, S) {
   // corner quoins, balconies; the ref05 row-house rhythm) ----------------------
   const [ux0, uz0, ux1, uz1] = up;
   const upper = S.upper != null ? S.upper : wall, upTrim = S.upTrim != null ? S.upTrim : trim;
-  const uo = { frame: S.upFrame != null ? S.upFrame : upTrim, reveal: S.reveal, sill: upTrim, lintel: S.lintel, rail: S.rail, shutter: S.shutter, boxes: S.boxes, flowers: S.flowers, planters: S.planters, winAwn: S.winAwn };
-  const st = S.upStyle || 'grid';
-  const sideSt = st === 'balc' || st === 'pair' ? 'grid' : st;
   // r9: crisp WHITE cornice + parapet cap (S.cornice), contrasting belt
   // courses (upTrim), pilasters between window groups (S.pilaster)
   const corn = S.cornice != null ? S.cornice : (upTrim === C.cream ? C.cream : C.signWhite);
-  const pilC = S.pilaster != null ? S.pilaster : corn;
+  // w4r2 CRISP WINDOWS (critic w4r1: "dark, crisp window frames and outlines";
+  // w3r1: "uniform grids of identical small blue windows"): every upper window
+  // gets a DARK frame + reveal (S.upFrame, default the charcoal comFrame) set
+  // in a LIGHT surround — a proud white sill and head (S.sill / S.lintel,
+  // default the cornice colour) — so each window reads as a sharp dark-glass
+  // rectangle on the wall, like ref05's terraces, not a pale grid.
+  const upFr = S.upFrame != null ? S.upFrame : C.comFrame;
+  const uo = { frame: upFr, reveal: S.reveal != null ? S.reveal : upFr, bar: S.upBar, sill: S.sill != null ? S.sill : corn,
+    lintel: S.lintel !== undefined ? S.lintel : corn, rail: S.rail, shutter: S.shutter, boxes: S.boxes, flowers: S.flowers, planters: S.planters, winAwn: S.winAwn };
+  const st = S.upStyle || 'grid';
+  const sideSt = st === 'balc' || st === 'pair' ? 'grid' : st;
+  // w4r1: COLOURED pilasters (the belt-course colour) unless it is white/cream
+  const pilC = S.pilaster != null ? S.pilaster : (upTrim === C.signWhite || upTrim === C.cream || upTrim === C.offwhite ? corn : upTrim);
   const grp = S.winGroup != null ? S.winGroup : 2;
   for (let k = 1; k < floors; k++) {
     const yb = L.TOP + (k - 1) * UP;
@@ -1420,11 +1737,24 @@ function shop(rng, S) {
     const wy = yb + 4;
     const Fu = facade(g, 'front', uz0), Bu = facade(g, 'back', uz1), Lu = facade(g, 'left', ux0), Ru = facade(g, 'right', ux1);
     const kst = S.upStyles ? S.upStyles[(k - 1) % S.upStyles.length] : st;
-    const rF = upRow(Fu, ux0 + 4, ux1 - 4, wy, kst, { ...uo, group: grp });
-    const rB = upRow(Bu, ux0 + 4, ux1 - 4, wy, kst, { ...uo, group: grp, boxes: kst === 'balc' ? uo.boxes : false });
+    // w4r2 PER-FLOOR TREATMENT (critic w4r1: "a different treatment on each
+    // floor ... balconies, planters and sign bands"): S.floorO[k-1] overrides
+    // the window options for that storey (window awnings on one, flower
+    // boxes on the next, shutters, ...), on the front and back
+    const fo = (S.floorO && S.floorO[k - 1]) || {}, uk = { ...uo, ...fo };
+    if (kst === 'curtain') {
+      // w4r3 GLASS PAVILION (ref05 Mac Auto's upper box): the whole storey is
+      // glazing in wide bays with fine dark mullions, thin light piers between
+      const cfr = S.upFrame != null ? S.upFrame : C.comFrame;
+      for (const [f, a0, a1] of [[Fu, ux0 + 2, ux1 - 2], [Bu, ux0 + 2, ux1 - 2], [Lu, uz0 + 2, uz1 - 2], [Ru, uz0 + 2, uz1 - 2]])
+        for (const [a, b] of splitBays(a0, a1, S.curtainW || 20, 2)) bay(f, a, b, yb + 3, yb + UP - 3, { frame: cfr, pane: 5, transom: false });
+      continue;
+    }
+    const rF = upRow(Fu, ux0 + 4, ux1 - 4, wy, kst, { ...uk, group: grp });
+    const rB = upRow(Bu, ux0 + 4, ux1 - 4, wy, kst, { ...uk, group: grp, boxes: kst === 'balc' || fo.boxes ? uk.boxes : false });
     for (const [f, r] of [[Fu, rF], [Bu, rB]]) for (const pc of (r.pils || [])) f.box(pc - 1, yb + 1, 1, pc + 1, yb + UP - (last ? 2 : 1), 1, pilC);
-    upRow(Lu, uz0 + 4, uz1 - 4, wy, sideSt, { ...uo, boxes: false });
-    upRow(Ru, uz0 + 4, uz1 - 4, wy, sideSt, { ...uo, boxes: false });
+    upRow(Lu, uz0 + 4, uz1 - 4, wy, sideSt, { ...uo, shutter: fo.shutter !== undefined ? fo.shutter : uo.shutter, boxes: false });
+    upRow(Ru, uz0 + 4, uz1 - 4, wy, sideSt, { ...uo, shutter: fo.shutter !== undefined ? fo.shutter : uo.shutter, boxes: false });
     if (k === 1 && S.upAC !== false) { wallAC(Ru, uz1 - 9, yb + 3); wallAC(Lu, uz0 + 3, yb + 3); }
     if (k === 1 && S.drain !== false) { drainPipe(Fu, ux1 - 4, L.TOP + 1, topY); drainPipe(Bu, ux0 + 4, L.TOP + 1, topY); }
   }
@@ -1551,7 +1881,14 @@ function shop(rng, S) {
   const cr = S.roofRect || [rx0 + 2, rz0 + 2, rx1 - 2, rz1 - 2];
   if (S.roofPlan && !S.roofKit) roofScape(g, rng, cr[0], cr[1], cr[2], cr[3], ry, S.roofPlan,
     { block: rblock, terrace: S.roofTerraceO, extra: S.roofExtra, bed: S.bed, cell: S.roofCell, cellD: S.roofCellD });
-  else roofProps(g, rng, cr[0], cr[1], cr[2], cr[3], ry, S.roofKit || pk(rng, ROOFKITS), rblock);
+  else {
+    // w4r1: the composite props take the shop's own colours (plant-room band,
+    // café parasols, stock crates, the sign frame's logo)
+    const bc = band === C.black || band === wall ? stripe : band;
+    const ro = { acc: bc, acc2: stripe === bc ? C.yellow : stripe, cols: awn && awn[0] != null ? [awn[0], C.signWhite] : [bc, C.signWhite], chair: bc,
+      logo, bg: lbg, bd: lbd, ...(S.roofO || {}) };
+    roofProps(g, rng, cr[0], cr[1], cr[2], cr[3], ry, S.roofKit || pk(rng, ROOFKITS), rblock, ro);
+  }
   if (floors > 1 && uz0 > z0 + 6) {
     const to = S.terrace || {};
     if (to.kind === 'garden') {
@@ -1598,22 +1935,25 @@ export function commercial(level, rng) {
   const wall = pk(rng, [C.signWhite, C.cream, C.pBlue, C.pYellow, C.mint, C.resSage, C.resButter]);
   const accent = pk(rng, [C.red, C.blue, C.orange, C.teal, C.purple, C.crimson, C.roofGreen]);
   const name = pk(rng, ['SHOP', 'DELI', 'MART', 'GIFTS', 'OPEN', 'SHOES', 'HATS', 'TOYS', 'GAMES']);
-  const floors = level === 1 ? 2 : level === 2 ? 3 : 4;
+  // w4r3: L1 is a low glazed retail box (ref05's shops), L2/L3 add storeys
+  const floors = level === 1 ? 1 : level === 2 ? 2 : 3;
   const logo = pk(rng, ['star', 'cart', 'flower', 'ball', 'book', 'cup', 'bag', 'shop']);
   const kind = pk(rng, ['cafe', 'market', 'park', 'plaza']);
   // w2r1: one or two distinct props per side with clear paving between
   const slots = {
-    cafe: [['table'], ['bistro', 'planter']],
-    market: [['stall'], ['crates']],
-    park: [['car'], ['bench']],
-    plaza: [['planter'], ['bikes', 'shrub']],
+    cafe: [['table', 'tree'], ['bistro', 'planter']],
+    market: [['stall'], ['crates', 'tree']],
+    park: [['car'], ['bench', 'tree']],
+    plaza: [['planter', 'pots'], ['bikes', 'tree']],
   }[kind];
   const darkSign = rng() < 0.5;
+  const ust = pk(rng, ['grid', 'shutter', 'pair', 'balc', 'mix', 'arch', 'mix']), bigFirst = rng() < 0.6;
   return shop(rng, {
-    floors, wall, stripe: accent, band: accent, awn: rng() < 0.85 ? [accent, C.signWhite] : null, awnStripe: rng() < 0.5,
+    floors, tall: floors === 1 ? 6 : 0, wall, stripe: accent, band: accent, awn: rng() < 0.85 ? [accent, C.signWhite] : null, awnStripe: rng() < 0.5,
+    frame: darkSign ? C.comFrame : C.signWhite,   // w4r1: half the zoned shops get light shopfront frames
     name, logo, logoBd: accent, signBg: darkSign ? C.black : C.comFrame, signFg: C.signWhite, signBd: darkSign ? accent : C.signWhite,
-    upper: pk(rng, [C.brick, C.cream, C.resTerracotta, C.resSage, C.pBlue, C.signWhite, C.resButter]),
-    upStyle: pk(rng, ['grid', 'shutter', 'pair', 'balc', 'tall']), shutter: pk(rng, [C.roofGreen, C.navy, C.crimson]), boxes: rng() < 0.6,
+    upper: pk(rng, [C.brickDark, C.cream, C.resTerracotta, C.resSage, C.brickDark, C.signWhite, C.resButter]),
+    upStyle: ust, upStyles: floors >= 3 && ust !== 'balc' && bigFirst ? ['big', ust] : null, shutter: pk(rng, [C.roofGreen, C.navy, C.crimson]), boxes: rng() < 0.6,
     upTrim: pk(rng, [C.signWhite, C.cream]),
     // r10: vary the upper floors + roofline between neighbours
     gable: pk(rng, [null, null, 'step', 'pediment']), oriel: rng() < 0.3 ? 8 : 0, balcRun: rng() < 0.3 ? [floors - 1] : null, dentil: rng() < 0.5,
@@ -1646,18 +1986,23 @@ function bBakery(rng) {
   // (comChoco renders salmon under the grade and merged with the red awnings
   // in r11 wip, so the frames are the ref02 dark slate and the fascia is the
   // wall colour: the board is the only thing on it)
-  const upper = pk(rng, [C.resTerracotta, C.resSage, C.resTerracotta]);
+  const upper = pk(rng, [C.brickDark, C.resSage, C.brickDark]);   // w4r2: brick (terracotta read washed-out salmon, brick tomato-red)
   return shop(rng, {
-    floors: 3, wall, base: C.comFrame, kick: C.comFrame, trim: C.signWhite, frame: C.comFrame, pier: C.signWhite,
+    // w4r1: WHITE shopfront frames + a red kick plate (the dark frames under the deep
+    // red awnings read as one slate void, not 'mostly glass')
+    floors: 2, tall: 2, wall, base: C.comFrame, kick: C.red, trim: C.signWhite, frame: C.signWhite, pier: C.signWhite,
     stripe: C.comDough, band: wall, name: 'BAKERY', logo: 'donut', logoBg: C.cream, logoBd: C.comDough,
-    awn: [C.red], awnLip: C.signWhite, awnD: 5, door: 'C', doorC: C.comFrame, mat: C.red, canopy: C.red,
+    awn: [C.red, C.signWhite], awnStripe: 'force', awnLip: C.red, awnD: 5, door: 'C', doorC: C.comFrame, mat: C.red, canopy: C.red,
     signBg: C.black, signFg: C.signWhite, signBd: C.comDough, signLamps: true,
-    upper, upTrim: C.cream, upFrame: C.signWhite, upStyles: ['sash', 'sash'], boxes: false, reveal: C.cream,
+    upper, upTrim: C.cream, upStyle: 'big', shutter: C.roofGreen, boxes: false, floorO: [{ boxes: true, flowers: [C.pink, C.signWhite] }],
     lintel: C.cream, dentil: true, goods: [C.comDough, C.comChoco, C.comIcing, C.comDough], upAC: false,
-    roofKit: [['solar', 'cl'], ['ac', 'br'], ['vent', 'bc'], ['hatch', 'fr']],
+    // w4r4: a Mac Auto roof terrace over the front half (red/white tables on a
+    // warm deck), the oven flue and one AC behind
+    roofTerrace: [4, 16, 44, 32], roofTerraceO: { deck: C.sand, line: C.sandDark, cols: [C.red, C.signWhite], chair: C.red, top: C.signWhite, parasol: false, guests: 0.5 },
+    roofKit: [['flue', 'br'], ['ac', 'fr']],
     crowd: 2,
     lot: (c) => apron(c, { display: 'none', cols: [C.red, C.cream], chair: C.wood, top: C.signWhite, seat: C.wood,
-      left: ['bistro'], right: ['bench', 'planter'], flowers: [C.pink, C.signWhite], walk: C.lotPave }),
+      left: ['bistro', 'board'], right: ['bench', 'tree'], flowers: [C.pink, C.signWhite] }),
   });
 }
 
@@ -1682,11 +2027,12 @@ function bIceCream(rng) {
   const accent = pk(rng, [C.pink, C.teal, C.blossomDark]);
   const s1 = accent === C.teal ? C.mint : C.pink, s2 = pk(rng, [C.comChoco, C.cream, C.mint]);
   return shop(rng, {
-    floors: 2, wall, trim: C.signWhite, stripe: accent, band: C.comChoco, frame: C.signWhite, kick: accent, base: accent,
-    awn: [accent, C.signWhite], awnStripe: true, name: 'SCOOPS', logo: 'cone', logoBg: C.signWhite, logoBd: accent, doorC: C.signWhite, mat: accent,
-    upper: pk(rng, [C.signWhite, C.pYellow, C.mint]), upTrim: accent, upFrame: C.signWhite, upStyle: 'grid', boxes: false, balcRun: [1], rail: C.signWhite, goods: [C.pink, C.mint, C.comCone, C.pYellow],
+    floors: 1, tall: 6, wall, trim: C.signWhite, stripe: accent, band: C.comChoco, frame: C.signWhite, kick: accent, base: accent,
+    awn: [accent, C.signWhite], awnStripe: 'force', awnLip: accent, name: 'SCOOPS', logo: 'cone', logoBg: C.signWhite, logoBd: accent, doorC: C.signWhite, mat: accent,
+    upper: pk(rng, [C.signWhite, C.resButter, C.signWhite]), upTrim: accent, upStyle: 'grid', boxes: false, goods: [C.pink, C.mint, C.comCone, C.pYellow],
     signBg: accent, signFg: C.signWhite, signBd: C.comChoco,
-    roofBlock: [[43, 22, 55, 40]], roofKit: [['garden', 'cl'], ['ac', 'bl'], ['vent', 'fc']],
+    roofBlock: [[43, 22, 55, 40]], roofKit: [['ac', 'bl'], ['vent', 'br']],
+    roofTerrace: [4, 16, 38, 31], roofTerraceO: { deck: C.pPink, line: C.signWhite, cols: [accent, C.signWhite], chair: accent, top: C.signWhite, parasol: false, guests: 0.5 },
     lot: (c) => apron(c, { display: 'none', cols: [accent, C.signWhite], chair: C.signWhite, top: C.pYellow, walk: C.pPink,
       cartBody: C.signWhite, cartA: accent, cartGoods: C.comCone, left: ['table'], right: ['cart'] }),
     after: (c) => coneSculpture(c.g, 49, c.ry, 31, s1, s2),
@@ -1701,9 +2047,9 @@ function bPizza(rng) {
   return shop(rng, {
     floors: 2, wall, stripe: C.signWhite, band: C.roofGreen, trim: C.signWhite, frame: C.roofGreen, kick: C.brick, base: C.brick,
     signBg: C.red, signFg: C.signWhite, signBd: C.signWhite,
-    awn: [C.roofGreen], awnLip: C.signWhite, name: 'PIZZA', logo: 'pizza', logoBg: C.signWhite, logoBd: C.roofGreen, door: 'L', doorOff: 30, doorC: C.roofGreen, mat: C.red,
-    upper: pk(rng, [C.brick, C.resTerracotta, C.cream]), upTrim: C.signWhite, upFrame: C.signWhite, upStyle: 'pair', boxes: false, gable: 'pediment', dentil: true,
-    roofBlock: [[48, 34, 56, 42]], roofKit: [['gardenL', 'cl'], ['ac', 'bl'], ['vents', 'fr']],
+    awn: [C.roofGreen, C.signWhite], awnStripe: 'force', awnLip: C.roofGreen, name: 'PIZZA', logo: 'pizza', logoBg: C.signWhite, logoBd: C.roofGreen, door: 'L', doorOff: 30, doorC: C.roofGreen, mat: C.red,
+    upper: pk(rng, [C.brickDark, C.brickDark, C.cream]), upTrim: C.signWhite, upStyle: 'arch', boxes: false, floorO: [{ boxes: true, flowers: [C.red, C.signWhite] }], dentil: true,   // w4r4: no pediment (its back read as a red staircase)
+    roofBlock: [[48, 34, 56, 42]], roofKit: [['herbs', 'fl'], ['gardenL', 'fr'], ['ac', 'bl']],
     lot: (c) => apron(c, { display: 'none', cols: [C.red, C.signWhite], chair: C.roofGreen, top: C.signWhite, left: ['car'], right: ['table', 'planter'] }),
     after: (c) => {
       const { g, ry } = c;
@@ -1732,11 +2078,11 @@ function bBurger(rng) {
   const band = pk(rng, [C.red, C.red, C.crimson]);
   return shop(rng, {
     floors: 2, up: [1, 29, 61, 49], wall: C.signWhite, trim: C.signWhite, pier: band, stripe: C.yellow, band, frame: C.signWhite,
-    kick: band, base: band, upper: C.signWhite, upTrim: band, upStyle: 'ribbon', upAC: false, mirror: false, blade: false,
+    kick: band, base: band, upper: C.signWhite, upTrim: band, upStyle: 'curtain', quoins: false, upAC: false, mirror: false, blade: false,
     logo: 'burger', logoBg: C.signWhite, logoBd: C.yellow, name: null, door: 'L', doorOff: 24, doorC: band, mat: band, canopy: band,
     sides: ['shop', 'shop'], sideTiles: true,
     terrace: { deck: C.sand, line: C.sandDark, cols: [band, C.signWhite], chair: band, top: C.signWhite, parasol: false },
-    roofBlock: [[5, 38, 57, 47]], roofRect: [4, 31, 58, 37], roofKit: [['ac', 'cl'], ['vents', 'cr']],
+    roofBlock: [[5, 38, 57, 47]], roofRect: [4, 29, 58, 39], roofKit: Object.assign([['ac', 'cl'], ['vents', 'c'], ['ac', 'cr'], ['vent', 'l'], ['vents', 'r']], { gap: 3 }),
     lot: (c) => {
       const { g, rng: r } = c;
       apron(c, { display: 'none', cols: [band, C.signWhite], chair: band, top: C.signWhite, left: ['car'], right: ['car'] });
@@ -1777,12 +2123,16 @@ function bCafe(rng) {
   const wall = pk(rng, [C.mint, C.resSage, C.cream]);
   const accent = pk(rng, [C.teal, C.roofGreen, C.navy]);
   return shop(rng, {
-    floors: 3, wall, stripe: C.cream, band: accent, nameFg: C.signWhite, frame: C.comFrame, kick: C.comFrame, base: C.comFrame,
+    floors: 1, tall: 6, wall, stripe: C.cream, band: accent, nameFg: C.signWhite, frame: C.comFrame, kick: C.comFrame, base: C.comFrame,
     signBg: C.comFrame, signFg: C.signWhite, signBd: C.cream,
     awn: [accent], awnLip: C.cream, name: 'CAFE', logo: 'cup', logoBg: C.cream, logoBd: accent, doorC: accent, mat: accent,
-    upper: pk(rng, [C.cream, C.signWhite, C.resButter]), upTrim: C.signWhite, upStyles: ['sash', 'grid'], upFrame: accent, boxes: true, flowers: [C.pink, C.signWhite], lintel: C.signWhite, oriel: 9, goods: [C.comDough, C.comIcing, C.comChoco],
-    roofKit: [['gardenL', 'cl'], ['stair', 'br'], ['ac', 'fr']],
-    lot: (c) => apron(c, { display: 'none', cols: [accent, C.cream], chair: accent, left: ['table'], right: ['bistro', 'bikes'] }),
+    upper: pk(rng, [C.cream, C.signWhite, C.resButter]), upTrim: C.signWhite, upStyles: ['big', 'sash'], boxes: false, floorO: [{ winAwn: [accent] }, { boxes: true }], flowers: [C.pink, C.signWhite], lintel: C.signWhite, oriel: 9, goods: [C.comDough, C.comIcing, C.comChoco],
+    // w4r3: a low glass café with a Mac Auto roof terrace (tiled deck, parasol
+    // tables, a glass rail on the parapet) over the front half, plant behind
+    roofTerrace: [3, 15, 59, 31], roofTerraceO: { deck: C.sand, line: C.sandDark, cols: [accent, C.signWhite], chair: C.wood, top: C.signWhite, parasol: false, guests: 0.4 },
+    roofKit: [['ac', 'bl'], ['vent', 'br']],
+    lot: (c) => apron(c, { display: 'none', cols: [accent, C.cream], chair: accent, left: ['table', 'tree'], right: ['bistro', 'bikes'] }),
+    after: ({ g, x0, x1, z0, lv }) => glassRail(g, x0, z0, x1, 32, lv.TOP + 4),
   });
 }
 
@@ -1804,12 +2154,12 @@ function abcBlocks(g, x, y, z) {
 function bToyStore(rng) {
   const wall = pk(rng, [C.pYellow, C.pBlue, C.signWhite]);
   return shop(rng, {
-    tall: 4, floors: 2, wall, stripe: C.red, band: C.blue, nameFg: C.yellow, signBg: C.red, signFg: C.signWhite, signBd: C.yellow, trim: C.signWhite, frame: C.blue, kick: C.red, base: C.red, pier: C.red,
+    tall: 8, floors: 1, wall, stripe: C.red, band: C.blue, nameFg: C.yellow, signBg: C.red, signFg: C.signWhite, signBd: C.yellow, trim: C.signWhite, frame: C.blue, kick: C.red, base: C.red, pier: C.red,
     awn: [C.red, C.yellow, C.blue], awnCycle: true, name: 'TOYS', logo: 'blocks', logoBg: C.signWhite, logoBd: C.red, doorC: C.red, mat: C.yellow,
-    upper: pk(rng, [C.pBlue, C.signWhite, C.pYellow]), upTrim: C.red, upFrame: C.signWhite, upStyle: 'tall', goods: [C.red, C.yellow, C.blue, C.roofGreen],
-    roofBlock: [[20, 24, 42, 37]], roofKit: [['ac', 'bl'], ['solar2', 'br'], ['vent', 'fr']],
-    lot: (c) => apron(c, { display: 'none', left: ['balloons'], right: ['ride', 'bench'], flowers: [C.red, C.yellow, C.blue] }),
-    after: (c) => abcBlocks(c.g, 22, c.ry, 26),
+    upper: pk(rng, [C.signWhite, C.signWhite, C.resButter]), upTrim: C.red, upStyle: 'mix', goods: [C.red, C.yellow, C.blue, C.roofGreen],
+    roofBlock: [[34, 18, 57, 32]], roofKit: [['play', 'fl'], ['ac', 'bl']],
+    lot: (c) => apron(c, { display: 'none', left: ['balloons', 'pots'], right: ['ride', 'bench'], flowers: [C.red, C.yellow, C.blue] }),
+    after: (c) => abcBlocks(c.g, 37, c.ry, 20),
   });
 }
 
@@ -1818,12 +2168,12 @@ function bToyStore(rng) {
 function bPetShop(rng) {
   const wall = pk(rng, [C.pBlue, C.mint, C.cream]);
   return shop(rng, {
-    floors: 2, wall, stripe: C.comDough, band: C.roofBrown, nameFg: C.signWhite, frame: C.roofBrown, kick: C.roofBrown, base: C.roofBrown,
+    floors: 1, tall: 6, wall, stripe: C.comDough, band: C.roofBrown, nameFg: C.signWhite, frame: C.roofBrown, kick: C.roofBrown, base: C.roofBrown,
     signBg: C.orange, signFg: C.signWhite, signBd: C.cream,
     awn: [C.comDough], awnLip: C.roofBrown, name: 'PETS', logo: 'paw', logoBg: C.cream, logoBd: C.comDough, door: 'R', doorOff: 8, doorC: C.roofBrown, mat: C.comDough,
-    upper: pk(rng, [C.resTerracotta, C.cream, C.resSage]), upTrim: C.cream, upFrame: C.signWhite, upStyle: 'shutter', shutter: C.roofBrown, boxes: false, goods: [C.comDough, C.roofBrown, C.red],
-    roofKit: [['gardenL', 'cr'], ['ac', 'bl'], ['hatch', 'fl']],
-    lot: (c) => apron(c, { display: 'none', flowers: [C.yellow, C.pink], left: ['dogpen'], right: ['bench'] }),
+    upper: pk(rng, [C.brickDark, C.cream, C.resSage]), upTrim: C.cream, upStyle: 'shutter', shutter: C.roofBrown, boxes: false, goods: [C.comDough, C.roofBrown, C.red],
+    roofKit: [['dogrun', 'fl'], ['ac', 'bl'], ['sky', 'br']],
+    lot: (c) => apron(c, { display: 'none', flowers: [C.yellow, C.pink], left: ['dogpen', 'tree'], right: ['bench', 'board'] }),
   });
 }
 
@@ -1833,12 +2183,12 @@ function bPetShop(rng) {
 function bBookShop(rng) {
   const wall = pk(rng, [C.navy, C.roofGreen, C.crimson]);
   return shop(rng, {
-    floors: 4, wall, stripe: C.gold, band: wall, nameFg: C.signWhite, trim: C.cream, frame: C.gold, kick: C.woodDark, base: C.woodDark, pier: C.cream,
+    floors: 3, wall, stripe: C.gold, band: wall, nameFg: C.signWhite, trim: C.cream, frame: C.gold, kick: C.woodDark, base: C.woodDark, pier: C.cream,
     signBg: C.black, signFg: C.gold, signBd: C.gold,
     awn: [C.cream, wall], awnStripe: true, name: 'BOOKS', logo: 'book', logoBg: C.cream, logoBd: C.gold, doorC: C.gold, mat: C.red,
-    upper: pk(rng, [C.cream, C.brick, C.resButter]), upTrim: C.signWhite, upFrame: wall, upStyles: ['shutter', 'grid', 'grid'], shutter: wall, boxes: true, flowers: [C.vegPetalR, C.signWhite], lintel: C.signWhite, oriel: 8, dentil: true, goods: [C.red, C.navy, C.gold, C.roofGreen],
-    roofKit: [['tank', 'bl'], ['solar', 'cr'], ['stair', 'fl']],
-    lot: (c) => apron(c, { display: 'books', dispBays: [0], left: ['bench'], right: ['shrub'] }),
+    upper: pk(rng, [C.cream, C.brickDark, C.resButter]), upTrim: C.signWhite, upFrame: wall, upStyles: ['big', 'shutter'], shutter: wall, boxes: true, flowers: [C.vegPetalR, C.signWhite], lintel: C.signWhite, oriel: 8, dentil: true, goods: [C.red, C.navy, C.gold, C.roofGreen],
+    roofKit: [['gardenL', 'fl'], ['tank', 'br'], ['ac', 'bl']],
+    lot: (c) => apron(c, { display: 'books', dispBays: [0], left: ['bench', 'board'], right: ['tree', 'shrub'] }),
   });
 }
 
@@ -1849,13 +2199,13 @@ function bFlowerShop(rng) {
   const wall = pk(rng, [C.signWhite, C.pPink, C.mint]);
   const petal = pk(rng, [C.pink, C.vegPetalR, C.purple]);
   return shop(rng, {
-    floors: 2, wall, stripe: C.pink, band: C.roofGreen, frame: C.roofGreen, kick: C.roofGreen, base: C.roofGreen,
+    floors: 1, tall: 4, wall, stripe: C.pink, band: C.roofGreen, frame: C.roofGreen, kick: C.roofGreen, base: C.roofGreen,
     signBg: C.pink, signFg: C.signWhite, signBd: C.roofGreen,
     awn: [C.pink], awnLip: C.signWhite, name: 'ROSES', logo: 'flower', logoBg: C.signWhite, logoBd: C.pink, door: 'L', doorOff: 8, doorC: C.roofGreen, mat: C.pink,
-    upper: pk(rng, [C.pPink, C.signWhite, C.resSage]), upTrim: C.roofGreen, upFrame: C.signWhite, upStyle: 'balc', rail: C.roofGreen, boxes: true, flowers: [petal, C.yellow, C.signWhite], goods: [petal, C.yellow, C.vegBush],
-    roofBlock: [[22, 16, 60, 46]], roofKit: [['ac', 'bl'], ['vent', 'fl']],
+    upper: pk(rng, [C.signWhite, C.resSage, C.cream]), upTrim: C.roofGreen, upStyle: 'balc', rail: C.roofGreen, boxes: true, flowers: [petal, C.yellow, C.signWhite], goods: [petal, C.yellow, C.vegBush],
+    roofBlock: [[22, 16, 60, 46]], roofKit: Object.assign([['ac', 'bl'], ['ac', 'fl'], ['vent', 'l']], { gap: 2 }),
     lot: (c) => apron(c, { display: 'flowers', dispBays: [0], flowers: [petal, C.yellow, C.vegPetalR, C.signWhite, C.purple], stall: C.pink,
-      left: [], right: ['stall', 'board'] }),
+      left: [], right: ['stall', 'board', 'tree'] }),
     after: (c) => {
       const { g, ry } = c;
       const gx0 = 27, gx1 = 55, gz0 = 18, gz1 = 44, gy = ry + 12;
@@ -1882,7 +2232,7 @@ function bGrocery(rng) {
     awn: [C.roofGreen, C.signWhite], awnStripe: true, name: 'GROCERY', logo: 'cart', logoBg: C.signWhite, logoBd: C.lime, doorC: C.roofGreen, mat: C.lime, canopy: C.roofGreen,
     signBg: C.roofGreen, signFg: C.signWhite, signBd: C.lime,
     sides: ['shop', 'shop'], bayW: 12, pierW: 2, stall: C.roofGreen, goods: [C.red, C.orange, C.lime, C.yellow],
-    roofKit: [['solar', 'cl'], ['acBig', 'br'], ['sky', 'fr'], ['vents', 'bc']],
+    roofKit: [['solar', 'fl'], ['solar', 'fr'], ['sky', 'bl'], ['ac', 'br']],
     lot: (c) => apron(c, { display: 'crates', dispBays: [0], stall: C.roofGreen, left: ['car'], right: ['stall'] }),
   });
 }
@@ -1982,11 +2332,11 @@ function bFruitStand(rng) {
 function bArcade(rng) {
   const wall = pk(rng, [C.navy, C.roofPurple, C.darkGray]);
   return shop(rng, {
-    tall: 4, floors: 2, wall, trim: C.purple, frame: C.black, stripe: C.neon, band: C.black, nameFg: C.neon, pier: C.purple, kick: C.purple, base: C.black,
+    tall: 8, floors: 1, wall, trim: C.purple, frame: C.black, stripe: C.neon, band: C.black, nameFg: C.neon, pier: C.purple, kick: C.purple, base: C.black,
     awn: null, name: 'ARCADE', logo: 'joy', logoBg: C.signWhite, logoBd: C.neon, doorC: C.neon, mat: C.purple, canopy: C.purple,
     upper: wall, upTrim: C.purple, upFrame: C.neon, upStyle: 'ribbon', parapet: wall, coping: C.neon, quoins: false, signBg: C.black, signFg: C.neon, signBd: C.purple,
-    roofKit: [['acBig', 'bl'], ['solar', 'cr'], ['vents', 'fl']],
-    lot: (c) => apron(c, { display: 'none', walk: C.lotPaveDark, bin: C.purple, left: ['car'], right: ['bikes'] }),
+    roofKit: [['frame', 'fl'], ['solar', 'fr'], ['dish', 'bl'], ['ac', 'br']],
+    lot: (c) => apron(c, { display: 'none', walk: C.lotPaveDark, bin: C.purple, left: ['car'], right: ['bikes', 'tree'] }),
     after: ({ F, B, x0, x1, lv }) => {
       for (const f of [F, B]) for (let u = x0 + 3; u <= x1 - 3; u += 3) f.set(u, lv.GY1 + 2, 1, C.lamp);
     },
@@ -1999,13 +2349,13 @@ function bCandyShop(rng) {
   const wall = pk(rng, [C.pPink, C.mint, C.signWhite]);
   const a = pk(rng, [C.red, C.blossomDark, C.teal]);
   return shop(rng, {
-    floors: 2, wall, stripe: C.pink, band: a, frame: C.signWhite, kick: C.pink, base: a,
+    floors: 1, tall: 6, wall, stripe: C.pink, band: a, frame: C.signWhite, kick: C.pink, base: a,
     signBg: a, signFg: C.signWhite, signBd: C.pink,
-    awn: [a, C.signWhite], awnStripe: true, name: 'CANDY', logo: 'lolly', logoBg: C.signWhite, logoBd: C.pink, doorC: a, mat: C.pink,
-    upper: pk(rng, [C.signWhite, C.pYellow, C.pBlue]), upTrim: C.pink, upFrame: C.signWhite, upStyle: 'grid', winAwn: [a], boxes: false, gable: 'step', goods: [C.pink, C.red, C.mint, C.yellow],
-    roofKit: [['garden', 'cl'], ['ac', 'br'], ['vent', 'fr']],
+    awn: [a, C.signWhite], awnStripe: 'force', awnLip: a, name: 'CANDY', logo: 'lolly', logoBg: C.signWhite, logoBd: C.pink, doorC: a, mat: C.pink,
+    upper: pk(rng, [C.signWhite, C.resButter, C.signWhite]), upTrim: C.pink, upStyle: 'mix', winAwn: [a], boxes: false, gable: 'step', goods: [C.pink, C.red, C.mint, C.yellow],
+    roofKit: [['garden', 'fl'], ['frame', 'fr'], ['ac', 'bl']],
     lot: (c) => apron(c, { display: 'bistro', cols: [C.pink, C.signWhite], chair: C.signWhite, walk: C.pPink, cartBody: C.signWhite, cartA: C.pink, cartGoods: C.blossom, lolly: a,
-      display: 'none', left: ['lolly'], right: ['cart'] }),
+      display: 'none', left: ['lolly', 'pots'], right: ['cart'] }),
   });
 }
 
@@ -2015,11 +2365,11 @@ function bMusicStore(rng) {
   const wall = pk(rng, [C.roofPurple, C.navy, C.roofBlue]);
   const a = pk(rng, [C.gold, C.pink, C.orange]);
   return shop(rng, {
-    floors: 3, wall, stripe: a, band: C.black, nameFg: a, frame: C.black, kick: a, base: C.black, trim: C.signWhite,
+    floors: 2, tall: 2, wall, stripe: a, band: C.black, nameFg: a, frame: C.black, kick: a, base: C.black, trim: C.signWhite,
     awn: [a], awnLip: C.black, name: 'MUSIC', logo: 'note', logoBg: C.signWhite, logoBd: a, doorC: C.black, mat: a,
-    upper: pk(rng, [C.brick, C.cream, C.signWhite]), upTrim: C.signWhite, upFrame: C.comFrame, upStyles: ['ribbon', 'pair'], planters: true, flowers: [a, C.pink], boxes: false, balcRun: [2], signBg: C.comFrame, signFg: a, signBd: a === C.gold ? C.signWhite : C.gold, goods: [a, C.comFrame],
-    roofKit: [['solar', 'cl'], ['ac', 'br'], ['stair', 'fr']],
-    lot: (c) => apron(c, { display: 'none', left: ['busker'], right: ['bikes'] }),
+    upper: pk(rng, [C.brickDark, C.cream, C.signWhite]), upTrim: C.signWhite, upFrame: C.comFrame, upStyles: ['ribbon', 'pair'], planters: true, flowers: [a, C.pink], boxes: false, signBg: C.comFrame, signFg: a, signBd: a === C.gold ? C.signWhite : C.gold, goods: [a, C.comFrame],
+    roofKit: [['solar', 'fl'], ['frame', 'fr'], ['ac', 'bl']],
+    lot: (c) => apron(c, { display: 'none', left: ['busker', 'board'], right: ['bikes', 'tree'] }),
   });
 }
 
@@ -2030,12 +2380,12 @@ function bSportsShop(rng) {
   const a = pk(rng, [C.orange, C.red, C.navy]);
   const bnd = a === C.navy ? C.red : C.navy;
   return shop(rng, {
-    floors: 2, wall, stripe: a, band: bnd, frame: bnd, kick: a, base: bnd,
+    floors: 1, tall: 6, wall, stripe: a, band: bnd, frame: bnd, kick: a, base: bnd,
     signBg: bnd, signFg: C.signWhite, signBd: a,
     awn: [a, C.signWhite], awnStripe: true, name: 'SPORTS', logo: 'ball', logoBg: C.signWhite, logoBd: a, door: 'R', doorOff: 8, doorC: bnd, mat: a,
-    upper: pk(rng, [C.signWhite, C.cream, C.pBlue]), upTrim: bnd, upFrame: C.signWhite, upStyle: 'pair', goods: [C.orange, C.signWhite, C.blue],
-    roofKit: [['solar', 'cl'], ['acBig', 'br'], ['hatch', 'fr']],
-    lot: (c) => apron(c, { display: 'none', left: ['hoop'], right: ['bikes'] }),
+    upper: pk(rng, [C.signWhite, C.cream, C.brickDark]), upTrim: bnd, upStyle: 'mix', goods: [C.orange, C.signWhite, C.blue],
+    roofKit: [['court', 'fl'], ['ac', 'bl']],
+    lot: (c) => apron(c, { display: 'none', left: ['hoop', 'board'], right: ['bikes', 'tree'] }),
   });
 }
 
@@ -2047,13 +2397,13 @@ function bBarber(rng) {
   const wall = pk(rng, [C.signWhite, C.pBlue, C.cream]);
   const du = BARBER.body[0] + BARBER.doorOff;
   return shop(rng, {
-    body: BARBER.body, floors: 2, wall, stripe: C.red, band: C.navy, frame: C.navy, kick: C.red, base: C.navy,
+    body: BARBER.body, floors: 1, wall, stripe: C.red, band: C.navy, frame: C.navy, kick: C.red, base: C.navy,
     signBg: C.navy, signFg: C.signWhite, signBd: C.red,
     awn: [C.red, C.signWhite, C.blue, C.signWhite], awnStripe: true, name: 'BARBER', logo: 'scissor', logoBg: C.signWhite, logoBd: C.red,
     door: 'L', doorOff: BARBER.doorOff, doorC: C.navy, mat: C.red, noAwn: [du - 9, du - 1],
-    upper: pk(rng, [C.brick, C.cream, C.resSage]), upTrim: C.signWhite, upFrame: C.signWhite, upStyle: 'shutter', shutter: C.navy, boxes: false, gable: 'pediment', dentil: true,
-    roofKit: [['solar', 'cl'], ['ac', 'br'], ['vent', 'fr']],
-    lot: (c) => apron(c, { display: 'none', dispFrom: c.back ? 0 : du, left: [], right: ['bench', 'planter'] }),
+    upper: pk(rng, [C.brickDark, C.cream, C.resSage]), upTrim: C.signWhite, upStyle: 'shutter', shutter: C.navy, boxes: false, gable: 'pediment', dentil: true,
+    roofKit: [['garden', 'fl'], ['solar2', 'fr'], ['ac', 'bl']],
+    lot: (c) => apron(c, { display: 'none', dispFrom: c.back ? 0 : du, left: [], right: ['bench', 'tree', 'planter'] }),
     after: (c) => {
       const { g, z0 } = c;
       g.box(du - 5, 29, z0 - 1, du - 5, 29, z0 - 5, C.comFrame);        // bracket over the pole top
@@ -2072,12 +2422,29 @@ const STAR = ['.....#.....', '....###....', '....###....', '###########', '.####
 function star3d(g, cx, y, z, c, d = 2) {
   for (let r = 0; r < 11; r++) for (let i = 0; i < 11; i++) if (STAR[r][i] === '#') g.box(cx - 5 + i, y + 10 - r, z, cx - 5 + i, y + 10 - r, z + d, c);
 }
+// w4r1: a 3D milkshake (the r10 star read as a little running figure at iso
+// angles): white foot + stem, a flared striped cup, a cream dome, a cherry and
+// a red-white straw. Square cross-section, centred on (cx, cz); ~19 tall.
+// w4r4: a crisp SODA CUP (the w4r3 critic read the milkshake's white cream
+// dome as a grey "smoke blob ... rock pile"): a tapered red cup with a white
+// band, a flat lid and a tall striped straw — no round blobs
+function shake3d(g, cx, y, cz, cup = C.red, stripe = C.signWhite) {
+  g.box(cx - 3, y, cz - 3, cx + 3, y, cz + 3, C.comFrame);
+  for (let k = 0; k < 13; k++) {
+    const h = 3 + Math.floor(k / 5), yy = y + 1 + k;
+    g.box(cx - h, yy, cz - h, cx + h, yy, cz + h, k >= 5 && k <= 8 ? stripe : cup);
+  }
+  g.box(cx - 6, y + 14, cz - 6, cx + 6, y + 14, cz + 6, C.signWhite);
+  g.box(cx - 5, y + 15, cz - 5, cx + 5, y + 15, cz + 5, C.signWhite);
+  for (let k = 0; k < 9; k++) g.box(cx + 1, y + 16 + k, cz, cx + 2, y + 16 + k, cz + 1, (k >> 1) % 2 ? C.signWhite : C.red);
+  g.box(cx + 3, y + 24, cz, cx + 4, y + 24, cz + 1, C.red);
+}
 function bDiner(rng) {
   const band = pk(rng, [C.red, C.red, C.teal]);
   const accent = band === C.red ? C.yellow : C.signWhite;
   return shop(rng, {
-    body: [13, 19, 49, 43], tall: 3, wall: C.signWhite, trim: C.signWhite, stripe: accent, band, frame: C.comFrame, pier: C.signWhite, kick: band, base: band,
-    awn: [band, C.signWhite], awnStripe: true, awnD: 3, bayW: 12, pierW: 2, name: null, logo: 'star', logoBg: C.signWhite, logoBd: accent,
+    body: [13, 19, 49, 43], tall: 6, wall: C.signWhite, trim: C.signWhite, stripe: accent, band, frame: C.comFrame, pier: C.signWhite, kick: band, base: band,
+    awn: [band, C.signWhite], awnStripe: 'force', awnLip: band, awnD: 3, bayW: 12, pierW: 2, name: null, logo: 'star', logoBg: C.signWhite, logoBd: accent,
     door: 'R', doorOff: 6, doorC: band, mat: band, doorAwn: true, signBg: band, signFg: C.signWhite, signBd: accent === C.yellow ? C.yellow : C.comFrame, signLamps: true,
     goods: [C.comCheese, C.red, C.comDough], mirror: false, crowd: 0,
     coping: band, roofBlock: [[14, 28, 48, 34]], roofRect: [15, 35, 47, 41], roofKit: [['ac', 'cl'], ['vents', 'cr']],
@@ -2125,7 +2492,7 @@ function bDiner(rng) {
       const so = { bg: band, fg: C.signWhite, bd: accent, out: 0 };
       namePanel(facade(g, 'front', zs), bc, sy + 1, 'DINER', so);
       namePanel(facade(g, 'back', zs + 4), bc, sy + 1, 'DINER', so);
-      star3d(g, bc, sy + 12, zs + 1, C.yellow, 2);
+      shake3d(g, bc, sy + 12, zs + 2, C.red, C.signWhite);
       void topY;
     },
   });
@@ -2352,7 +2719,10 @@ function _barberSpinner() {
 // ---------------------------------------------------------------------------
 // Registry: catalog id -> builder (rng, variant, entry) => model.
 // ---------------------------------------------------------------------------
-export const BUILDERS = {
+// w4r4: catalogModel flipZ()s only the base, so the fine sign part (built
+// unflipped, matching the zoned commercial() path) is mirrored here too
+const flipFine = (b) => (...a) => { const m = b(...a); if (m && m.__fine) { flipZ(m.__fine); delete m.__fine; } return m; };
+const _BUILDERS = {
   'bakery': bBakery, 'ice-cream': bIceCream, 'pizza': bPizza, 'burger': bBurger,
   'cafe': bCafe, 'toy-store': bToyStore, 'pet-shop': bPetShop, 'book-shop': bBookShop,
   'flower-shop': bFlowerShop, 'grocery': bGrocery, 'market-stall': bMarketStall,
@@ -2360,6 +2730,7 @@ export const BUILDERS = {
   'candy-shop': bCandyShop, 'music-store': bMusicStore, 'sports-shop': bSportsShop,
   'barber': bBarber, 'diner': bDiner, 'fruit-stand': bFruitStand,
 };
+export const BUILDERS = Object.fromEntries(Object.entries(_BUILDERS).map(([k, b]) => [k, flipFine(b)]));
 
 // Animated parts: id -> () => { part, ox,oy,oz (WORLD units), ax,ay,az, speed }
 // Barber pole: it stands on the paving left of the door, 6 fine voxels

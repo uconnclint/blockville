@@ -234,7 +234,8 @@ uniform vec4  uCsmSky;                         // x contactWorld, y openSkyFloor
 uniform vec4  uCsmTune;                        // x tapDensity (taps per texel^2 of disk), yzw reserved
 uniform vec3  uCsmOrigin;                      // world origin the varying is relative to
 uniform vec3  uCsmIblTint;                     // low-sun skylight tint for the DIFFUSE sky IBL; (1,1,1) = off
-uniform vec4  uCsmWallFill;                    // x away-wall fill cut, y key-wall fill gain, z day amount (0 = off), w unused
+uniform vec4  uCsmWallFill;                    // x away-wall fill cut, y key-wall fill gain, z day amount (0 = off), w share of the cut applied to sky SPECULAR
+uniform vec4  uCsmShadowTint;                  // rgb hue of the sky fill inside a cast shadow on up-facing ground (lum ~1), a = amount (0 = off)
 uniform vec3  uCsmWallTint;                    // hue of the away-wall fill (linear, luminance ~1)
 uniform vec3  uCsmKeyDirW;                     // WORLD direction scene -> key (sun by day)
 
@@ -901,16 +902,39 @@ vec3 csmAoIndirect( const in vec3 viewNormal, const in vec3 albedo ) {
 // amount). Applied to hemi + ambient AND the diffuse sky IBL.
 vec3 csmWallFill( const in vec3 viewNormal ) {
 	if ( uCsmWallFill.z <= 0.0 || uCsmMisc.y > 0.5 ) return vec3( 1.0 );
+	// Light w4r2: inside a cast shadow an up-facing surface sees only the blue
+	// dome (the warm key and the sunlit paving around it are blocked), so the
+	// fill that is left there is tinted cool: ref05's shadows on its warm tan
+	// plinths are blue-grey (B/R ~1.0 against ~0.7 lit). Luminance ~1, so the
+	// shadow keeps its measured value; walls are left to the away-wall tint.
+	vec3 cool = mix( vec3( 1.0 ), uCsmShadowTint.rgb, ( 1.0 - csmLastShadow ) * csmLastUpW * uCsmShadowTint.w );
 	vec3 wn = csmInvXformDir( viewNormal, viewMatrix );
 	float nh = length( wn.xz );
 	float kh = length( uCsmKeyDirW.xz );
-	if ( nh < 1e-3 || kh < 1e-3 ) return vec3( 1.0 );
+	if ( nh < 1e-3 || kh < 1e-3 ) return cool;
 	float f = dot( wn.xz / nh, uCsmKeyDirW.xz / kh );    // +1 faces the key, -1 turned away
 	float wall = ( 1.0 - smoothstep( 0.35, 0.85, abs( wn.y ) ) ) * uCsmWallFill.z;
 	float away = smoothstep( 0.0, 0.55, - f ) * wall;
 	float toward = smoothstep( 0.0, 0.55, f ) * wall;
 	vec3 awayMul = mix( vec3( 1.0 ), uCsmWallTint * ( 1.0 - uCsmWallFill.x ), away );
-	return awayMul * ( 1.0 + uCsmWallFill.y * toward );
+	return cool * awayMul * ( 1.0 + uCsmWallFill.y * toward );
+}
+
+// Light w4r2: the same away-wall cut, applied (at uCsmWallFill.w of its
+// strength, untinted) to the SPECULAR sky reflection. The studio env is
+// symmetric, so glass and glossy trim on the far wall mirrored the same bright
+// sky as the key-side wall and downtown towers kept a flat, pastel right face
+// (critic w4r1). A real far wall reflects the dim half of the sky.
+float csmWallSpec( const in vec3 viewNormal ) {
+	if ( uCsmWallFill.z <= 0.0 || uCsmWallFill.w <= 0.0 || uCsmMisc.y > 0.5 ) return 1.0;
+	vec3 wn = csmInvXformDir( viewNormal, viewMatrix );
+	float nh = length( wn.xz );
+	float kh = length( uCsmKeyDirW.xz );
+	if ( nh < 1e-3 || kh < 1e-3 ) return 1.0;
+	float f = dot( wn.xz / nh, uCsmKeyDirW.xz / kh );
+	float wall = ( 1.0 - smoothstep( 0.35, 0.85, abs( wn.y ) ) ) * uCsmWallFill.z;
+	float away = smoothstep( 0.0, 0.55, - f ) * wall;
+	return 1.0 - uCsmWallFill.x * uCsmWallFill.w * away;
 }
 
 // Multiplier for the direct key (a small artistic share, see above).
@@ -1159,7 +1183,7 @@ export function csmLightsFragmentMaps() {
   _cachedMapsChunk = src +
     '\n#if defined( RE_IndirectDiffuse )\n\tiblIrradiance *= csmIblScale();\n\tiblIrradiance *= csmIblTint();\n\tiblIrradiance *= csmWallFill( geometryNormal );\n' +
     '\tiblIrradiance *= csmAoIndirect( geometryNormal, diffuseColor.rgb );\n#endif\n' +
-    '#if defined( RE_IndirectSpecular )\n\tradiance *= csmSpecularScale();\n#endif\n';
+    '#if defined( RE_IndirectSpecular )\n\tradiance *= csmSpecularScale();\n\tradiance *= csmWallSpec( geometryNormal );\n#endif\n';
   return _cachedMapsChunk;
 }
 
@@ -1242,6 +1266,12 @@ void main() {
 // ---------------------------------------------------------------------------
 // Light-pool (night) shaders — instanced, additive, zero per-light draw cost.
 // ---------------------------------------------------------------------------
+
+// night w4r6: stable 0..1 hash of a lamp's world position (per-lamp pool variety).
+function _lampHash(x, z, salt) {
+  const s = Math.sin(Math.round(x * 4) * 12.9898 + Math.round(z * 4) * 78.233 + salt * 37.719) * 43758.5453;
+  return s - Math.floor(s);
+}
 
 const POOL_VERT = /* glsl */`
 attribute vec3 aTint;
@@ -1659,9 +1689,30 @@ export class LightingRig {
       // this off; white prop 1 : 0.91 : 0.64. Post's shaded-face floor lifts
       // the far walls back up — with it at 0.12 instead of 0.24 the same
       // light gives neutral 0.70 / blue 0.57 (see pieces/light.md r8).
-      wallFillAway: 0.75,
+      // w4r2 (critic w4r1: downtown right faces "only slightly darker" than
+      // left): 0.75 -> 0.95, plus wallFillSpec = share of the same cut on the
+      // sky SPECULAR (glass / glossy trim mirrored the same bright sky on both
+      // walls). Corner right/left at iso-mid 0.654 -> 0.598 with the w4r2 key.
+      // w4r3 (critic w4r2: right faces / canyons now read "heavy"; w4r1 had
+      // asked for deeper) -> the midpoint: 0.95 -> 0.80. Corner right/left at
+      // iso-mid 0.561 -> ~0.61 (w4r1 saw 0.654, w4r2 0.561; ref05 ~0.57),
+      // faceratio 1 : 0.89 : 0.59 -> 1 : 0.89 : ~0.625 (ref04 0.63).
+      // w4r4 (critic w4r3: right faces / canyons "dim, desaturated navy-grey";
+      // wants them cooler and airier, not darker): the warm sun bounce on far
+      // walls is halved (engine DAY_BOUNCE_SCALE 0.08 -> 0.04) and replaced
+      // by more of this COOL fill: 0.80 -> 0.68, tint [0.88,0.98,1.16] ->
+      // [0.80,0.97,1.36]. faceratio stays 1 : 0.89 : 0.63 but the white
+      // probe's right face goes (154,155,150) -> (149,156,162): sky-tinted.
+      wallFillAway: 0.68,
       wallFillToward: 0.25,
-      wallFillTint: [0.88, 0.98, 1.16],
+      wallFillTint: [0.80, 0.97, 1.36],
+      wallFillSpec: 0.6,
+      // w4r2: hue of the fill left inside a cast shadow on up-facing surfaces
+      // (csmWallFill). ref05's shadows on warm tan plinths measure B/R ~1.03
+      // (blue-grey) against ~0.7 lit; ours were 0.88 (olive). This tint takes
+      // light paving in shadow to B/R 1.03 at the same luminance ratio (0.59).
+      shadowFillTint: [0.76, 0.96, 1.45],
+      shadowFillTintAmount: 1.0,
       // How much of each INDIRECT term a SKY-OCCLUDED fragment loses. These are
       // multiplied by csmSkyOcclusion(), NOT by the cast-shadow term — see the
       // long note above csmSkyOcclusion(). Driving them off the cast shadow (at
@@ -1760,23 +1811,32 @@ export class LightingRig {
       aoBroad: 0.25,
       aoBroadRadius: 4.0,
       aoIndirect: 1.0,
-      aoDirect: 0.85,
+      aoDirect: 0.60,            // w4r4: 0.85 -> 0.60 (see aoGap)
       aoContact: 0.45,
       aoGradHeight: 5.0,
       aoGradDepth: 0.25,
       // r7b: whole-wall fill gradient, foot -> top of the solid (see csmWorldAO).
-      aoWallGrad: 0.3,
+      aoWallGrad: 0.15,          // w4r4: 0.3 -> 0.15 (see aoGap)
       aoWallGradPow: 0.8,
       // r9: smooth floor on the INDIRECT world-AO visibility (see csmAoIndirect):
       // crevices keep at least this share of their fill; knee = blend width.
-      aoFillFloor: 0.0,
+      aoFillFloor: 0.45,         // w4r4: 0 -> 0.45 (no near-black crevices; see aoGap)
       aoFillKnee: 0.15,
       aoCover: 0.55,
       aoCrease: 0.5,
       aoCreaseDist: 0.35,
-      aoGap: 0.5,
+      // w4r4 (critic w4r2 + w4r3: tower canyons read heavy / murky navy):
+      // A/B at iso-mid showed world AO taking downtown key-side walls from
+      // 165 to 146 sRGB luma and roofs 148 -> 135, mostly as grey bands over
+      // every recessed window column (the narrow-gap term fires on the
+      // pilasters beside each pane, then aoPower squares it) plus the wall
+      // gradient and the direct-key share. aoGap 0.5 -> 0.85, aoWallGrad
+      // 0.3 -> 0.15, aoDirect 0.85 -> 0.6, aoFillFloor 0 -> 0.45: walls
+      // 161 -> 178, roofs p25 104 -> 114, frame p25 66 -> 75; the wall-foot /
+      // prop-foot contact line (ground term + aoTight) is untouched.
+      aoGap: 0.85,
       aoHeightTol: 0.06,
-      aoFillSaturation: 0.30,
+      aoFillSaturation: 0.50,    // w4r4: 0.30 -> 0.50 (the cooler far-wall fill keeps warm walls' hue)
       aoFloodWorld: 1.6,         // how deep "open air" reaches under an overhang
       aoPower: 2.0,              // contrast of the visibility curve (>1 = deeper tuck)
       moonShadows: true,
@@ -1823,8 +1883,12 @@ export class LightingRig {
       // sat right on post.js's asphalt gates (sparkle). A smaller, brighter
       // pool reads as a lamp's own puddle of light and still leaves the
       // asphalt, markings and zebras between lamps (coherence #1 kept).
-      lampRadius: 3.4,
-      lampIntensity: 0.24,
+      // w4r3 (critic w4r2: "lamp pools are small dim dots, not pools on the
+      // asphalt"): 3.4 / 0.24 -> 4.4 / 0.34.
+      lampRadius: 4.4,
+      lampIntensity: 0.34,
+      // night w4r6: per-lamp variation (see _fillInstances): radius +/-, intensity +/-, warm-white share.
+      lampVary: [0.28, 0.35, 0.3],
       // night r1: the bulb billboard was a 3-unit disc (glowRadius 1.5) on a
       // 2.3-unit lamp — a floating orange ball bigger than the post. A small
       // hot core; bloom supplies the halo.
@@ -2016,6 +2080,7 @@ export class LightingRig {
       uCsmIblTint: { value: new THREE.Vector3(1, 1, 1) },
       uCsmWallFill: { value: new THREE.Vector4(0, 0, 0, 0) },
       uCsmWallTint: { value: new THREE.Vector3(1, 1, 1) },
+      uCsmShadowTint: { value: new THREE.Vector4(1, 1, 1, 0) },
       uCsmKeyDirW: { value: new THREE.Vector3(0, 1, 0) },
       uAoMap: { value: null },
       uAoXf: { value: new THREE.Vector4(0, 0, 0, 0) },
@@ -2202,7 +2267,7 @@ export class LightingRig {
     if (p.maxPenumbra !== undefined) this.uniforms.uCsmSoft.value.w = p.maxPenumbra;
     if (p.blockerSearchWorld !== undefined) this.uniforms.uCsmSoft.value.y = p.blockerSearchWorld;
     this._applyAoParams();
-    if (p.lampColor !== undefined || p.lampRadius !== undefined || p.lampIntensity !== undefined ||
+    if (p.lampColor !== undefined || p.lampRadius !== undefined || p.lampIntensity !== undefined || p.lampVary !== undefined ||
         p.lampGlowRadius !== undefined || p.lampGlowIntensity !== undefined || p.windowGlowBillboards !== undefined) {
       this._rebuildPools();
     }
@@ -2251,9 +2316,12 @@ export class LightingRig {
    */
   setWallFillAmount(amount) {
     const o = this.opts, u = this.uniforms;
-    u.uCsmWallFill.value.set(o.wallFillAway || 0, o.wallFillToward || 0, clamp(amount, 0, 1), 0);
+    const a = clamp(amount, 0, 1);
+    u.uCsmWallFill.value.set(o.wallFillAway || 0, o.wallFillToward || 0, a, o.wallFillSpec || 0);
     const t = o.wallFillTint || [1, 1, 1];
     u.uCsmWallTint.value.set(t[0], t[1], t[2]);
+    const st = o.shadowFillTint || [1, 1, 1];
+    u.uCsmShadowTint.value.set(st[0], st[1], st[2], a * (o.shadowFillTintAmount || 0));
   }
 
   /** The direction the rig is currently using (scene -> sun). Do not mutate. */
@@ -3408,7 +3476,7 @@ export class LightingRig {
       if (o.isMesh || o.isLine || o.isPoints || o.isSprite) {
         const m = o.material;
         const transp = m && !Array.isArray(m) && m.transparent && !m.depthWrite;
-        if (!o.isMesh || !(o.castShadow || o.receiveShadow) || transp) { o.visible = false; hidden.push(o); }
+        if (!o.isMesh || !(o.castShadow || o.receiveShadow) || transp || o.userData.noWorldAO) { o.visible = false; hidden.push(o); }   // noWorldAO: props tree canopies (veg w4)
         else if (o.userData.casterGeometry) this._swapCaster(o, swapped);
       }
     });
@@ -3695,8 +3763,21 @@ export class LightingRig {
       m.makeTranslation(a.x || 0, (a.y || 0) + yOffset, a.z || 0);
       mesh.setMatrixAt(i, m);
       col.setHex(a.color !== undefined ? a.color : defColor, THREE.SRGBColorSpace);
+      // night w4r6 (critic w4r5: "the lamp pools are identical evenly spaced
+      // ovals that read as a stamped pattern"): each lamp gets its own size,
+      // strength and bulb (amber sodium .. warm white), hashed on its position
+      // so it is stable across rebuilds. opts.lampVary = [radius +/-, intensity
+      // +/-, share pulled to warm white]; [0,0,0] restores the stamped pools.
+      let rK = 1, iK = 1;
+      const lv = this.opts.lampVary;
+      if (lv && a.color === undefined) {
+        const h1 = _lampHash(a.x || 0, a.z || 0, 1.7), h2 = _lampHash(a.x || 0, a.z || 0, 5.3), h3 = _lampHash(a.x || 0, a.z || 0, 9.1);
+        rK = 1 + (lv[0] || 0) * (h1 * 2 - 1);
+        iK = 1 + (lv[1] || 0) * (h2 * 2 - 1);
+        if (h3 < (lv[2] || 0)) col.lerp(this._colB.setHex(0xffe6c0, THREE.SRGBColorSpace), 0.55 + 0.45 * (h3 / lv[2]));
+      }
       tint.setXYZ(i, col.r, col.g, col.b);
-      param.setXYZ(i, (a.radius || defRadius), (a.intensity !== undefined ? a.intensity : defIntensity), (i % 101) / 101);
+      param.setXYZ(i, (a.radius || defRadius) * rK, (a.intensity !== undefined ? a.intensity : defIntensity) * iK, (i % 101) / 101);
     }
     mesh.count = list.length;
     mesh.instanceMatrix.needsUpdate = true;

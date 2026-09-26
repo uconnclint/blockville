@@ -23,7 +23,7 @@
 import { stampLotCar, stampPerson } from './vehicles.js';
 import {
   C, grid, pk, facade, door, signPanel, pixelText, wallLamp,
-  acBox, solarPanel, ventPipe, planter, bench, lotPlinth,
+  acBox, solarPanel, ventPipe, planter, bench, lotPlinth, signLit,
 } from './core.js';
 
 const R = 4;            // voxels per world unit
@@ -151,6 +151,39 @@ function skyGlass(tones, rowsTotal, streak = 7) {
     return tones[0];
   };
 }
+// (w4r3) PER-PANE GLASS GRADIENT. Critic w4r2: "the tower glass is a flat,
+// dark-navy grid of recessed slots … ref05's bank and hotel use bright
+// sky-blue reflective panes with diagonal light streaks". Measured on ref05's
+// bank: each pane runs dark petrol at the foot (16-48, 48-80, 64-96) to a lit
+// cyan body (80-112, 128-160, 150-180) with a pale diagonal streak. Every
+// dark/blue pane is now painted foot / body / upper bands + a short rising
+// streak (offset per pane so the streaks don't line up into stripes).
+// base -> [foot, body, upper, streak]; unlisted colours stay flat.
+const PANE_RAMP = new Map([
+  [C.dtGlassDeep, [C.dtGlassDark, C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi]],
+  [C.dtGlassDark, [C.dtGlassDark, C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi]],
+  [C.dtGlass, [C.dtGlassDark, C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi]],
+  [C.dtGlassTeal, [C.dtGlassDark, C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi]],
+]);
+function paintPane(f, a, y, b, yt, d, gc, seed = 0) {
+  const R4 = PANE_RAMP.get(gc), h = yt - y + 1, w = b - a + 1;
+  if (!R4 || h < 4) { f.box(a, y, d, b, yt, d, gc); return false; }
+  const [foot, body, up, st] = R4;
+  const ym = y + Math.max(1, Math.round(h * 0.4));
+  f.box(a, y, d, b, y, d, foot);
+  if (ym - 1 >= y + 1) f.box(a, y + 1, d, b, ym - 1, d, body);
+  f.box(a, ym, d, b, yt, d, up);
+  if (w >= 2) {
+    const n = Math.min(w, 3), s0 = ((seed * 5) % Math.max(1, w - n + 1) + Math.max(1, w - n + 1)) % Math.max(1, w - n + 1);
+    const yb = y + 1 + ((seed * 3) & 1);
+    for (let k = 0; k < n; k++) {
+      const yy = yb + k * 2;
+      if (yy + 1 > yt) break;
+      f.box(a + s0 + k, yy, d, a + s0 + k, Math.min(yt, yy + 2), d, st);
+    }
+  }
+  return true;
+}
 // Recessed window bays on the chosen sides of B.
 // o: { bw, pw=2, cw=2, d=1, y0, y1, floor=FL, sill=3, wh=7, glass | glassFn(col,row,S),
 //      hi=winCool, hiRows=1, spandrel, mull:'v'|'h'|'cross'|'v2', mullC, us(S) }
@@ -176,7 +209,7 @@ function bayWall(g, B, which, o) {
       for (let yb = o.y0, row = 0; yb + sill + wh - 1 <= o.y1; yb += F, row++) {
         const y = yb + sill, yt = y + wh - 1;
         const gc = o.glassFn ? o.glassFn(i, row, S) : o.glass;
-        S.f.box(u, y, -d, u1, yt, -d, gc);
+        paintPane(S.f, u, y, u1, yt, -d, gc, i * 7 + row * 3);
         if (hr > 0) S.f.box(u, yt - hr + 1, -d, u1, yt, -d, o.hi != null ? o.hi : C.winCool);
         const mc = o.mullC != null ? o.mullC : o.spandrel;
         if (o.mull === 'v' || o.mull === 'cross') S.f.box(u + (o.bw >> 1), y, -d, u + (o.bw >> 1), yt, -d, mc);
@@ -204,7 +237,7 @@ function ribbons(g, B, which, o) {
       for (let u = a; u <= b + 1; u++) {
         const m = u > b || ((u - c) % P + P) % P === 0;
         if (!m) continue;
-        if (u - 1 >= start) S.f.box(start, y, -d, u - 1, yt, -d, o.glassFn ? o.glassFn(col, row, S) : o.glass);
+        if (u - 1 >= start) paintPane(S.f, start, y, u - 1, yt, -d, o.glassFn ? o.glassFn(col, row, S) : o.glass, col * 7 + row * 3);
         if (u <= b) S.f.box(u, y, -d, u, yt, -d, o.mullC != null ? o.mullC : C.dtFrame);
         col++; start = u + 1;
       }
@@ -394,7 +427,7 @@ function pierBays(g, B, which, o) {
       S.f.box(u, o.y0, -1, u1, o.y1, -1, o.spand);
       for (let yb = o.y0, row = 0; yb + sill + wh - 1 <= o.y1; yb += F, row++) {
         const y = yb + sill, yt = y + wh - 1;
-        S.f.box(u, y, -1, u1, yt, -1, o.glassFn ? o.glassFn(i, row, S) : o.glass);
+        paintPane(S.f, u, y, u1, yt, -1, o.glassFn ? o.glassFn(i, row, S) : o.glass, i * 7 + row * 3);
         if (hr > 0) S.f.box(u, yt - hr + 1, -1, u1, yt, -1, o.hi != null ? o.hi : C.winCool);
         if (o.mull) for (let m = u + o.mull; m < u1; m += o.mull + 1) S.f.box(m, y, -1, m, yt, -1, o.mullC != null ? o.mullC : o.spand);
         if (o.balc && o.balc(S, i, row)) {
@@ -471,11 +504,11 @@ function framedBays(g, B, which, o) {
         // head and jambs (critic r6: "cut deeper window recesses").
         const gd = deep ? -2 : -1;
         if (deep) S.f.clear(a, y, -1, b, yt, -1);
-        S.f.box(a, y, gd, b, yt, gd, gc);
+        const ramped = paintPane(S.f, a, y, b, yt, gd, gc, i * 7 + row * 3 + (S.u0 & 3));
         // sheen: a reflection in the upper-LEFT pane only (it used to cover the
         // whole upper half of every window and washed the shaft out)
         const mid = (a + b) >> 1;
-        if (o.sheen != null && wh >= 5 && gc !== o.sheen) S.f.box(a, y + (wh >> 1), gd, Math.max(a, mid - 1), yt, gd, o.sheen);
+        if (!ramped && o.sheen != null && wh >= 5 && gc !== o.sheen) S.f.box(a, y + (wh >> 1), gd, Math.max(a, mid - 1), yt, gd, o.sheen);
         if (hr > 0) S.f.box(a, yt - hr + 1, gd, b, yt, gd, o.hi != null ? o.hi : C.winCool);
         if (!o.noMull && b - a + 1 >= 4) S.f.box(mid, y, gd, mid, yt, gd, mullC);
         if (sillC != null) {
@@ -523,6 +556,176 @@ function framedBays(g, B, which, o) {
         const y = yb + sill - 1;
         S.f.box(first, y, -1, last, y, 0, o.ledgeC);
         S.f.box(S.u0 - cpd, y, 1, S.u1 + cpd, y, lo, o.ledgeC);
+      }
+    }
+  }
+}
+// ---------------------------------------------------------------------------
+// Wave 4 round 4 grammar: GIANT BAYS. Three critics in a row (w4r1-r3): "the
+// shafts are uniform grids of small, dark, recessed windows … ref05's bank
+// and hotel have TALL glass bays set between pilasters that catch bright
+// cyan and white highlights; group the windows into 2-3 storey bays framed
+// by the pilasters". Measured on ref05's bank glass (quartiles, dark->bright):
+// (15,52,70) (29,130,158) (94,161,169) (112,187,193) + white streaks.
+// giantBays carves each face into bays between PILASTERS standing `pd`
+// proud; every `span` storeys a stone BAND (bandH tall, flush with the
+// pilaster faces, a 1-out cap) ties them, so each bay is one tall glass
+// opening 2-3 storeys high. Inside, the glass is one continuous sheet with
+// thin transoms at the floor lines and a centre mullion, painted as a whole:
+// a dark foot row, a deep lower third, a lit cyan body and two DIAGONAL
+// light streaks across the whole bay (a big reflection, not per-pane
+// speckle). Floors read through the transoms; the rhythm reads as bays.
+// ---------------------------------------------------------------------------
+// o: { y0, y1, bw, pw=2, cw=3, pd=2, cpd=pd+1, pierC, cornerC=pierC, span=3,
+//      floor=FL, bandC=pierC, bandH=2, bandOut=pd, capC=bandC, transC, mullC,
+//      mull (true: centre mullion when bw>=6), tones [foot, body, lit, hi],
+//      streak (true), us(S), capitals (true: a 1-out block atop each pilaster) }
+const GTONES = [C.dtGlassDark, C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi];
+function giantBays(g, B, which, o) {
+  const F = o.floor || FL, span = o.span || 3, pw = o.pw != null ? o.pw : 2, cw = o.cw != null ? o.cw : 3;
+  const pd = o.pd != null ? o.pd : 2, cpd = o.cpd != null ? o.cpd : pd + 1, pierC = o.pierC, cornerC = o.cornerC != null ? o.cornerC : pierC;
+  const bandC = o.bandC != null ? o.bandC : pierC, bh = o.bandH || 2, bo = o.bandOut != null ? o.bandOut : pd, capC = o.capC != null ? o.capC : bandC;
+  const transC = o.transC != null ? o.transC : C.dtNavyPanel, mullC = o.mullC != null ? o.mullC : transC;
+  const [foot, body, lit, hi] = o.tones || GTONES;
+  for (const S of sides(g, B, which)) {
+    const us = o.us ? o.us(S) : bayStarts(S.u0, S.u1, o.bw, pw, cw);
+    if (!us.length) continue;
+    const first = us[0], last = us[us.length - 1] + o.bw - 1;
+    // groups: [band bottom, glass top]
+    const groups = [];
+    for (let gy = o.y0; gy + bh + 3 <= o.y1; gy += span * F) groups.push([gy, Math.min(o.y1, gy + span * F - 1)]);
+    us.forEach((u, i) => {
+      const u1 = u + o.bw - 1, mid = (u + u1) >> 1;
+      S.f.clear(u, o.y0, 0, u1, o.y1, 0);
+      groups.forEach(([gy, gt], gi) => {
+        const ga = gy + bh, h = gt - ga + 1;
+        // glass sheet, painted as one reflection
+        const seed = (i * 5 + gi * 3 + (S.u0 & 7)) % 7;
+        for (let y = ga; y <= gt; y++) {
+          const t = (y - ga) / Math.max(1, h - 1);
+          const base = y === ga ? foot : t < 0.3 ? body : lit;
+          S.f.box(u, y, -1, u1, y, -1, base);
+        }
+        if (o.streak !== false && h >= 8) {
+          // two parallel rising streaks (2 wide + 1 wide), offset per bay
+          for (let k = 0; k < o.bw; k++) {
+            const col = S.f.rd > 0 ? k : o.bw - 1 - k;     // rise toward the viewer's right on every face
+            const ya = ga + 2 + ((seed + col) % Math.max(1, h - 4));
+            for (const [dy, w] of [[0, 4], [7, 2]]) {
+              for (let q = 0; q < w; q++) { const yy = ya + dy + q; if (yy > ga + 1 && yy < gt) S.f.set(u + k, yy, -1, hi); }
+            }
+          }
+        }
+        // transoms at each floor line inside the group, a centre mullion
+        for (let k = 1; k < span; k++) { const yt = gy + k * F; if (yt > ga && yt < gt) S.f.box(u, yt, -1, u1, yt, -1, transC); }
+        if (o.mull !== false && o.bw >= 6) S.f.box(mid, ga, -1, mid, gt, -1, mullC);
+        // band across the slot (flush with the wall) at the group foot
+        S.f.box(u, gy, -1, u1, ga - 1, 0, bandC);
+      });
+      if (pd > 0 && i < us.length - 1) S.f.box(u1 + 1, o.y0, 1, us[i + 1] - 1, o.y1, pd, pierC);
+    });
+    if (cpd > 0) {
+      S.f.box(S.u0 - cpd, o.y0, 1, first - 1, o.y1, cpd, cornerC);
+      S.f.box(last + 1, o.y0, 1, S.u1 + cpd, o.y1, cpd, cornerC);
+    }
+    // bands: flush with the pilaster faces across the whole face, a cap 1 out
+    groups.forEach(([gy]) => {
+      S.f.box(S.u0 - cpd, gy, 1, S.u1 + cpd, gy + bh - 1, Math.max(bo, cpd), bandC);
+      S.f.box(S.u0 - cpd, gy + bh - 1, Math.max(bo, cpd) + 1, S.u1 + cpd, gy + bh - 1, Math.max(bo, cpd) + 1, capC);
+    });
+    // pilaster capitals under each band (a small block 1 out)
+    if (o.capitals !== false && pd > 0) {
+      groups.slice(1).forEach(([gy]) => {
+        us.forEach((u, i) => { if (i < us.length - 1) S.f.box(u + o.bw, gy - 1, pd + 1, us[i + 1] - 1, gy - 1, pd + 1, capC); });
+      });
+    }
+  }
+}
+// ---------------------------------------------------------------------------
+// Wave 4 round 5 grammar: GRID BAYS (the ref05 hotel / bank shaft). Critic
+// w4r4: "the mid-shafts read as big flat slabs of colour with a few chunky
+// dark window blocks … ref05 has a dense grid of small FRAMED windows with
+// sills, pilasters and cornices on every floor". Coordinator: the midpoint
+// between w4r2 (tall glass bays) and w4r4 (fine grid): a FINE grid of
+// discrete windows, each in a pale frame that catches the light, grouped in
+// pairs (or threes) between pilasters, a sill ledge on every floor and a
+// bolder band every few floors.
+// Layout per face: n window cells (frame + ww glass + frame) laid out from
+// the centre; inside a group `gap` wall voxels separate the frames (-1 =
+// shared mullion frame), between groups a pilaster `pw` wide stands `pd`
+// proud; the leftover at each end is a corner pier `cpd` proud.
+// o: { y0, y1, floor=FL, ww=2, wh=7, sill=3, per=2, gap=1, pw=2, pd=1, cw=2,
+//      cpd=pd+1, wallC (repaint the face; null = keep the shell), pierC,
+//      cornerC, frameC, glass | glassFn(col,row,S), hi=winCool, transom,
+//      ledgeC (sill ledge each floor), ledgeOut=1, bandEvery, bandC, bandH=2,
+//      bandOut, capC, sillC (per-window proud sill), spandC (panel under each
+//      window inside the frame column), acEvery }
+function gridLayout(span, o) {
+  const cell = o.ww + 2, per = o.per || 2, gap = o.gap != null ? o.gap : 1, pw = o.pw != null ? o.pw : 2;
+  const cw = o.cw != null ? o.cw : 2;
+  const widthOf = (n) => { let w = n * cell; for (let k = 0; k < n - 1; k++) w += (k + 1) % per === 0 ? pw : gap; return w; };
+  let best = 1;
+  for (let n = 1; widthOf(n) <= span - 2 * cw; n++) if (n % per === 0 || best % per !== 0 || n < per) best = n;
+  const xs = [], pil = [];
+  let u = ((span - widthOf(best)) >> 1);
+  for (let k = 0; k < best; k++) {
+    xs.push(u); u += cell;
+    if (k < best - 1) { if ((k + 1) % per === 0) { pil.push([u, u + pw - 1]); u += pw; } else u += gap; }
+  }
+  return { xs, pil, first: xs[0], last: xs[best - 1] + cell - 1 };
+}
+function gridBays(g, B, which, o) {
+  const F = o.floor || FL, ww = o.ww || 2, wh = o.wh || 7, sill = o.sill != null ? o.sill : 3;
+  const pd = o.pd != null ? o.pd : 1, cpd = o.cpd != null ? o.cpd : pd + 1;
+  const pierC = o.pierC, cornerC = o.cornerC != null ? o.cornerC : pierC, frameC = o.frameC != null ? o.frameC : C.dtFrame;
+  const hr = o.hiRows != null ? o.hiRows : 1, gd = -(o.recess != null ? o.recess : 1), fo = o.frameOut || 0;
+  for (const S of sides(g, B, which)) {
+    const L = gridLayout(S.u1 - S.u0 + 1, o);
+    const U = (u) => S.u0 + u;
+    const first = U(L.first), last = U(L.last);
+    if (o.wallC != null) S.f.box(S.u0, o.y0, 0, S.u1, o.y1, 0, o.wallC);
+    for (let yb = o.y0, row = 0; yb + sill + wh <= o.y1; yb += F, row++) {
+      const y = yb + sill, yt = y + wh - 1;
+      if (o.skipRow && o.skipRow(row)) continue;
+      L.xs.forEach((x0, i) => {
+        const a = U(x0) + 1, b = a + ww - 1;
+        if (o.spandC != null) S.f.box(a - 1, yb + 1, 0, b + 1, y - 2, 0, o.spandC);
+        // frame ring on the face (fo = 1: standing 1 proud, so its head and
+        // sill catch the light like the ref05 hotel's window surrounds)
+        if (o.jambs === false) { S.f.box(a - 1, y - 1, fo, b + 1, y - 1, fo, frameC); S.f.box(a - 1, yt + 1, fo, b + 1, yt + 1, fo, frameC); }   // head + sill only
+        else if (fo > 0) { S.f.box(a - 1, y - 1, fo, b + 1, y - 1, fo, frameC); S.f.box(a - 1, yt + 1, fo, b + 1, yt + 1, fo, frameC); S.f.box(a - 1, y, fo, a - 1, yt, fo, frameC); S.f.box(b + 1, y, fo, b + 1, yt, fo, frameC); }
+        else S.f.box(a - 1, y - 1, 0, b + 1, yt + 1, 0, frameC);
+        if (gd < 0) S.f.clear(a, y, 0, b, yt, 0);
+        const gc = o.glassFn ? o.glassFn(i, row, S) : o.glass;
+        paintPane(S.f, a, y, b, yt, gd, gc, i * 5 + row * 3 + (S.u0 & 3));    // glass gd back (1 = an AO reveal; 0 = flush and bright)
+        if (hr > 0) S.f.box(a, yt - hr + 1, gd, b, yt, gd, o.hi != null ? o.hi : C.winCool);
+        if (o.transom) S.f.box(a, yt - 2 - hr, gd, b, yt - 2 - hr, gd, frameC);
+        if (ww >= 4 && o.mull !== false) S.f.box((a + b) >> 1, y, gd, (a + b) >> 1, yt, gd, frameC);
+        if (o.sillC != null) S.f.box(a - 1, y - 2, 1, b + 1, y - 2, 1, o.sillC);
+        if (o.acEvery && ((i * 3 + row * 5 + S.u0) % o.acEvery) === 0) { S.f.box(a, y - 4, 1, b, y - 2, 1, C.offwhite); S.f.set(a, y - 3, 1, C.metalDark); }
+      });
+    }
+    // pilasters between the groups, corner piers at the ends
+    if (pd > 0) for (const [p0, p1] of L.pil) S.f.box(U(p0), o.y0, 1, U(p1), o.y1, pd, pierC);
+    if (cpd > 0) { S.f.box(S.u0 - cpd, o.y0, 1, first - 1, o.y1, cpd, cornerC); S.f.box(last + 1, o.y0, 1, S.u1 + cpd, o.y1, cpd, cornerC); }
+    const bf = o.bandFrom || o.bandEvery, bo = Math.max(o.bandOut != null ? o.bandOut : pd + 1, cpd);
+    const isBand = (row) => o.bandEvery && row >= bf && (row - bf) % o.bandEvery === 0;
+    // a sill ledge on every floor: crosses the pilasters 1 proud of them
+    if (o.ledgeC != null) {
+      const lo = o.ledgeOut != null ? o.ledgeOut : Math.max(1, pd + 1);
+      for (let yb = o.y0, row = 0; yb + sill + wh <= o.y1; yb += F, row++) {
+        if (isBand(row) || (row === 0 && o.ledgeFirst === false)) continue;
+        const y = yb + sill - 2;
+        S.f.box(S.u0 - cpd, y, 1, S.u1 + cpd, y, Math.max(lo, cpd), o.ledgeC);
+      }
+    }
+    // a bold band every few floors (bandH tall, a 1-out cap on top)
+    if (o.bandEvery) {
+      const bh = o.bandH || 2, bc = o.bandC != null ? o.bandC : pierC, cc = o.capC != null ? o.capC : bc;
+      for (let k = bf; o.y0 + k * F + sill < o.y1 - 2; k += o.bandEvery) {
+        const y = o.y0 + k * F + sill - 1 - bh;
+        S.f.box(S.u0 - bo, y, 1, S.u1 + bo, y + bh - 1, bo, bc);
+        S.f.box(S.u0 - bo - 1, y + bh - 1, bo + 1, S.u1 + bo + 1, y + bh - 1, bo + 1, cc);
       }
     }
   }
@@ -614,6 +817,80 @@ function kerbCars(g, x0, x1, rng, z0 = 1, p = 0.85) {
     if (rng() < p) car(g, x + 1, 2, z0 - 1, true, rng() < 0.35 ? C.taxiYellow : pk(rng, CAR_COLS));
   }
   g.box(x1, 1, z0, x1, 1, z0 + 4, C.lotLine);
+}
+// (w4r2) A designed plaza strip instead of parking (critic w4r1: "the ground
+// lot is packed with parked cars instead of a designed plaza … swap the lot's
+// cars for a paved, planted entry plaza"). Light paving on a darker 5-grid,
+// then a row of raised planted beds along the strip's long axis — stone rim,
+// grass, a chunky tree and flowers — with paved gaps for fillLot's benches.
+function plazaStrip(g, x0, z0, x1, z1, rng, o = {}) {
+  const Y = 2, alongZ = (z1 - z0) >= (x1 - x0), W = alongZ ? x1 - x0 + 1 : z1 - z0 + 1;
+  const [pv, pl] = g.pave || [C.lotPave, C.lotPaveDark];
+  g.box(x0, 1, z0, x1, 1, z1, pv);
+  tiles(g, x0, z0, x1, z1, 1, pl, 5);
+  if (W < 5) return;
+  const bw = Math.min(W - 2, 7), bl = o.bed || 9, gap = o.gap || 5;
+  const a0 = alongZ ? z0 + 1 : x0 + 1, a1 = alongZ ? z1 - 1 : x1 - 1, s = (alongZ ? x0 : z0) + ((W - bw) >> 1);
+  const n = Math.max(1, Math.floor((a1 - a0 + 1 + gap) / (bl + gap)));
+  let a = a0 + (((a1 - a0 + 1) - (n * bl + (n - 1) * gap)) >> 1);
+  for (let i = 0; i < n; i++, a += bl + gap) {
+    const [bx0, bz0, bx1, bz1] = alongZ ? [s, a, s + bw - 1, a + bl - 1] : [a, s, a + bl - 1, s + bw - 1];
+    g.walls(bx0, Y, bz0, bx1, Y, bz1, o.rim != null ? o.rim : C.dtStone);
+    g.box(bx0 + 1, Y, bz0 + 1, bx1 - 1, Y, bz1 - 1, C.lotGrass);
+    const cx = (bx0 + bx1) >> 1, cz = (bz0 + bz1) >> 1;
+    // (w4r5) critic w4r4: "the towers are packed tightly with little lot space
+    // … the ref buildings sit on generous plinths". Big trees in every bed hid
+    // the lot; now every other bed is a LOW clipped hedge (the ref05 hotel's
+    // planters), so the paving reads as an open plaza.
+    if (i % 2 === 0) tree(g, cx, Y + 1, cz, 5);
+    else g.box(bx0 + 1, Y + 1, bz0 + 1, bx1 - 1, Y + 2, bz1 - 1, C.bush);
+    for (const [fx, fz] of [[bx0 + 1, bz0 + 1], [bx1 - 1, bz1 - 1], [bx0 + 1, bz1 - 1], [bx1 - 1, bz0 + 1]]) {
+      g.set(fx, Y + 1, fz, C.bush); if (rng() < 0.7) g.set(fx, Y + 2, fz, pk(rng, [C.pink, C.yellow, C.signWhite, C.red]));
+    }
+  }
+}
+// (w4r2) Designed entry forecourt across the front strip z0..z1 (replaces the
+// kerbside lay-by of cars): a fountain basin either side of the front walk,
+// planted beds with trees toward the corners, the walk itself in dark paving.
+function forecourt(g, x0, x1, z0, z1, rng, o = {}) {
+  const Y = 2, xc = o.xc != null ? o.xc : (x0 + x1) >> 1, hw = o.hw || 8;
+  const [pv, pl] = g.pave || [C.lotPave, C.lotPaveDark];
+  g.box(x0, 1, z0, x1, 1, z1, pv);
+  tiles(g, x0, z0, x1, z1, 1, pl, 5);
+  g.box(xc - hw + 2, 1, z0, xc + hw - 2, 1, z1, pl);
+  const D = z1 - z0 + 1;
+  for (const [a, b, outerLeft] of [[x0 + 1, xc - hw - 2, true], [xc + hw + 2, x1 - 1, false]]) {
+    if (b - a < 7) continue;
+    // planted bed with a tree at the outer end of the wing
+    const bx = outerLeft ? a : b - 5;
+    g.walls(bx, Y, z0 + 1, bx + 5, Y, z1 - 1, C.dtStone);
+    g.box(bx + 1, Y, z0 + 2, bx + 4, Y, z1 - 2, C.lotGrass);
+    tree(g, bx + 2, Y + 1, ((z0 + z1) >> 1) - 1, 6);
+    // fountain in the rest: stone rim, pool water, a tiered centre + spout
+    const fa = outerLeft ? bx + 7 : a, fb = outerLeft ? b : bx - 2;
+    if (o.fountains === false || fb - fa < 6 || D < 5) continue;
+    const fw = Math.min(11, fb - fa + 1), f0 = ((fa + fb) >> 1) - (fw >> 1), fz0 = z0, fz1 = z1;
+    g.walls(f0, Y, fz0, f0 + fw - 1, Y + 1, fz1, C.dtStone);
+    g.box(f0 + 1, Y, fz0 + 1, f0 + fw - 2, Y, fz1 - 1, C.civPool);
+    const cx = f0 + (fw >> 1), cz = (fz0 + fz1) >> 1;
+    g.box(cx - 1, Y, cz - 1, cx + 1, Y + 2, cz, C.dtStone);
+    g.box(cx, Y + 3, cz, cx, Y + 4, cz, C.civPoolLt);
+  }
+  void rng;
+}
+// (w4r2) The ref05 HOTEL sign at double scale: 2x 5x7 letters (legible at
+// game zoom) in a lit colour on a black board with a thick lit rim, standing
+// on two steel legs at a roof's front edge, lettered both sides.
+function bigSign(g, xc, y, z, text, o = {}) {
+  const k = o.k || 2, fg = o.fg != null ? o.fg : C.yellow, bg = o.bg != null ? o.bg : C.black, rim = o.rim != null ? o.rim : fg;
+  const W = (text.length * 6 - 1) * k + 8, H = 7 * k + 7, x0 = xc - (W >> 1), x1 = x0 + W - 1, yb = y + 3;
+  for (const x of [x0 + 4, x1 - 4]) g.box(x, y, z + 1, x + 1, yb - 1, z + 2, C.metalDark);
+  g.box(x0, yb, z, x1, yb + H - 1, z + 2, bg);
+  for (const [a, b] of [[yb, yb], [yb + H - 1, yb + H - 1]]) { g.box(x0, a, z - 1, x1, b, z - 1, rim); g.box(x0, a, z + 3, x1, b, z + 3, rim); }
+  for (const x of [x0, x1]) { g.box(x, yb, z - 1, x, yb + H - 1, z - 1, rim); g.box(x, yb, z + 3, x, yb + H - 1, z + 3, rim); }
+  text5(facade(g, 'front', z), xc, yb + 3, text, fg, 1, k);
+  text5(facade(g, 'back', z + 2), xc, yb + 3, text, fg, 1, k);
+  return yb + H;
 }
 // Service corner: dumpsters, a bike rack, crates (backs get dressed too).
 function service(g, x, z, rng) {
@@ -717,6 +994,7 @@ for (const [ch, rows] of Object.entries({
 })) F57[ch] = rows.split('|').join('');
 // text5 on a facade, centred on uc, bottom at y; k = voxel size (1 or 2)
 function text5(f, uc, y, s, c, out = 1, k = 1) {
+  c = signLit(c);   // [night] lit sign letters after dusk (same colour by day)
   const W = (s.length * 6 - 1) * k, u0 = f.rd > 0 ? uc - (W >> 1) : uc + (W >> 1);
   let col = 0;
   for (const ch of s) {
@@ -809,6 +1087,16 @@ function people(g, x0, z0, x1, z1, y, n, rng) {
   }
 }
 // square paving tiles in a darker tone every `s` (flat, cheap)
+// (w4r4) Warm plaza lot: ref05's bank and hotel stand on wide BEIGE paved
+// forecourts (critics w4r1-r3: "thin grey rims … the ref gives each tower a
+// generous paved forecourt"). Sets the lot fill + g.pave for plazaStrip /
+// forecourt, and returns Y.
+function plazaLot(g, fill = C.sand, line = C.sandDark) {
+  g.pave = [fill, line];
+  const Y = lotPlinth(g, 0, 0, g.sx - 1, g.sz - 1, { fill });
+  tiles(g, 1, 1, g.sx - 2, g.sz - 2, Y - 1, line, 6);
+  return Y;
+}
 function tiles(g, x0, z0, x1, z1, y, c, s = 4) {
   for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) if (((x - x0) % s === 0) || ((z - z0) % s === 0)) g.set(x, y, z, c);
 }
@@ -856,7 +1144,7 @@ function skyGarden(g, B, ys, ye, o = {}) {
 // every gap it finds: planter boxes with shrubs, little trees, benches, bins,
 // flower tubs, a kiosk, a café umbrella, bollards, lamps. keep = rects that
 // must stay clear (the walk to the front door).
-const PAVED = new Set([C.lotPave, C.lotPaveDark, C.lotGrass]);
+const PAVED = new Set([C.lotPave, C.lotPaveDark, C.lotGrass, C.sand, C.sandDark]);
 // the walk from the kerb to a centred front door stays clear
 function frontWalk(g, xc = g.sx >> 1) { const hw = g.sx > 40 ? 8 : 5; return [xc - hw, 0, xc + hw, g.sz > 40 ? 15 : 10]; }
 function fillLot(g, W, D, rng, o = {}) {
@@ -1233,7 +1521,11 @@ function streetPodium(g, P, Y, o) {
 // o: { xc, w (odd), Y, depth=6, kind, colC, stone, frame, roofC, glassTop,
 //      fascia, text, textC, cols (2|4), lamps (true), planters (true), podH }
 function portico(g, zf, o) {
-  const Y = o.Y, w = o.w || 9, x0 = o.xc - (w >> 1), x1 = x0 + w - 1, D = o.depth || 6;
+  // (w4) a temple's name must fit its entablature (TOWN / CITY overflowed the
+  // 1x1 temples: the first letter floated off the end and read "OWN")
+  let w = o.w || 9;
+  if (o.kind === 'temple' && o.text) w = Math.max(w, ((o.text.length * 6 - 1 - 8) | 1));
+  const Y = o.Y, x0 = o.xc - (w >> 1), x1 = x0 + w - 1, D = o.depth || 6;
   const gt = Y + 13, kind = o.kind || 'glass';
   const colC = o.colC != null ? o.colC : C.dtFrame, stone = o.stone != null ? o.stone : C.dtLimeShade;
   const frame = o.frame != null ? o.frame : C.dtFrame, fascia = o.fascia != null ? o.fascia : C.darkGray;
@@ -1248,13 +1540,28 @@ function portico(g, zf, o) {
   F.box(dc - 2, Y + 3, -2, dc - 1, gt - 6, -2, C.winCool); F.box(dc + 1, Y + 3, -2, dc + 2, gt - 6, -2, C.winCool);
   F.box(dc, Y + 2, -2, dc, gt - 5, -2, frame);
   // landing (2 up) + a wide first step + a mat
-  const lx0 = x0 - 5, lx1 = x1 + 5, lz0 = zf - D;
-  g.box(lx0, Y, lz0, lx1, Y + 1, zf - 1, stone);
-  g.box(x0 - 2, Y, lz0 - 2, x1 + 2, Y, lz0 - 1, stone);
-  g.box(x0 + 1, Y + 1, lz0 + 1, x1 - 1, Y + 1, zf - 1, o.mat != null ? o.mat : C.red);
+  const pyl = kind === 'arch' ? 7 : 5, lx0 = x0 - pyl, lx1 = x1 + pyl, lz0 = zf - D;
+  if (kind === 'cochere') {
+    // (w4) porte-cochère: only a 4-deep stepped landing at the doors; the
+    // rest of the depth is a drive-through lane of asphalt under the roof
+    g.box(lx0, Y, zf - 5, lx1, Y, zf - 1, stone);
+    g.box(lx0 + 2, Y + 1, zf - 3, lx1 - 2, Y + 1, zf - 1, stone);
+    g.box(x0 + 1, Y + 1, zf - 3, x1 - 1, Y + 1, zf - 1, o.mat != null ? o.mat : C.red);
+    g.box(lx0 - 2, Y - 1, lz0 - 1, lx1 + 2, Y - 1, zf - 6, C.lotAsphalt);
+    for (let x = lx0; x <= lx1; x += 4) g.box(x, Y - 1, zf - 6, x + 1, Y - 1, zf - 6, C.lotLine);
+  } else {
+    g.box(lx0, Y, lz0, lx1, Y + 1, zf - 1, stone);
+    // (w4r5) critic w4r4: "wide, clearly readable entrances (bank steps)":
+    // a broad flight — the first tread runs the landing's full width + 2 and
+    // 3 deep, with clipped shrub boxes at both ends of the landing
+    g.box(lx0 - 2, Y, lz0 - 3, lx1 + 2, Y, lz0 - 1, stone);
+    g.box(lx0 - 2, Y - 1, lz0 - 4, lx1 + 2, Y - 1, lz0 - 4, C.stoneDark);
+    for (const x of [lx0 - 2, lx1]) { g.box(x, Y + 2, lz0, x + 2, Y + 3, lz0 + 2, C.bush); g.set(x + 1, Y + 4, lz0 + 1, C.pink); }
+    g.box(x0 + 1, Y + 1, lz0 + 1, x1 - 1, Y + 1, zf - 1, o.mat != null ? o.mat : C.red);
+  }
   // columns
-  const cz = lz0 + 1, xs = [lx0 + 1, lx1 - 2];
-  if (o.cols === 4) xs.push(x0 + 1, x1 - 2);
+  const cz = lz0 + 1, xs = kind === 'arch' ? [] : [lx0 + 1, lx1 - 2];
+  if (o.cols === 4 && kind !== 'arch') xs.push(x0 + 1, x1 - 2);
   for (const x of xs) {
     g.box(x - 1, Y + 2, cz - 1, x + 2, Y + 2, cz + 2, C.stoneDark);
     g.box(x, Y + 3, cz, x + 1, gt - 1, cz + 1, colC);
@@ -1287,10 +1594,88 @@ function portico(g, zf, o) {
     for (let z = lz0 + 1; z < zf - 1; z += 2) for (const x of [lx0 - 2, lx1 + 2]) { g.set(x, ry + 1, z, bulb); g.set(x, ry + 9, z, bulb); }
     if (o.text) text5(facade(g, 'front', lz0 - 1), o.xc, ry + 2, o.text, o.textC != null ? o.textC : C.gold, 1, 1);
     // a vertical blade sign over the marquee
-    const bx = lx1 - 1;
-    g.box(bx, ry + 10, lz0 + 1, bx + 1, ry + 34, lz0 + 5, fc);
-    for (let y = ry + 12; y < ry + 33; y += 4) { g.set(bx - 1, y, lz0 + 3, bulb); g.set(bx + 2, y, lz0 + 3, bulb); }
-    g.box(bx, ry + 35, lz0 + 1, bx + 1, ry + 35, lz0 + 5, frame);
+    // (w4r2) the blade carries the name in stacked 5x7 letters on both
+    // faces, lit, with a bulb border (critic w4r1: "entrance signs are small,
+    // low-contrast voxel mush you cannot read at this zoom")
+    const bx = lx1 - 1, bt = o.text ? ry + 12 + o.text.length * 8 : ry + 34;
+    g.box(bx, ry + 10, lz0, bx + 1, bt, lz0 + 6, fc);
+    for (let y = ry + 11; y < bt; y += 3) for (const x of [bx - 1, bx + 2]) { g.set(x, y, lz0, bulb); g.set(x, y, lz0 + 6, bulb); }
+    g.box(bx, bt + 1, lz0, bx + 1, bt + 1, lz0 + 6, frame);
+    if (o.text) {
+      const lc = signLit(o.bladeC != null ? o.bladeC : (o.textC != null ? o.textC : C.gold));
+      [...o.text].forEach((ch, i) => {
+        const gl = F57[ch] || F57[' '], yb = bt - 8 * (i + 1) + 1;
+        for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (gl[r * 5 + c] === '#') {
+          g.set(bx - 1, yb + 6 - r, lz0 + 1 + c, lc); g.set(bx + 2, yb + 6 - r, lz0 + 5 - c, lc);
+        }
+      });
+    }
+  } else if (kind === 'arch') {
+    // (w4) a monumental stone ARCHWAY (twins): two pylons and a deep lintel
+    // frame a tall round-headed tunnel onto the doors; a gold archivolt and
+    // keystone, a sunburst fanlight, the name in gold on a black band, a
+    // stepped cornice with gold finials, lanterns on the pylon faces
+    const trim = frame, gt = o.Y + 17, top = gt + 14, ax0 = x0 - 1, ax1 = x1 + 1;
+    g.box(lx0, Y + 2, lz0, ax0 - 1, top, zf - 1, colC);
+    g.box(ax1 + 1, Y + 2, lz0, lx1, top, zf - 1, colC);
+    g.box(ax0, gt - 2, lz0, ax1, top, zf - 1, colC);
+    // round the head of the opening (stepped quarter circles)
+    for (const [k, n] of [[0, 4], [1, 2], [2, 1], [3, 1]]) {
+      const y = gt - 2 - k - 1;
+      g.box(ax0, y, lz0, ax0 + n - 1, y, zf - 1, colC); g.box(ax1 - n + 1, y, lz0, ax1, y, zf - 1, colC);
+    }
+    // archivolt: a trim ring 1 proud round the opening + keystone
+    const FA = facade(g, 'front', lz0);
+    FA.box(ax0 - 1, Y + 2, 1, ax0 - 1, gt - 7, 1, trim); FA.box(ax1 + 1, Y + 2, 1, ax1 + 1, gt - 7, 1, trim);
+    for (const [k, n] of [[0, 4], [1, 2], [2, 1], [3, 1]]) {
+      const y = gt - 3 - k, ua = ax0 + n - 1, ub = ax1 - n + 1;
+      FA.box(ax0 - 1 + (k === 3 ? 0 : 0), y, 1, ua, y, 1, trim); FA.box(ub, y, 1, ax1 + 1, y, 1, trim);
+    }
+    FA.box(ax0 + 3, gt - 2, 1, ax1 - 3, gt - 2, 1, trim);
+    FA.box(o.xc - 1, gt - 2, 1, o.xc + 1, gt + 1, 2, trim);
+    // sunburst fanlight on the lobby glass inside the arch head
+    const FL0 = facade(g, 'front', zf);
+    for (let r = 0; r < 3; r++) FL0.box(o.xc - 1 - r * 3, gt - 6 + r, -2, o.xc + 1 + r * 3, gt - 6 + r, -2, r === 0 ? C.gold : C.winCool);
+    for (const dx of [-6, -3, 0, 3, 6]) FL0.box(o.xc + dx, gt - 5, -2, o.xc + dx, gt - 3, -2, C.gold);
+    // name band + cornice + finials
+    if (o.text) {
+      const TW = o.text.length * 6 - 1, bx0 = o.xc - (TW >> 1) - 2, bx1 = o.xc + (TW >> 1) + 2;
+      FA.box(bx0, gt + 3, 1, bx1, gt + 11, 1, o.boardC != null ? o.boardC : C.black);
+      FA.box(bx0, gt + 3, 1, bx1, gt + 3, 1, trim); FA.box(bx0, gt + 11, 1, bx1, gt + 11, 1, trim);
+      text5(facade(g, 'front', lz0 - 1), o.xc, gt + 4, o.text, o.textC != null ? o.textC : C.gold, 1, 1);
+    }
+    g.box(lx0 - 1, top + 1, lz0 - 1, lx1 + 1, top + 1, zf - 1, stone);
+    g.box(lx0, top + 2, lz0, lx1, top + 2, zf - 1, trim);
+    g.box(lx0 + 2, top + 3, lz0 + 1, lx1 - 2, top + 3, zf - 1, stone);
+    for (const x of [lx0 + 2, lx1 - 2]) { g.box(x - 1, top + 3, lz0 + 2, x + 1, top + 4, lz0 + 4, trim); g.box(x, top + 5, lz0 + 3, x, top + 7, lz0 + 3, trim); }
+    // pylon faces: a sunk panel + a bronze lantern each
+    for (const [a, b] of [[lx0 + 1, ax0 - 2], [ax1 + 2, lx1 - 1]]) {
+      FA.box(a, Y + 5, 0, b, gt - 1, 0, stone);
+      const m = (a + b) >> 1;
+      FA.box(m, gt - 9, 1, m, gt - 8, 1, C.metalDark); FA.box(m, gt - 7, 1, m, gt - 5, 1, C.lamp); FA.set(m, gt - 4, 1, C.metalDark);
+    }
+  } else if (kind === 'cochere') {
+    // (w4) porte-cochère (the ref05 hotel's drop-off, scaled up): a deep flat
+    // roof on four slim columns reaching out over a drive lane, a teal glass
+    // skylight in a white frame, a lit soffit strip, the name on a board on top
+    const L0 = lx0 - 2, L1 = lx1 + 2;
+    g.box(L0, ry, lz0 - 1, L1, ry + 2, zf - 1, frame);
+    g.box(L0 + 2, ry + 3, lz0 + 1, L1 - 2, ry + 3, zf - 3, o.glassTop != null ? o.glassTop : C.dtGlassTeal);
+    g.walls(L0 + 1, ry + 3, lz0, L1 - 1, ry + 3, zf - 2, frame);
+    for (let x = L0 + 6; x < L1 - 2; x += 6) g.box(x, ry + 3, lz0 + 1, x, ry + 3, zf - 3, frame);
+    g.box(L0, ry, lz0 - 2, L1, ry + 2, lz0 - 2, fascia);
+    g.box(L0 + 1, ry - 1, lz0 + 1, L1 - 1, ry - 1, lz0 + 1, C.lamp);           // soffit light
+    if (o.text) {
+      const tc = o.textC != null ? o.textC : C.signWhite, TW = o.text.length * 6 - 1;
+      const bx0 = o.xc - (TW >> 1) - 2, bx1 = o.xc + (TW >> 1) + 2, bz = lz0, by0 = ry + 4, by1 = ry + 12;
+      g.box(bx0, by0, bz, bx1, by1, bz + 1, o.boardC != null ? o.boardC : C.black);
+      g.box(bx0, by1, bz, bx1, by1, bz + 1, tc);
+      text5(facade(g, 'front', bz), o.xc, by0 + 1, o.text, tc, 1, 1);
+      text5(facade(g, 'back', bz + 1), o.xc, by0 + 1, o.text, tc, 1, 1);
+    }
+    // bollards along the landing edge + a taxi dropping off under the roof
+    for (const x of [lx0 - 2, lx1 + 2]) { g.box(x, Y, zf - 5, x, Y + 1, zf - 5, C.stoneDark); g.set(x, Y + 2, zf - 5, C.yellow); }
+    car(g, o.xc - 4, Y, lz0 + 2, true, C.taxiYellow);
   } else if (kind === 'pergola') {
     // (w10) timber pergola with climbing plants (eco tower): slatted beams,
     // hedges hung along the top, the name in green letters standing on it
@@ -1298,7 +1683,13 @@ function portico(g, zf, o) {
     for (let x = lx0; x <= lx1; x += 2) g.box(x, ry + 1, lz0 - 1, x, ry + 1, zf - 1, C.wood);
     for (let x = lx0 + 1; x <= lx1; x += 4) g.box(x, ry + 2, lz0, x + 1, ry + 2, zf - 2, C.bush);
     g.box(lx0, ry + 1, lz0 - 1, lx0, ry + 3, lz0 + 1, C.leafMid); g.box(lx1, ry + 1, lz0 - 1, lx1, ry + 3, lz0 + 1, C.leafMid);
-    if (o.text) { text5(facade(g, 'front', lz0 + 1), o.xc, ry + 3, o.text, o.textC != null ? o.textC : C.roofGreen, 0, 1); text5(facade(g, 'front', lz0 + 2), o.xc, ry + 3, o.text, o.textC != null ? o.textC : C.roofGreen, 0, 1); }
+    if (o.text) {
+      // (w4) a leafy-green board on the pergola beams, white letters 1 proud
+      const TW = o.text.length * 6 - 1, bx0 = o.xc - (TW >> 1) - 2, bx1 = o.xc + (TW >> 1) + 2, bz = lz0 + 1;
+      g.box(bx0, ry + 3, bz, bx1, ry + 11, bz + 1, o.fascia != null ? o.fascia : C.roofGreen);
+      g.box(bx0, ry + 11, bz, bx1, ry + 11, bz + 1, C.woodDark);
+      text5(facade(g, 'front', bz), o.xc, ry + 4, o.text, o.textC != null ? o.textC : C.signWhite, 1, 1);
+    }
   } else {
     g.box(lx0, ry, lz0, lx1, ry + 1, zf - 1, frame);
     if (kind === 'glass') {
@@ -1307,14 +1698,19 @@ function portico(g, zf, o) {
     }
     g.box(lx0, ry, lz0 - 1, lx1, ry + 2, lz0 - 1, fascia);            // fascia front edge
     if (o.text && o.sign === 'letters') {
-      // (w10) free-standing letters on the canopy (ref05 HOTEL / POLICE
-      // STATION): 2 deep, lit colour, a thin dark rail under them — the
-      // black sign box repeated on every tower read as one template
-      const tc = o.textC != null ? o.textC : C.signWhite;
-      text5(facade(g, 'front', lz0 + 1), o.xc, ry + 3, o.text, tc, 0, 1);
-      text5(facade(g, 'front', lz0 + 2), o.xc, ry + 3, o.text, tc, 0, 1);
-      const TW = o.text.length * 6 - 1;
-      g.box(o.xc - (TW >> 1) - 1, ry + 2, lz0 + 1, o.xc + (TW >> 1) + 1, ry + 2, lz0 + 2, C.darkGray);
+      // (w4) the ref05 HOTEL sign: a framed board standing on the canopy,
+      // letters 1 proud in a lit colour. Free-standing 2-deep letters read as
+      // a jumble of yellow blocks at game zoom (MEDIA / ARTS / ORBIT).
+      const tc = o.textC != null ? o.textC : C.signWhite, bg = o.boardC != null ? o.boardC : C.black;
+      const rim = o.rimC != null ? o.rimC : tc;
+      const TW = o.text.length * 6 - 1, bx0 = o.xc - (TW >> 1) - 2, bx1 = o.xc + (TW >> 1) + 2;
+      const bz = lz0 + 1, by0 = ry + 2, by1 = ry + 10;
+      g.box(bx0, by0, bz, bx1, by1, bz + 1, bg);
+      g.box(bx0, by0, bz, bx1, by0, bz, rim); g.box(bx0, by1, bz, bx1, by1, bz, rim);
+      g.box(bx0, by0, bz, bx0, by1, bz, rim); g.box(bx1, by0, bz, bx1, by1, bz, rim);
+      text5(facade(g, 'front', bz), o.xc, by0 + 1, o.text, tc, 1, 1);
+      for (const x of [bx0 + 2, bx1 - 2]) g.box(x, ry + 2, bz + 2, x, by0 + 3, bz + 2, C.metalDark);
+      void by1;
     } else if (o.text) {
       const TW = o.text.length * 6 - 1, hw = Math.max(5, (TW + 5) >> 1);
       g.box(o.xc - hw, ry + 3, lz0 - 1, o.xc + hw, ry + 11, lz0, fascia);
@@ -1352,9 +1748,10 @@ function bSmallOffice(rng, v) {
   const B = box(4, 10, 26, 28), O = ins(B, -1), P = box(2, 8, 28, 29);
   // (r9) a two-storey street podium in a contrasting material + a portico
   const [pw0, pp0, pf0] = [POD.lime, POD.brick, POD.sand][sk]();
-  const gt = streetPodium(g, P, Y, { ground: 'colonnade', colC: [C.dtLime, C.cream, C.dtFrame][sk], wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: v }) - 2, st = gt + 2 + FL * nf;
+  const gt = streetPodium(g, P, Y, { ground: 'arcade', colC: [C.dtLime, C.cream, C.dtFrame][sk], wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: v }) - 2, st = gt + 2 + FL * nf;
   shell(g, B, gt + 2, st, wall, C.roofGray);
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'temple', colC: pp0, stone: C.dtLimeShade, roofC: trim, text: pk(rng, ['LAW', 'CITY', 'POST']), textC: C.dtNavyPanel });
+  const tName = pk(rng, ['LAW', 'CITY', 'POST']);
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'temple', colC: pp0, stone: C.dtLimeShade, roofC: trim, text: tName, textC: C.dtNavyPanel });
   // shaft: oriel bay on the front, framed punched windows, quoins
   g.box(11, gt + 2, B.z0 - 3, 19, st - 3, B.z0, wall);
   const Bo = box(11, B.z0 - 3, 19, B.z1);
@@ -1377,7 +1774,7 @@ function bSmallOffice(rng, v) {
   const bc = pk(rng, [C.orange, C.teal, C.yellow]);
   for (const x of [9, 21]) g.box(x, ct, 13, x, ct + 5, 13, C.darkGray);
   g.box(6, ct + 6, 12, 24, ct + 14, 12, C.dtFrame); g.box(7, ct + 7, 11, 23, ct + 13, 11, bc);
-  textC(facade(g, 'front', 11), 15, ct + 8, pk(rng, ['CITY', 'LOANS', 'NEWS']), C.signWhite, 1);
+  textC(facade(g, 'front', 11), 15, ct + 8, pk(rng, ['CAFE', 'LOANS', 'NEWS']), C.signWhite, 1);   // (w4) never the temple's name twice
   roofKit(g, 6, 14, 24, 18, ct, rng, 2);
   // lot
   tiles(g, 1, 1, 29, 7, Y - 1, C.lotPaveDark, 4); people(g, 1, 1, 29, 2, Y, 4, rng);
@@ -1401,7 +1798,7 @@ function bGlassOffice(rng, v) {
   // (r9) modern street podium (glass ribbon upper storey) + glass portico
   const [pw0, pp0, pf0] = [POD.terra, POD.teal, POD.slate][v % 3]();
   const bt = streetPodium(g, P, Y, { ground: 'glass', wall: pw0, pier: pp0, fascia: pf0, style: 'modern', glass: glass[1], skipF: [8, 22], seed: 3 + v }) - 1, top = bt + 1 + FL * nf;
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: pf0, sign: 'letters', textC: C.yellow, text: pk(rng, ['CORP', 'MEDIA', 'CITY']) });
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: pf0, sign: 'letters', textC: C.yellow, text: ['MEDIA', 'CORP', 'INFO'][v % 3] });
   // shaft
   shell(g, B, bt + 1, top, wall, C.roofGray);
   framedBays(g, B, 'fblr', { y0: bt + 1, y1: top - 1, bw: 5, pw: 1, cw: 1, pd: 1, cpd: 2, pierC: wall, spand: C.dtGlassDeep, inset: 0, sillC: null, deep: false, ledgeC: C.dtFrame, ledgeOut: 1,
@@ -1503,8 +1900,15 @@ function bDecoTower(rng, v) {
     const [B, yt] = stages[i];
     shell(g, B, y0, yt, stone, stone);
     const start = y0 + 2;
-    framedBays(g, B, 'fblr', { y0: start, y1: yt - 5, floor: 10, sill: 2, wh: 6, bw: 5, pw: 2, cw: i === 0 ? 3 : 2, pd: 1, cpd: 2, sillOut: 1, pierC: stone, spand: panel, deep: false, ledgeC: stone, ledgeOut: 1,
-      inset: 1, jambs: false, frameC: C.gold, sillC: stone, glassFn: skyGlass(SKY, 10), sheen: C.dtGlassHi, hi: C.win, bandEvery: i === 0 ? 3 : 0, bandC: stone,
+    // (w4) glass fills the bay under a gold head (inset 1 left 3-wide slits
+    // that read as blank dark slots in game)
+    // (w4r5) stage 1: a fine grid of cream-framed paired windows (critic w4r4:
+    // "double the window density, frame each window"); the upper stages keep
+    // the wide gold-headed bays so the rhythm changes up the tower
+    if (i === 0) gridBays(g, B, 'fblr', { y0: start, y1: yt - 5, floor: 10, ww: 2, wh: 6, sill: 2, gap: -1, per: 2, pw: 1, cw: 3, pd: 1, cpd: 2, recess: 0,
+      pierC: stone, frameC: C.cream, glassFn: () => C.dtGlassDeep, sillC: stone, bandEvery: 3, bandC: stone, capC: C.gold, bandH: 1 });
+    else framedBays(g, B, 'fblr', { y0: start, y1: yt - 5, floor: 10, sill: 2, wh: 7, bw: 5, pw: 1, cw: 2, pd: 1, cpd: 2, sillOut: 1, pierC: stone, spand: panel, deep: false, ledgeC: stone, ledgeOut: 1,
+      inset: 0, jambs: false, frameC: C.gold, sillC: stone, glassFn: skyGlass(SKY, 10), sheen: C.dtGlassHi, hi: C.win, bandEvery: i === 0 ? 3 : 0, bandC: stone,
       balc: i === 1 ? (S, k) => k % 2 === 1 : null, balcC: stone, railC: C.gold });
     if (i === 0) for (const [x0, z0] of [[B.x0, B.z0], [B.x1 - 2, B.z0], [B.x0, B.z1 - 2], [B.x1 - 2, B.z1 - 2]])
       notch(g, B, box(x0, z0, x0 + 2, z0 + 2), y0 + 1, yt - 5, { floor: 20, back: panel, slab: stone, rail: null });
@@ -1516,7 +1920,7 @@ function bDecoTower(rng, v) {
     void O;
   }
   // base: gold-framed glass portico on the podium
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'marquee', colC: C.gold, frame: C.gold, fascia: C.dtNavyPanel, text: 'DECO', textC: C.gold, mat: C.navy });
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'marquee', colC: C.gold, frame: C.gold, fascia: C.black, text: 'DECO', textC: C.yellow, mat: C.navy });
   // crown: stepped gold/stone fins + spire
   const top = y0, Bt = stages[2][0];
   for (let k = 0; k < 4; k++) g.walls(Bt.x0 + 1 + k, top + k * 3, Bt.z0 + 1 + k, Bt.x1 - 1 - k, top + k * 3 + 2, Bt.z1 - 1 - k, k % 2 ? stone : C.gold);
@@ -1657,10 +2061,15 @@ function bRoundTower(rng, v) {
   const y0 = streetPodium(g, P, Y, { ground: 'arcade', wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: 4 + v });
   portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'slab', colC: C.dtFrame, fascia: pf0, sign: 'letters', textC: C.yellow, text: ['ORBIT', 'HALO', 'ROUND'][v % 3], planters: false });
   const top = y0 + FL * nf;
-  disc(10, y0, top, (e, y) => {
+  // (w4) discrete windows: a mullion every ~4 voxels of arc and a white head
+  // frame, so the drum reads as framed windows per floor, not glass stripes
+  disc(10, y0, top, (e, y, x, z) => {
     if (!e) return y === top ? C.roofGray : null;
-    const k = (y - y0) % FL;
-    return k < 3 ? slabC : (k >= FL - 2 ? C.winCool : glass);
+    const k = (y - y0) % FL, s = (Math.atan2(z, x) + Math.PI) * 10.5;
+    if (k < 3) return slabC;
+    if (s % 4.1 < 1.05) return slabC;
+    if (k === FL - 1) return C.dtFrame === slabC ? C.dtNavyPanel : C.dtFrame;
+    return k >= FL - 3 ? C.winCool : glass;
   });
   // mullions: eight vertical white lines
   for (let y = y0; y < top; y++) for (const [x, z] of [[0, -10], [0, 10], [-10, 0], [10, 0], [-7, -7], [7, -7], [-7, 7], [7, 7]]) g.set(cx + x, y, cz + z, slabC);
@@ -1786,7 +2195,7 @@ function bOfficeBlock(rng, v) {
   // windows / teal with a glass ribbon) + a columned portico under the stair bay
   const Pd = box(20, 9, 61, 29);
   const [pw0, pp0, pf0] = [POD.brick, POD.teal][v % 2]();
-  const gt = streetPodium(g, Pd, Y, { ground: v % 2 ? 'glass' : 'arcade', wall: pw0, pier: pp0, fascia: pf0, style: v % 2 ? 'modern' : 'arch', skipF: [38, 54], seed: 6 + v }) - 1, top = gt + FL * nf, wt = top - FL * 2;
+  const gt = streetPodium(g, Pd, Y, { ground: v % 2 ? 'glass' : 'colonnade', wall: pw0, pier: pp0, fascia: pf0, style: v % 2 ? 'modern' : 'arch', skipF: [38, 54], seed: 6 + v }) - 1, top = gt + FL * nf, wt = top - FL * 2;
   const M = box(34, 11, 59, 27), W = box(21, 12, 34, 27);
   shell(g, M, gt, top, wall, C.roofGray);
   shell(g, W, gt, wt, wall, C.lotGrass);
@@ -1807,7 +2216,7 @@ function bOfficeBlock(rng, v) {
   shell(g, Fb, gt, top + 6, wall, C.roofGray);
   ribbons(g, Fb, 'flr', { y0: gt + 1, y1: top + 3, floor: FL, sill: 1, wh: 10, d: 1, cw: 1, pitch: 3, glassFn: skyGlass([C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi], nf + 1), hiRows: 1, mullC: wall });
   g.box(Fb.x0, gt - 1, Fb.z0, Fb.x1, gt - 1, Pd.z0 - 1, wall);
-  portico(g, Pd.z0, { Y, xc: 46, w: 9, depth: 6, kind: 'slab', cols: 4, fascia: band, colC: pp0 === C.dtFrame ? C.dtFrame : C.cream, stone: C.dtLimeShade, roofC: band, sign: 'letters', text: 'CITY', textC: C.yellow });
+  portico(g, Pd.z0, { Y, xc: 46, w: 9, depth: 6, kind: 'slab', cols: 4, fascia: band, colC: pp0 === C.dtFrame ? C.dtFrame : C.cream, stone: C.dtLimeShade, roofC: band, sign: 'letters', text: 'PLAZA', textC: C.yellow });
   // wing roof terrace
   parapetOn(g, W, wt + 1, 1, C.dtGlassHi, null);
   umbrella(g, 26, wt + 1, 13, C.red, C.signWhite); umbrella(g, 27, wt + 1, 22, C.teal, C.signWhite);
@@ -1916,6 +2325,7 @@ function podium(g, P, Y, h, wall, glass, frame = C.dtFrame) {
 // a SKY sign box on the podium roof. CROWN: cornice + railing, cooling
 // towers, condensers, a set-back lantern, helipad, mast and dish. Lot: paved
 // plaza with planters, trees, benches and people; parking down both sides.
+const SKYWALL = [C.dtGlassDark, C.dtGlassDark];
 function bGlassSkyscraper(rng, v) {
   // r6: a GLASS PRISM (critic r5: towers were cream/white shafts with a small
   // window grid; "dark curtain-wall glass" was one of the materials asked
@@ -1926,8 +2336,11 @@ function bGlassSkyscraper(rng, v) {
   // shaft reads as one deep-blue (v1 teal) curtain wall ruled by white frames
   // and a white ledge on every floor (SKY, SPIRE and BLOX were three pale
   // grey-white shafts side by side)
-  const [fin, spandG, tones, pierS] = [[C.dtGlassDeep, C.dtGlassDark, [C.dtGlass, C.dtGlass, C.dtGlassHi, C.dtGlassHi], C.dtGlassDeep],
-    [C.dtGlassTeal, C.dtGlassTeal, [C.dtGlass, C.dtGlass, C.dtGlassHi, C.dtGlassHi], C.dtGlassTeal]][v % 2];
+  // (w4) ref05's glass is a dark petrol blue with pale reflections, not the
+  // royal blue the old dtGlass panes rendered (measured ref ~(48,80,96) vs
+  // ours (64,128,240)): deep panes, bright streaks, silver mullion pilasters
+  const [fin, spandG, tones, pierS] = [[C.dtGlassDeep, C.dtGlassDark, [C.dtGlassDeep, C.dtGlass, C.dtGlassHi], C.dtStone],
+    [C.dtGlassTeal, C.dtGlassTeal, [C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi], C.dtGlassTeal]][v % 2];
   const wall = C.dtFrame;
   const g = grid(63, 256, 63, R);
   const Y = lotPlinth(g, 0, 0, 62, 62);
@@ -1954,7 +2367,23 @@ function bGlassSkyscraper(rng, v) {
     ledgeC: wall, ledgeOut: 1,
     balc: (S, k, r) => r % 4 !== 3 && (k === 0 || k === 3) && r % 2 === 0, balcC: wall, railC: C.dtGlassHi,
     ac: (S, k, r) => k > 0 && k < 3 && ((k * 3 + r * 5 + S.u0) % 9) === 0 };
-  framedBays(g, T, 'fb', { ...skyB, bw: 8 }); framedBays(g, T, 'lr', { ...skyB, bw: 9 }); }
+  void skyB;
+  // (w4r4) critic w4r3: "SKY … a uniform grid of small dark recessed
+  // windows". Now a curtain wall of TALL 2-storey glass bays between slim
+  // pilasters 1 proud (white transoms + mullions), tied by a white band
+  // every 2 storeys: big reflective panes with diagonal streaks.
+  const gb = { y0, y1: top - 1, pw: 2, cw: 2, pd: 1, cpd: 1, pierC: pierS, cornerC: fin, span: 2, bandC: wall, capC: wall, bandH: 2, transC: wall, mullC: wall,
+    tones: v % 2 ? [C.dtGlassDark, C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi] : GTONES };
+  void gb; void GTONES;
+  // (w4r5) critic w4r4: "SKY's mid-shaft reads as big flat slabs of colour
+  // with a few chunky dark window blocks; ref05 has a dense grid of small
+  // framed windows with sills, pilasters and cornices on every floor". A
+  // FINE grid: paired 3-wide windows in white frames (shared mullion) set 1
+  // back, silver pilasters 1 proud between the pairs, a white sill ledge on
+  // every floor and a bold white band + cap every 4 storeys.
+  const gg = { y0, y1: top - 1, ww: 3, wh: 7, sill: 3, gap: -1, recess: 0, frameOut: 1, pw: 2, pd: 1, cpd: 2, wallC: SKYWALL[v % 2], pierC: pierS, cornerC: fin, frameC: C.dtFrame,
+    glassFn: () => (v % 2 ? C.dtGlassTeal : C.dtGlassDeep), ledgeC: wall, ledgeOut: 1, bandEvery: 4, bandC: wall, capC: wall, bandH: 2 };
+  gridBays(g, T, 'fb', { ...gg, per: 2 }); gridBays(g, T, 'lr', { ...gg, per: 3, cw: 1 }); }
   // r7: a sky garden splits the shaft (lower 4 storeys / upper storeys)
   skyGarden(g, T, y0 + 4 * FL, y0 + 5 * FL - 4, { col: wall, glass: C.dtGlassDark, trim: C.dtNavyPanel });
   // r5: a teal glass spine stands 3 proud up the middle of the front and back
@@ -1967,29 +2396,38 @@ function bGlassSkyscraper(rng, v) {
       glassFn: skyGlass(v % 2 ? [C.dtGlass, C.dtGlass, C.dtGlassHi] : [C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi], nf + 1), hiRows: 1, mullC: wall });
     course(g, Sp, top + 5, C.dtNavyPanel, 1, 1, 0);
   }
-  // crown: heavy cornice, set-back lantern + second cornice, helipad, mast
-  const ct = cornice(g, T, top, wall, C.dtNavyPanel, 2, 0);
-  deck(g, ins(T, -2), ct - 1);
-  railing(g, T.x0 - 1, T.z0 - 1, T.x1 + 1, T.z1 + 1, ct, C.metal);
-  const K = ins(T, 5), kt = ct + 13;
+  // crown (w4r2): a DEEP overhanging cornice (4 out over a navy frieze) caps
+  // the shaft; a plant-room lantern sits on the BACK half of the roof so the
+  // front half is crowded with HVAC (ref05 bank roof), and the name stands on
+  // the lantern in big 2x lit letters (the ref05 HOTEL sign) as the top of
+  // the silhouette. Critic w4r1: "nothing breaks the shaft … rooftops carry
+  // only a few items … make the signs large and readable".
+  course(g, T, top, C.dtNavyPanel, 1, 2, 0);
+  const ct = cornice(g, T, top + 2, wall, C.dtNavyPanel, 4, 0);
+  deck(g, ins(T, -4), ct - 1);
+  railing(g, T.x0 - 3, T.z0 - 3, T.x1 + 3, T.z1 + 3, ct, C.metal);
+  const K = box(T.x0 + 6, T.z0 + 14, T.x1 - 6, T.z1 - 3), kt = ct + 13;
   shell(g, K, ct, kt, wall, C.roofGray);
   ribbons(g, K, 'fblr', { y0: ct, y1: kt - 1, floor: 13, sill: 1, wh: 10, d: 1, cw: 2, pitch: 3, glass: tones[3], hiRows: 0, mullC: wall });
   const kc = cornice(g, K, kt, wall, C.dtNavyPanel, 2, 0);
-  roofCrowd(g, T.x0 + 1, T.z0 + 1, T.x1 - 1, K.z0 - 2, ct, rng, { ac: 3, vents: 1 });
-  roofCrowd(g, T.x0 + 1, K.z1 + 2, T.x1 - 1, T.z1 - 1, ct, rng, { ac: 2, vents: 1 });
-  coolTower(g, T.x0 + 1, ct, K.z0 + 2, 4, 5); coolTower(g, K.x1 + 1, ct, K.z0 + 8, 4, 5);
   deck(g, ins(K, -2), kc - 1);
-  helipad(g, K.x0 + 1, K.z0 + 1, K.x1 - 1, K.z1 - 1, kc - 1);
-  mast(g, K.x1, K.z1, kc, 16, C.red); dish(g, K.x0, kc, K.z1);
+  // front half: two cooling towers + a dense field of condensers and vents
+  coolTower(g, T.x0 + 1, ct, T.z0 + 2, 7, 6); coolTower(g, T.x1 - 7, ct, T.z0 + 2, 7, 6);
+  roofCrowd(g, T.x0 + 9, T.z0 - 1, T.x1 - 9, K.z0 - 2, ct, rng, { ac: 5, vents: 2 });
+  for (const x of [T.x0, K.x1 + 3]) roofCrowd(g, x, K.z0, x + 4, K.z1, ct, rng, { ac: 2, vents: 1 });
+  // lantern roof: the big name sign at its front edge, a mast + dish behind
+  bigSign(g, 31, kc, K.z0 + 1, 'SKY', { fg: C.yellow });
+  roofCrowd(g, K.x0 + 1, K.z0 + 6, K.x1 - 1, K.z1 - 1, kc, rng, { ac: 2, vents: 1 });
+  mast(g, K.x1 - 1, K.z1 - 1, kc, 16, C.red);
   // podium roof terrace
   // (r7: the podium now hugs the tower, so its roof strip is too thin for hedges)
   for (const x of [P.x0 + 1, P.x1 - 3]) acBox(g, x, pt + 1, P.z0 + 1, { w: 3, d: 2, h: 2 });
   // lot: plaza trees + benches, taxis at the kerb, parking lanes on 3 sides
-  tree(g, 3, Y, 3, 7); tree(g, 57, Y, 3, 7);
+  // (w4r2) a designed forecourt + planted plaza strips (no car lay-by)
+  forecourt(g, 1, 61, 1, 7, rng, { xc: 31, hw: 13 });
   bench(g, 8, Y, 12, 'x', 5); bench(g, 50, Y, 12, 'x', 5);
-  kerbCars(g, 10, 52, rng);                                              // r6: taxis + cars in a kerbside lay-by
-  people(g, 2, 6, 60, 14, Y, 12, rng);
-  stripLot(g, 1, 17, 10, 61, rng, { p: 0.9 }); stripLot(g, 52, 17, 61, 61, rng, { p: 0.9 }); stripLot(g, 12, 54, 50, 61, rng, { p: 0.95 });
+  people(g, 2, 8, 60, 14, Y, 12, rng);
+  plazaStrip(g, 1, 17, 10, 61, rng); plazaStrip(g, 52, 17, 61, 61, rng); plazaStrip(g, 12, 55, 50, 61, rng, { bed: 8, gap: 6 });
   fillLot(g, g.sx, g.sz, rng, { keep: [frontWalk(g)] });
   return finish(g);
 }
@@ -2007,7 +2445,7 @@ function bDarkSkyscraper(rng, v) {
   // (r9) an art-deco street podium: cream (v1 limestone) with gold trim,
   // arched windows, black fascia with shop boards, a gold-framed portico
   const P = box(9, 12, 53, 55);
-  let y0 = streetPodium(g, P, Y, { ground: 'arcade', wall: v % 2 ? C.dtLime : C.cream, pier: C.gold, fascia: C.black, skipF: [22, 40], seed: 2 + v, cornC: C.dtPad });
+  let y0 = streetPodium(g, P, Y, { ground: 'shop', wall: v % 2 ? C.dtLime : C.cream, pier: C.gold, fascia: C.black, skipF: [22, 40], seed: 2 + v, cornC: C.dtPad });
   for (let i = 0; i < stages.length; i++) {
     const [B, yt] = stages[i];
     shell(g, B, y0, yt, C.dtPad, C.roofGray);
@@ -2016,9 +2454,21 @@ function bDarkSkyscraper(rng, v) {
     // (r8) critic r7: "the charcoal ONYX tower reads as a nearly black mass
     // … the dark side has no colour". Slate-blue piers (dtPad lightened) 1
     // proud, champagne ledge on every floor, bright glass framed in champagne.
-    framedBays(g, B, 'fblr', { y0: ya, y1: yt - 6, bw: [7, 6, 5][i], pw: 2, cw: 3, pd: 1, cpd: 2, pierC: C.dtPad, spand: C.dtGlassDeep, frameC: fin, sillC: null, deep: false, inset: 0, jambs: false,
-      sill: 2, wh: 8, glassFn: skyGlass([C.dtGlass, C.dtGlass, C.dtGlassHi], n, 11), sheen: C.dtGlassTeal, hi: C.winCool, bandEvery: 3, bandC: fin, bandOut: 2,
-      ledgeC: fin, ledgeOut: 1,
+    // (w4r4) stage 1: tall 3-storey glass bays between jade pilasters, a gold
+    // band every 3 storeys (critic w4r1: "ONYX repeats one fin-and-window
+    // module floor after floor"); the upper stages keep framed windows
+    // (w4r5) critic w4r4: "the green deco tower's mid-shaft reads as big flat
+    // slabs of colour with a few chunky dark windows". Every stage is now a
+    // fine grid of cream-framed windows in pairs between jade pilasters, a
+    // jade sill ledge on every floor, a gold-capped band every 3 storeys.
+    if (i < 3) gridBays(g, B, 'fblr', { y0: ya, y1: yt - 6, ww: i === 0 ? 3 : 2, wh: 7, sill: 3, gap: -1, recess: 0, per: 2, pw: 2, pd: 1, cpd: 2, pierC: C.dtPad, frameC: C.cream,
+      glassFn: () => C.dtGlassDeep, ledgeC: C.dtPad, ledgeOut: 1, bandEvery: 3, bandC: C.dtPad, capC: fin, bandH: 2 });
+    else framedBays(g, B, 'fblr', { y0: ya, y1: yt - 6, bw: [7, 6, 5][i], pw: 2, cw: 3, pd: 1, cpd: 2, pierC: C.dtPad, spand: C.dtGlassDeep, frameC: fin, sillC: null, deep: false, inset: 0, jambs: false,
+      sill: 2, wh: 8, glassFn: skyGlass([C.dtGlassDeep, C.dtGlass, C.dtGlassHi], n, 7), sheen: C.dtGlassHi, hi: C.winCool, bandEvery: 3, bandC: fin, bandOut: 2,
+      // (w4r2) critic w4r1: "the gold trim on the green tower reads as noisy
+      // stripes". The per-floor ledge is jade (a shadow line, not a stripe);
+      // gold stays on the window heads and the bold band every 3 storeys.
+      ledgeC: C.dtPad, ledgeOut: 1,
       balc: i === 1 ? (S, k, r) => r % 2 === 0 : null, balcC: fin, railC: C.dtGlassHi });
     if (i === 0) for (const [x0, z0] of [[B.x0, B.z0], [B.x1 - 4, B.z0], [B.x0, B.z1 - 4], [B.x1 - 4, B.z1 - 4]])
       notch(g, B, box(x0, z0, x0 + 4, z0 + 4), ya - 1, yt - 6, { floor: FL, back: C.dtGlassDeep, slab: fin, rail: C.dtGlassHi });
@@ -2033,7 +2483,7 @@ function bDarkSkyscraper(rng, v) {
   }
   // gold-framed portico on the podium
   const B0 = stages[0][0];
-  portico(g, P.z0, { Y, xc: 31, w: 11, depth: 6, kind: 'marquee', cols: 4, colC: C.gold, frame: C.gold, fascia: C.dtPad, text: 'ONYX', textC: C.gold, mat: C.navy, planters: false });
+  portico(g, P.z0, { Y, xc: 31, w: 11, depth: 6, kind: 'marquee', cols: 4, colC: C.gold, frame: C.gold, fascia: C.black, text: 'ONYX', textC: C.yellow, mat: C.navy, planters: false });
   // crown: roof kit on the last setback, neon lantern + spire
   const top = y0, Bt = stages[2][0];
   const L = ins(Bt, 5);
@@ -2058,7 +2508,7 @@ function bDarkSkyscraper(rng, v) {
   for (const [a, b] of [[4, 18], [44, 58]]) { g.box(a + 1, 1, 3, b - 1, 1, 7, C.civPool); g.walls(a, 1, 2, b, 1, 8, C.darkGray); g.box(a + 3, 1, 5, a + 3, 3, 5, C.dtFrame); g.set(a + 3, 4, 5, C.civPoolLt); }
   flag(g, 2, Y, 10, 20, C.red); flag(g, 60, Y, 10, 20, C.blue);
   people(g, 2, 1, 60, 2, Y, 8, rng);
-  stripLot(g, 1, 15, 7, 61, rng); stripLot(g, 55, 15, 61, 61, rng); stripLot(g, 12, 57, 50, 61, rng);
+  plazaStrip(g, 1, 15, 7, 61, rng); plazaStrip(g, 55, 15, 61, 61, rng); plazaStrip(g, 12, 57, 50, 61, rng, { bed: 8, gap: 6 });   // w4r2: planted plaza sides
   fillLot(g, g.sx, g.sz, rng, { keep: [frontWalk(g)] });
   return finish(g);
 }
@@ -2148,11 +2598,11 @@ function bCorporateHQ(rng, v) {
   flag(g, 41, Y, 3, 22, C.blue); flag(g, 44, Y, 3, 22, C.teal); flag(g, 38, Y, 3, 22, C.red);
   bikeRack(g, 6, Y, 10, 3);
   lamp(g, 11, Y, 11); lamp(g, 43, Y, 11);
-  kerbCars(g, 1, 35, rng);
+  plazaStrip(g, 1, 1, 35, 5, rng, { bed: 7, gap: 6 });                  // w4r2: planted strip, not a lay-by
   people(g, 2, 6, 46, 12, Y, 10, rng);
   g.box(49, 1, 2, 61, 1, 61, C.lotAsphalt);
-  parkCol(g, 4, 60, 50, 11, rng, 0.9);
-  stripLot(g, 1, 15, 5, 61, rng, { p: 0.95 }); hedge(g, 7, Y, 59, 46, 60, 3);
+  parkCol(g, 4, 60, 50, 11, rng, 0.7);
+  plazaStrip(g, 1, 15, 5, 61, rng); hedge(g, 7, Y, 59, 46, 60, 3);
   fillLot(g, g.sx, g.sz, rng, { keep: [frontWalk(g)] });
   return finish(g);
 }
@@ -2173,14 +2623,13 @@ function bTwinSetback(rng, v) {
   const brick = [C.brickDark, C.dtTerra][v % 2];
   const stone = pk(rng, [C.cream, C.dtLime]);
   const g = grid(63, 256, 63, R);
-  const Y = lotPlinth(g, 0, 0, 62, 62);
+  const Y = plazaLot(g);                 // (w4r4) beige plaza lot
   // (r9) a cream-stone street podium with an arcade of arched windows, a
   // black shop fascia, and a temple portico (4 columns, TWINS on the
   // entablature, a copper pediment) — the ref05 bank's front
   const P = box(7, 14, 55, 53);
   const pt = streetPodium(g, P, Y, { h: 34, ground: 'arcade', wall: stone, pier: C.gold, fascia: C.black, skipF: [18, 44], seed: 1 + v, cornC: stone }) - 1;
-  tiles(g, 1, 1, 61, 13, Y - 1, C.lotPaveDark, 5);
-  portico(g, P.z0, { Y, xc: 31, w: 19, depth: 7, kind: 'temple', cols: 4, colC: stone, stone: C.dtLimeShade, roofC: C.dtCopper, text: 'TWINS', textC: C.brickDark, planters: false });
+  portico(g, P.z0, { Y, xc: 31, w: 13, depth: 5, kind: 'arch', w: 15, colC: stone, frame: C.gold, stone: C.dtLimeShade, text: 'TWINS', textC: C.gold, mat: C.brickDark, planters: false });
   const top = pt + 96 + v * 8;
   for (const [x0, x1] of [[7, 28], [34, 55]]) {
     const T1 = box(x0, 16, x1, 50), T2 = ins(T1, 3), T3 = ins(T2, 3);
@@ -2191,9 +2640,16 @@ function bTwinSetback(rng, v) {
     shell(g, T1, pt + 1, y1, brick, C.roofGray);
     // (r7) the windows fill the bay (5 wide × 7 tall, 2 back behind a white
     // head): the r6 shaft read as flat red pilasters with thin dark slits
-    framedBays(g, T1, 'fblr', { y0: pt + 2, y1: y1 - 5, bw: 5, pw: 1, cw: 2, pd: 1, cpd: 2, pierC: brick, cornerC: brick, spand: brick, inset: 0, jambs: false, deep: false,
-      frameC: C.dtFrame, sillC: stone, sillOut: -1, glassFn: skyGlass(SKY, 10, 6), sheen: C.dtGlassHi, hi: C.win, floor: 10, sill: 1, wh: 7,
-      bandEvery: 3, bandC: stone, bandOut: 2, ledgeC: stone, ledgeOut: 1, ac: (S, k, r) => ((k * 3 + r * 5) % 7) === 1 });
+    // (w4r4) critic w4r3: "TWINS … uniform grids of small dark recessed
+    // windows; group them into 2-3 storey bays framed by pilasters". Brick
+    // pilasters 2 proud frame tall 3-storey glass bays; a cream band + cap
+    // ties them every 3 storeys (Chicago-school brick + glass)
+    // (w4r5) critic w4r4: "double the window density, frame each window, add
+    // pilasters or banding". The ref05 hotel shaft: brick walls, cream
+    // pilasters between PAIRS of white-framed windows, a stone sill under every
+    // window, a stone band every 3 storeys.
+    gridBays(g, T1, 'fblr', { y0: pt + 2, y1: y1 - 5, floor: 10, ww: 2, wh: 5, sill: 2, gap: 1, per: 2, pw: 2, cw: 1, pd: 1, cpd: 2, pierC: brick, cornerC: stone, frameC: C.dtFrame, jambs: false, recess: 0,
+      glassFn: () => C.dtGlassDeep, sillC: stone, bandEvery: 3, bandC: stone, capC: stone, bandH: 1 });
     for (const xa of [T1.x0, T1.x1 - 3]) notch(g, T1, box(xa, 30, xa + 3, 36), pt + 2, y1 - 5, { floor: 10, back: C.dtGlassDeep, slab: stone, rail: C.dtGlassHi, mull: stone });
     course(g, T1, y1 - 4, C.gold, 1, 1, 0);
     cornice(g, T1, y1 - 3, stone, brick, 2, 0);
@@ -2235,10 +2691,11 @@ function bTwinSetback(rng, v) {
   hedge(g, 29, pt + 1, 22, 33, 28, 2); hedge(g, 29, pt + 1, 40, 33, 45, 2);
   people(g, 29, pt + 1, 15, 34, 52, 3, rng);
   // lot: corner planters with trees, taxis at the kerb, parking lanes all round
-  for (const x of [2, 51]) { planter(g, x, 2, x + 8, 5, Y, { box: C.stoneDark, flowers: [C.red, C.yellow] }); tree(g, x + 3, Y + 2, 3, 5); }
-  kerbCars(g, 12, 50, rng);
-  people(g, 1, 1, 61, 13, Y, 10, rng);
-  stripLot(g, 1, 15, 6, 61, rng, { p: 0.95 }); stripLot(g, 56, 15, 61, 61, rng, { p: 0.95 }); stripLot(g, 8, 54, 54, 61, rng, { p: 0.95 });
+  // (w4r2) a designed forecourt (fountains + planted beds) and planted plaza
+  // sides instead of a car lay-by and parking lanes; parking only at the back
+  forecourt(g, 1, 61, 1, 6, rng, { xc: 31, hw: 15 });
+  people(g, 1, 7, 61, 13, Y, 10, rng);
+  plazaStrip(g, 1, 15, 6, 61, rng); plazaStrip(g, 56, 15, 61, 61, rng); plazaStrip(g, 8, 55, 54, 61, rng, { bed: 8, gap: 6 });   // w4r4: no back car park
   fillLot(g, g.sx, g.sz, rng, { keep: [frontWalk(g)] });
   return finish(g);
 }
@@ -2260,7 +2717,7 @@ function bSpireTower(rng, v) {
   const glassT = [[C.dtGlassDark, C.dtGlassDeep, C.dtGlassDeep, C.dtGlass], [C.dtGlassDark, C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi]][v % 2];
   const stone = [C.dtLimeShade, C.resTerracotta][v % 2], spandC = C.dtGlassDeep;   // w10: warm beige stone (v1 terracotta; was silver: a third pale shaft)   // r8: was navy (critic r7: dark masses)
   const g = grid(63, 256, 63, R);
-  const Y = lotPlinth(g, 0, 0, 62, 62);
+  const Y = plazaLot(g);                 // (w4r4) beige plaza lot
   // the podium steps in from the lot edge so the ground floor can be dressed
   // all round (entrance plaza in front, parking lanes on 3 sides)
   const P = box(11, 14, 51, 53);          // r7: 10-wide car parks each side
@@ -2275,10 +2732,14 @@ function bSpireTower(rng, v) {
     shell(g, B, y0, yt, stone, C.roofGray);
     const n = Math.floor((yt - 8 - y0) / FL), r0 = row0;
     const common = { y0, y1: yt - 9, sillOut: -1, pierC: stone, hi: C.winCool, bandC: stone };
-    if (i === 0) framedBays(g, B, 'fblr', { ...common, bw: 8, pw: 1, cw: 2, pd: 2, cpd: 2, sill: 2, wh: 9, spand: spandC, inset: 0, frameC: C.dtGlassDark, mullC: stone, sillC: spandC,
-      glassFn: (c, r) => skyGlass(glassT, nAll, 7)(c, r + r0), sheen: glassT[3], bandEvery: 4, bandOut: 3, bandH: 2, ledgeC: C.dtFrame, ledgeOut: 2 });
+    // (w4r4) tier 1 = the ref05 bank's order: tall 3-storey glass bays between
+    // stone pilasters 2 proud, a stone band + white cap every 3 storeys
+    // (w4r5) tier 1: a fine grid of white-framed paired windows between stone
+    // pilasters, a stone sill ledge every floor, a white-capped band every 3
+    if (i === 0) gridBays(g, B, 'fblr', { y0, y1: yt - 9, ww: 3, wh: 7, sill: 3, gap: -1, recess: 0, frameOut: 1, per: 2, pw: 2, pd: 1, cpd: 2, pierC: stone, frameC: C.dtFrame,
+      glassFn: () => (v % 2 ? C.dtGlassTeal : C.dtGlassDeep), ledgeC: stone, ledgeOut: 1, bandEvery: 3, bandC: stone, capC: C.dtFrame, bandH: 2 });
     else if (i === 1) framedBays(g, B, 'fblr', { ...common, bw: 6, pw: 1, cw: 2, pd: 1, cpd: 2, sill: 2, wh: 8, spand: stone, inset: 0, frameC: C.dtFrame, sillC: null, deep: false, ledgeC: C.dtFrame, ledgeOut: 1,
-      glassFn: (c, r) => skyGlass([C.dtGlass, C.dtGlass, C.dtGlassHi], nAll, 9)(c, r + r0), sheen: C.dtGlassHi,
+      glassFn: (c, r) => skyGlass([C.dtGlassDeep, C.dtGlass, C.dtGlassHi], nAll, 7)(c, r + r0), sheen: C.dtGlassHi,
       balc: (S, k) => k > 0 && k < 3, balcC: C.dtFrame, railC: C.dtGlassHi, balcD: 3 });
     else framedBays(g, B, 'fblr', { ...common, bw: 4, pw: 1, cw: 2, pd: 0, cpd: 2, inset: 0, spand: C.dtGlassDeep, frameC: C.dtFrame, sillC: C.dtFrame, glass: C.dtGlassHi, sheen: C.skyBlue, bandEvery: 2, bandOut: 1 });
     // sky-lobby glass band under each setback's cornice
@@ -2287,8 +2748,8 @@ function bSpireTower(rng, v) {
     if (i < 2) {
       const Bn = st[i + 1][0];
       railing(g, B.x0 - 1, B.z0 - 1, B.x1 + 1, B.z1 + 1, yt + 1, C.metal);
-      roofCrowd(g, B.x0 + 1, B.z0 + 1, B.x1 - 1, Bn.z0 - 2, yt + 1, rng, { ac: 2, vents: 1 });
-      roofCrowd(g, B.x0 + 1, Bn.z1 + 2, B.x1 - 1, B.z1 - 1, yt + 1, rng, { ac: 2, vents: 1 });
+      roofCrowd(g, B.x0 + 1, B.z0 + 1, B.x1 - 1, Bn.z0 - 2, yt + 1, rng, { ac: 4, vents: 2 });   // w4r4: crowded terraces
+      roofCrowd(g, B.x0 + 1, Bn.z1 + 2, B.x1 - 1, B.z1 - 1, yt + 1, rng, { ac: 4, vents: 2 });
     }
     row0 += n; y0 = yt + 1;
   }
@@ -2303,14 +2764,13 @@ function bSpireTower(rng, v) {
   g.set(31, 255, 33, C.neon);
   acBox(g, Bt.x0 + 1, top, Bt.z0 + 1, { w: 4, d: 2, h: 3 }); acBox(g, Bt.x1 - 4, top, Bt.z1 - 2, { w: 4, d: 2, h: 3 });
   // entrance: glass lobby, stepped terrace, glass canopy with SPIRE, planters
-  tiles(g, 1, 1, 61, 13, Y - 1, C.lotPaveDark, 5);
-  portico(g, P.z0, { Y, xc: 31, w: 19, depth: 7, kind: 'temple', cols: 4, colC: C.dtFrame, stone: C.dtLimeShade, roofC: C.dtGlassDeep, text: 'SPIRE', textC: C.dtNavyPanel, planters: false });
+  portico(g, P.z0, { Y, xc: 31, w: 19, depth: 12, kind: 'cochere', cols: 4, colC: C.dtFrame, stone: C.dtLimeShade, glassTop: C.dtGlassTeal, fascia: v % 2 ? C.dtNavyPanel : C.brickDark, text: 'SPIRE', textC: C.signWhite, planters: false });
   // lot: plaza trees + benches, taxis in a kerbside lay-by, parking on 3 sides
   for (const [x, z] of [[3, 3], [58, 3]]) tree(g, x, Y, z, 6);
   bench(g, 7, Y, 10, 'x', 5); bench(g, 51, Y, 10, 'x', 5);
-  kerbCars(g, 10, 52, rng);
+  // (w4) the porte-cochère drive replaces the kerbside lay-by
   people(g, 2, 1, 60, 12, Y, 10, rng);
-  stripLot(g, 1, 15, 10, 61, rng, { p: 0.9 }); stripLot(g, 52, 15, 61, 61, rng, { p: 0.9 }); stripLot(g, 12, 54, 50, 61, rng, { p: 0.95 });
+  plazaStrip(g, 1, 15, 10, 61, rng); plazaStrip(g, 52, 15, 61, 61, rng); plazaStrip(g, 12, 55, 50, 61, rng, { bed: 8, gap: 6 });   // w4r4: no back car park   // w4r2
   fillLot(g, g.sx, g.sz, rng, { keep: [frontWalk(g)] });
   return finish(g);
 }
@@ -2333,8 +2793,9 @@ function bTechCampus(rng, v) {
   const logo = pk(rng, [C.orange, C.teal, C.yellow]);
   const g = grid(63, 256, 63, R);
   const Y = lotPlinth(g, 0, 0, 62, 62, { fill: 'grass' });
-  g.box(2, 1, 2, 60, 1, 12, C.lotAsphalt);
-  parkRow(g, 3, 59, 3, 10, rng, 0.75);
+  // (w4r3) a fountain forecourt instead of the front car park (critic w4r2:
+  // "thin lot strips crowded with cars"; ref05 gives landmarks a paved plaza)
+  forecourt(g, 1, 61, 1, 12, rng, { xc: 31, hw: 8 });
   // (r9) the lower block is a terracotta street podium: shopfronts under a
   // black fascia with signs + awnings, a glass ribbon (v1: arcade) above
   const Lb = box(5, 22, 57, 58), Ub = box(12, 14, 50, 50);
@@ -2383,7 +2844,7 @@ function bTechCampus(rng, v) {
 function bCityBank(rng, v) {
   const [stone, shade, roofC] = [[C.dtStone, C.stone, C.dtCopper], [C.dtLime, C.dtLimeShade, C.dtCopper]][v % 2];
   const g = grid(63, 256, 63, R);
-  const Y = lotPlinth(g, 0, 0, 62, 62);
+  const Y = plazaLot(g);                 // (w4r4) the ref05 bank's beige forecourt
   // plinth: rusticated, basement windows on the sides + back
   const P = box(5, 13, 57, 59);
   const y0 = Y + 9;

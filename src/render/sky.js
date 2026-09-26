@@ -968,9 +968,12 @@ export class Sky {
       // Dusk ramp (deg of key elevation): 0 at/above duskHi, 1 at/below duskLo.
       duskHi: A.duskHi != null ? A.duskHi : 32,
       duskLo: A.duskLo != null ? A.duskLo : 6,
-      duskKey: hex(A.duskKeyHex, 0xffc584),         // golden amber, not orange-red
+      // Light wave-4 r1 (coherence #5, dusk still the strongest tint in the game):
+      // key #ffc584 -> #ffd6a0 and fill #bfc8ec -> #c8d2ee (iso-close night 0.40 /
+      // 0.47 A/B): lit whites read cream-gold instead of peach, shade sides stay cool.
+      duskKey: hex(A.duskKeyHex, 0xffd6a0),         // soft gold, not orange-red / salmon
       duskKeyScale: A.duskKeyScale != null ? A.duskKeyScale : 0.66,
-      duskSky: hex(A.duskSkyHex, 0xbfc8ec),         // cool lavender-blue fill: shade faces keep their hue, go cool
+      duskSky: hex(A.duskSkyHex, 0xc8d2ee),         // cool lavender-blue fill: shade faces keep their hue, go cool
       duskGnd: hex(A.duskGroundHex, 0x54463a),      // warm bounce off sunlit ground
       duskFillScale: A.duskFillScale != null ? A.duskFillScale : 0.72,
       key: hex(A.keyHex, 0xfffaf2),                 // warm white (neutrals measured B-R -10 at #fff6ea; ref05 is 0)
@@ -999,6 +1002,24 @@ export class Sky {
     // horizon, so a physically-mirrored moon (≈60° up, opposite the sun) is
     // never once in shot. A low moon is also the better picture.
     this._moonElev = opts.moonElevation != null ? opts.moonElevation : 0.075;
+    // Night w4r2: the moon KEY is decoupled from the moon DISC. The disc
+    // rides opposite the sun (+0.55 rad), which put the key behind the city:
+    // both visible walls were fill-only and every mass read one mid-violet.
+    // The key now comes from the day key's camera-relative upper-left
+    // (azimuth + nightKeyAz) at nightKeyElev, so a night block keeps the day's
+    // three tones: moonlit top brightest, left wall mid, right wall deep blue.
+    // (+0.35 rad measured best: lit wall a clear mid tone, far wall deep blue)
+    this._nightKeyAz = opts.nightKeyAz != null ? opts.nightKeyAz : 0.35;
+    // w4r3: 0.90 -> 1.05 (~60 deg): moonlit roofs a clear step above the walls.
+    this._nightKeyElev = opts.nightKeyElev != null ? opts.nightKeyElev : 1.05;
+    // Moon key strength at full night (night r1 0.135; w4r2 0.22 — the fill
+    // it used to share the frame with is gone, see materials rim/env/bounce).
+    this._nightKeyI = opts.nightKeyI != null ? opts.nightKeyI : 0.58;   // w4r5 0.38 -> 0.58 (critic w4r4: downtown one blue-grey mass; a real moon key separates faces). w4r4 0.26 -> 0.38 (moon key lifts tops; critics w4r1-3: masses merge). w4r3 0.22 -> 0.26
+    // Night w4r3: moon key colour (linear) and the night ground bounce (linear).
+    // Critics w4r1+w4r2 agreed the night city sat in one purple/mauve band; the
+    // lavender key (0.70,0.70,1.0) and violet bounce are pulled to blue-teal.
+    this._nightKeyCol = opts.nightKeyColor || [0.60, 0.80, 1.0];   // w4r5: 0.66 -> 0.60 red (keeps the brighter key blue-teal, not grey)
+    this._nightBounce = opts.nightBounce || [0.040, 0.078, 0.160];
 
     this._sunDir = new THREE.Vector3(0, 1, 0);
     this._moonDir = new THREE.Vector3(0, -1, 0);
@@ -1114,8 +1135,10 @@ export class Sky {
       // night r1: blue-VIOLET rather than navy. This is also the night hemi
       // fill (engine copies the zenith into hemi.color), so it is the colour
       // every shaded face and every roof takes at night.
-      uNightZenith: { value: new THREE.Vector3(0.024, 0.024, 0.086) },
-      uNightHorizon: { value: new THREE.Vector3(0.058, 0.054, 0.150) },
+      // night w4r3: violet (0.024,0.024,0.086 / 0.058,0.054,0.150) -> navy-teal:
+      // critics w4r1+w4r2 both read the night city as one purple/mauve band.
+      uNightZenith: { value: new THREE.Vector3(0.014, 0.032, 0.088) },
+      uNightHorizon: { value: new THREE.Vector3(0.034, 0.066, 0.150) },
       uHorizonRef: { value: new THREE.Vector3(0.20, 0.31, 0.44) },
       // MUST track terrain.js's uHorizonLift (engine.js sets it to 2.2). See
       // the "horizon haze" block in main() — this is the seam fix.
@@ -1292,6 +1315,14 @@ export class Sky {
     if (p.warmHorizonHex != null) this._warmHue.setHex(p.warmHorizonHex, THREE.SRGBColorSpace);
     if (p.warmCloudHex != null) this._warmCloudHue.setHex(p.warmCloudHex, THREE.SRGBColorSpace);
     if (p.moonElevation != null) { this._moonElev = p.moonElevation; this._computeSun(this._nightT); }
+    if (p.nightKeyI != null) this._nightKeyI = Math.max(0, p.nightKeyI);
+    if (Array.isArray(p.nightKeyColor)) this._nightKeyCol = p.nightKeyColor.slice(0, 3);
+    if (Array.isArray(p.nightBounce)) this._nightBounce = p.nightBounce.slice(0, 3);
+    if (p.nightKeyAz != null || p.nightKeyElev != null) {
+      if (p.nightKeyAz != null) this._nightKeyAz = p.nightKeyAz;
+      if (p.nightKeyElev != null) this._nightKeyElev = clamp(p.nightKeyElev, 0.1, 1.5);
+      this._computeSun(this._nightT);
+    }
     if (p.sunDiscSize != null) u.uSunDiscSize.value = p.sunDiscSize;
     if (p.sunDiscPower != null) u.uSunDiscPower.value = p.sunDiscPower;
     if (p.windSpeed != null) u.uWind.value.set(1, 0.36).multiplyScalar(p.windSpeed);
@@ -1398,7 +1429,10 @@ export class Sky {
       const kel = el >= 0.6981 ? el : 0.3491 + el * 0.5;
       const ck = Math.cos(kel);
       this._keyDir.set(ck * Math.sin(az), Math.sin(kel), ck * Math.cos(az)).normalize();
-    } else if (this._moonDir.y > 0.02) this._keyDir.copy(this._moonDir);
+    } else if (this._moonDir.y > 0.02) {
+      const kaz = this._azimuth + this._nightKeyAz, kel = this._nightKeyElev, ck = Math.cos(kel);
+      this._keyDir.set(ck * Math.sin(kaz), Math.sin(kel), ck * Math.cos(kaz)).normalize();
+    }
     else this._keyDir.copy(this._sunDir).negate();
     this._out.isMoon = this._sunDir.y <= 0.0;
 
@@ -1566,7 +1600,7 @@ export class Sky {
     // A sun sitting on the horizon still lights the city warmly, so the key
     // light must not reach zero until it is properly below.
     const dayI = Math.pow(clamp((elev + 0.075) / 0.30, 0, 1), 0.70);
-    const moonI = 0.135 * this._nightAmt;   // night r1: 0.16 -> 0.135 (lit panes and lamp pools pop; masses still read)
+    const moonI = this._nightKeyI * this._nightAmt;   // night r1: 0.16 -> 0.135 (lit panes and lamp pools pop; masses still read)
     const oc = this._overcast;
     const intensity = (1.25 * dayI * (1 - oc * 0.72)) + moonI * (1 - oc * 0.5);
 
@@ -1575,7 +1609,8 @@ export class Sky {
       const k = this._nightAmt;
       this._sunColor.setRGB(
         // night r1: lavender moon (0.62/0.72/1.00 was ice blue)
-        lerp(rgb[0], 0.70, k), lerp(rgb[1], 0.70, k), lerp(rgb[2], 1.00, k)
+        // night w4r3: blue-teal (nightKeyColor), was lavender 0.70/0.70/1.00
+        lerp(rgb[0], this._nightKeyCol[0], k), lerp(rgb[1], this._nightKeyCol[1], k), lerp(rgb[2], this._nightKeyCol[2], k)
       );
     } else {
       this._sunColor.setRGB(rgb[0], rgb[1], rgb[2]);
@@ -1638,9 +1673,10 @@ export class Sky {
     // Cheerful bounce light: sunlit turf by day, deep blue at night.
     const bounceDay = 1 - n;
     this._groundColor.setRGB(
-      lerp(0.066, 0.30, bounceDay) * (1 - oc * 0.25) + 0.02,   // night r1: 0.055 -> 0.066 (violet bounce)
-      lerp(0.060, 0.36, bounceDay) * (1 - oc * 0.20) + 0.03,   // night r1: 0.070 -> 0.060
-      lerp(0.150, 0.20, bounceDay) * (1 - oc * 0.10) + 0.03
+      // night w4r3: violet (0.066/0.060/0.150) -> blue-teal via nightBounce
+      lerp(this._nightBounce[0], 0.30, bounceDay) * (1 - oc * 0.25) + 0.02,
+      lerp(this._nightBounce[1], 0.36, bounceDay) * (1 - oc * 0.20) + 0.03,
+      lerp(this._nightBounce[2], 0.20, bounceDay) * (1 - oc * 0.10) + 0.03
     );
 
     this._ambientColor.setRGB(

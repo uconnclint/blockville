@@ -129,13 +129,13 @@ const _colors = {
   resTile: 0xbf8062, resTileDk: 0x8a5646, resQuoin: 0xeedfc4, resButter: 0xeedaa8, resSage: 0xb5c6a4,
   resRoofRed: 0xa0605a, resLawn: 0x95b368,   // coherence 09-25: was 0x9cc77e (rendered mint #b6f888 once the field went back to lime)
   // [commercial]  shops & food (ref05 diner / supermarket, ref02 shop)
-  comRoof: 0xb7bcc2, comFrame: 0x3b4047, comDough: 0xe2a458, comIcing: 0xff8cc6,
+  comRoof: 0x87919b, comFrame: 0x3b4047, comDough: 0xe2a458, comIcing: 0xff8cc6,
   comChoco: 0x6e3b22, comCone: 0xebb86a, comConeDk: 0xc48845, comPatty: 0x5c3420,
   comCheese: 0xffc93c, comLettuce: 0x86d23a, comTerra: 0xd9774e,
   // [downtown]  ref05 bank / hotel / hospital / apartment tower look (r8: dtPad + dtGlassDark lightened — critic r7: ONYX read near-black)
-  dtGlass: 0x4f86bd, dtGlassHi: 0x9ad2f2, dtGlassDeep: 0x2a5b9f, dtGlassTeal: 0x238f9c,
-  dtGlassDark: 0x2b4776, dtGlassGreen: 0x49ae88, dtLime: 0xece5d4, dtLimeShade: 0xd3c6ab,
-  dtTerra: 0xb8645a, dtCopper: 0x5fb9a3, dtPad: 0x3f6b78, dtFrame: 0xf4f5f1,
+  dtGlass: 0x4f86bd, dtGlassHi: 0x9ad2f2, dtGlassDeep: 0x2c5a78, dtGlassTeal: 0x35a0b0,
+  dtGlassDark: 0x2a4a66, dtGlassGreen: 0x49ae88, dtLime: 0xece5d4, dtLimeShade: 0xd3c6ab,
+  dtTerra: 0xb8645a, dtCopper: 0x5fb9a3, dtPad: 0x347a63, dtFrame: 0xf4f5f1,
   dtNavyPanel: 0x34496b, dtStone: 0xc6ccd4,
   // [civic+fun]  ref05 stadium / fire station / monument plaza / pool
   civPitchA: 0x93cc3c, civPitchB: 0x7fbb33, civSeat: 0x3b9de0, civSeatAlt: 0xf26a2b,
@@ -165,8 +165,18 @@ const _colors = {
   // r12: the clad families carry real MASS again, but as mid steel (not r8's
   // muddy navy): steel = mid blue-grey sheet, navy = a blue steel, corr = a
   // light concrete; roof decks are charcoal
-  indSteel: 0x6b7887, indSteelDk: 0x46515f, indNavy: 0x4f5d70, indNavyDk: 0x323d4c,
-  indCorr: 0xd2d8de, indCorrDk: 0x8a9aad, indYard: 0x30363e,   // r11: a step darker (critic r10: ref05's slate roofs + dark yards vs light walls)
+  // w4 r1 (coordinator 22:35, ref05 crop measured: walls light #d8dde0 with
+  // blue panels, roof decks mid grey #8d8f8c–#afbabc, the dark lives in the
+  // roof equipment): steel / navy are LIGHT bodies again (cool grey / pale
+  // blue) whose Dk tones are real blues for pilasters + bands; indYard (every
+  // roof deck) is a mid grey so the charcoal plant reads off it
+  indSteel: 0xbfcad8, indSteelDk: 0x7f95ad, indNavy: 0xc8d6e6, indNavyDk: 0x5f86b5,
+  // w4 r1b (ref05 district crop measured again: roof decks render #50555c–
+  // #8a9096 under charcoal / navy plant; 0x8a929c rendered a pale #c8ccd4 and
+  // the light walls + light roofs read as one white mass): a blue slate deck
+  // w4 r1c (PIL, ref05 factory roofs mean L 92-101; ours measured L 148-157
+  // with 0x5b6571 decks under light indShade pads): a darker slate deck
+  indCorr: 0xd2d8de, indCorrDk: 0x8a9aad, indYard: 0x2b313a,
   // [vegetation]  ref06: lime cuboid canopies, tan-brown trunks, grey rocks
   // Rendered steps (grade compresses albedo steps ~2x): band ~0.85x the leaf,
   // dots ~0.9x (ref06: band #6c930c on #85ab00, dots barely darker than the
@@ -185,7 +195,7 @@ const _colors = {
   // ref06's rendered pixels; band / dots are ~0.6-0.7x the leaf in LINEAR
   // (ref06 band ~0.7-0.8x of its face) instead of r6's 0.3x, which rendered
   // near-black #263e00 on the shade face.
-  vegLeaf: 0xaac80a, vegLeafBand: 0x7a9814, vegLeafDot: 0x76960e,
+  vegLeaf: 0xaac80a, vegLeafBand: 0x72900f, vegLeafDot: 0x76960e,
   vegPine: 0x9cc814, vegPineBand: 0x6d9619, vegPineDot: 0x689216,
   vegBloom: 0xf8a9cc, vegBloomBand: 0xb2527c, vegBloomDot: 0xc86892,
   vegTrunk: 0xb48a60,
@@ -223,6 +233,22 @@ C.win = 200;     PALETTE[200] = 0xffd98a; // warm window
 C.winCool = 201; PALETTE[201] = 0xbfeaff; // cool window
 C.lamp = 202;    PALETTE[202] = 0xffe9a8; // streetlight glow
 C.neon = 203;    PALETTE[203] = 0xff3fb4; // neon sign
+
+// [night] w4: LIT SIGN LETTERS. Twins of the common sign-letter colours at
+// 204+: the SAME day colour, but >= 200 so voxel.js flags them emissive and
+// materials.js lights them after dusk (per building, own colour + bloom).
+// pixelText() and commercial text() route their glyph colour through
+// signLit(); nothing else changes. By day a twin renders as its base colour.
+export const SIGN_LIT = {};
+{
+  let i = 204;
+  for (const k of ['signWhite', 'yellow', 'gold', 'pink', 'red', 'orange', 'teal',
+    'white', 'skyBlue', 'amber', 'blue', 'roofGreen', 'lime', 'cream']) {
+    if (C[k] == null || i > 255) continue;
+    SIGN_LIT[C[k]] = i; PALETTE[i] = PALETTE[C[k]]; i++;
+  }
+}
+export function signLit(c) { const t = SIGN_LIT[c]; return t != null ? t : c; }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -495,6 +521,7 @@ const FONT = {
 // 3 wide + 1 gap, 5 tall. Returns the width in voxels.
 export function pixelText(f, u, y, text, c, out = 2) {
   const s = String(text).toUpperCase();
+  c = signLit(c);   // [night] lit at night, identical by day
   let col = 0;
   for (const ch of s) {
     const gl = FONT[ch] || FONT[' '];
