@@ -383,3 +383,60 @@ Past gaps that several critics agree on: density/detail per tile (r4, r5, r6) an
 2. The condo v1 brick and the tall v0 terracotta pilasters are both strongly orange. If they land side by side, move one to cream/sage.
 3. The townhouse still carries a lot of white (belts, hoods, balustrade). If a critic says "grey/white" again, put the belts in the wall's darker tone.
 4. The small house v1 (pBlue + white quoins) still reads grey-blue. Consider a warmer wall.
+
+## 2026-09-25 — wave 2, round 1 (builder)
+
+(r10's builder left no entry: it moved homes to res 10, rebuilt the small house as a res-12 ref04
+homage with `bigQuoins`/`bigWin`/`bigDoor`/`roofDeck`, set roofs to 45° single courses and cut the
+yard menu to fewer, larger features. Its start file is scratchpad `res/r10-start.js`.)
+
+**Brief (consensus):** fewer but bigger relief trims, warm clean walls, finer window rhythm on
+apartments, lighter varied roofs, dressed lots. Coherence #7: the construction grow stretched the lot.
+
+**Changed.**
+1. **Construction grow keeps the lot flat** (`src/engine.js`, surgical, flagged): `_lotInfo(model)`
+   detects a 0.5-unit plinth (the top plinth layer covers ≥90% of the footprint) and caches a
+   plinth-only model. While `scale.y ≠ 1`, `_growLot` scales the building about the plinth top
+   (−0.01, so there is no z-fight) and adds a counter-scaled child mesh of the plinth. The child is
+   removed at scale 1. `addBuilding` records `userData.baseY`. This works for every res-4+ category
+   with a lot. Verified with every gallery building at 0.35 (`rounds/res/w1-grow`): the lots stay full
+   height and the houses squash above them.
+2. **Apartment:**
+   - chunky 2-proud `bigQuoins` in place of the slim pilasters
+   - 2-proud string courses
+   - a bold crown: a 2-step cornice, a 5-tall proud parapet, a coping and ref04 `postCaps`
+   - windows are now PAIRS of 3-wide recessed panes that share a mullion, in an accent frame ring
+     (terracotta or dark green), with a sill and head per pair. That makes 3 pairs front and back
+     and 2 per side.
+   - one railed balcony per floor that moves between pairs
+   - no blinds, window awnings or AC confetti; one flower box in five
+   - warm bases: the v2 slate is now terracotta, v1 brickDark. v2 has sage walls with cream quoins.
+   - Lesson: single 3-wide windows at a 6-voxel pitch with white frames turned the whole facade
+     white (w1-b). Paired windows need wall piers between them.
+3. **Towers (`towerFloor`, used by the tall apartment and the condo):** the same paired 3-wide
+   rhythm, with no blinds or window awnings and an occasional box or AC unit. Corner balconies span a
+   pair. The tall apartment has bigQuoins instead of pilasters and warm bases (was slate).
+4. **Yards:** the leftover paving is `sand` with `plank` joints every 6 (ref05's farmhouse yard
+   measures #f0cc78-#f0e49c; the plank brick rendered #f0903c and made an orange sea). The raised
+   veg / flower bed frames are woodDark/trunk (C.wood rendered orange).
+5. **Warmer, lighter roofs and walls:** the mansion v0 slate roof → red, with cream quoins and
+   terracotta frames (it read as a grey-white pile). Cabin v1 logs plank → woodDark/trunkDark, and
+   the porch deck plank → wood.
+   - GOTCHA: on the narrow house bodies the 2-proud quoins cover most of each face, so white quoins
+     make a house read grey-white. I tried this on the duplex v2 and big house v1 and reverted.
+     Also, `peach` and `resButter` walls render near-neutral grey; `cream` renders ref05's warm tan.
+
+**Measured.**
+- `_selfTest` ok, all modules parse, 0 console errors on all four shots.
+- Tris (tri9, same mesher): apartment 17.9k → 19.0k, tall 29.8k → 34.6k (the quoins), condo
+  64.0k → 59.1k. Other types ±0.5%.
+- Shot tris: gal-homes-1 259k, gal-homes-2 425k, one-small-house 161k, one-apartment 191k.
+- FPS 15-45 under load average 19 from the other builders' Chromes: noise.
+- Shots are in `rounds/res/r1-builder`, with iterations in `w1-before`, `w1-a`, `w1-b` and `w1-c`.
+
+**Next.**
+1. Townhouse and duplex still carry r9 slim pilasters or small quoins plus rustication. Give them
+   the apartment's crown + paired windows.
+2. The tall apartment and condo roofs could get the bold parapet + post caps too.
+3. The cabin is still the most orange lot. Consider a stone porch.
+4. Check the grow child mesh against a 4×4 res-2 model (L = 0) when one exists.

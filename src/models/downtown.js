@@ -1082,9 +1082,19 @@ function streetPodium(g, P, Y, o) {
   const H = o.h || 32, wall = o.wall, pier = o.pier != null ? o.pier : C.dtFrame;
   const plinth = o.plinth != null ? o.plinth : C.stoneDark, fascia = o.fascia != null ? o.fascia : C.darkGray;
   const glass = o.glass != null ? o.glass : C.dtGlass, upG = o.upperGlass != null ? o.upperGlass : C.dtGlassDeep;
-  const bw = o.bw || 7, pw = o.pw != null ? o.pw : 2, cw = o.cw != null ? o.cw : 3;
+  const gl = o.ground === 'glass', bw = o.bw || (gl ? 5 : 7), pw = o.pw != null ? o.pw : (gl ? 1 : 2), cw = o.cw != null ? o.cw : (gl ? 1 : 3);
   const gy0 = Y + 2, gt = Y + 13, fa = gt + 1, fb = gt + 3, ut = Y + H - 5, top = ut + 3;
   const modern = o.style === 'modern', cols = o.signCols || SIGN_COLS();
+  // (w10) the ground storey comes in four kinds so no two towers share a base
+  // (coordinator: "every tower needs a DISTINCT 1-2 storey podium"):
+  //   'shop'      shopfronts under a sign fascia with boards + awnings (default)
+  //   'arcade'    round-arched openings, deep dark glass, keystones, lanterns
+  //   'colonnade' a two-storey giant order: square columns with bases +
+  //               capitals in front of a 2-deep dark glass hall (no fascia)
+  //   'glass'     a two-storey glass lobby wall behind slim fins, with a
+  //               cantilevered canopy band across every face
+  const ground = o.ground || 'shop', tall = ground === 'colonnade' || ground === 'glass';
+  const colC = o.colC != null ? o.colC : (ground === 'glass' ? C.dtFrame : pier);
   shell(g, P, Y, ut + 2, wall, o.roof != null ? o.roof : C.roofGray);
   // a floor slab inside: a recess opened in the 1-thick shell (the portico's
   // 2-deep lobby) would otherwise leak the hollow through its floor and the
@@ -1098,15 +1108,77 @@ function streetPodium(g, P, Y, o) {
     const first = us[0], last = us[us.length - 1] + bw - 1;
     // corner piers in the podium material (the diagonal voxel too, so the
     // corners stay square) with trim-coloured quoins every 4 rows
-    S.f.box(S.u0 - 1, gy0, 1, first - 1, ut, 1, wall);
-    S.f.box(last + 1, gy0, 1, S.u1 + 1, ut, 1, wall);
-    for (let y = gy0 + 1; y < ut - 1; y += 4) { S.f.box(S.u0 - 1, y, 1, S.u0 + 1, y + 1, 1, pier); S.f.box(S.u1 - 1, y, 1, S.u1 + 1, y + 1, 1, pier); }
-    // continuous sign fascia across the bays
-    S.f.box(first, fa, 0, last, fb, 1, fascia);
-    S.f.box(first, fb + 1, 1, last, fb + 1, 1, pier);
+    S.f.box(S.u0 - 1, gy0, 1, first - 1, ut, 1, ground === 'colonnade' ? colC : wall);
+    S.f.box(last + 1, gy0, 1, S.u1 + 1, ut, 1, ground === 'colonnade' ? colC : wall);
+    if (!tall) for (let y = gy0 + 1; y < ut - 1; y += 4) { S.f.box(S.u0 - 1, y, 1, S.u0 + 1, y + 1, 1, pier); S.f.box(S.u1 - 1, y, 1, S.u1 + 1, y + 1, 1, pier); }
+    // continuous sign fascia across the bays (shops), an impost band (arcade)
+    if (ground === 'shop') {
+      S.f.box(first, fa, 0, last, fb, 1, fascia);
+      S.f.box(first, fb + 1, 1, last, fb + 1, 1, pier);
+    } else if (ground === 'arcade') S.f.box(S.u0 - 1, fb + 1, 1, S.u1 + 1, fb + 1, 1, pier);
     us.forEach((u, i) => {
       const u1 = u + bw - 1, mid = (u + u1) >> 1;
       const kept = S.s === 'f' && o.skipF && u1 >= o.skipF[0] - 1 && u <= o.skipF[1] + 1;
+      if (ground !== 'shop') {
+        const col = cols[n++ % cols.length];
+        if (ground === 'arcade' && !kept) {
+          // round-arched opening, dark glass 2 back behind cheeks, a lit
+          // fanlight, a keystone; alternate bays get a lantern on the pier
+          alcove(S.f, u, u1, gy0, fb - 1, 2, o.glass != null ? o.glass : C.dtGlassDark, wall);
+          S.f.box(u, fb - 4, -2, u1, fb - 1, -2, C.winCool);
+          S.f.box(u, fb - 5, -2, u1, fb - 5, -2, C.dtFrame);
+          S.f.box(mid, gy0, -2, mid, fb - 5, -2, C.dtFrame);
+          S.f.box(u, fb - 1, 0, u + 1, fb - 1, 0, wall); S.f.box(u1 - 1, fb - 1, 0, u1, fb - 1, 0, wall);
+          S.f.box(u, fb - 2, 0, u, fb - 2, 0, wall); S.f.box(u1, fb - 2, 0, u1, fb - 2, 0, wall);
+          S.f.box(mid - 1, fb, 1, mid + 1, fb + 1, 1, pier);
+          S.f.box(u, gy0, 1, u1, gy0, 1, C.stoneDark);                         // threshold
+          if (i % 2 === 0 && bw >= 7) S.f.box(mid, gy0 + 1, -1, mid, gy0 + 1, -1, col);   // shop display
+        } else if (tall) {
+          // two-storey recess: dark glass hall (colonnade) or a light curtain
+          // wall (glass); a mezzanine slab line at the fascia level
+          const ya = kept ? fb + 2 : gy0;
+          const back = ground === 'glass' ? (o.glass != null ? o.glass : C.dtGlass) : (o.glass != null ? o.glass : C.dtGlassDark);
+          if (ground === 'colonnade') alcove(S.f, u, u1, ya, ut - 3, 2, back, wall);
+          else { S.f.clear(u, ya, 0, u1, ut - 1, 0); S.f.box(u, ya, -1, u1, ut - 1, -1, back); }
+          const d = ground === 'colonnade' ? -2 : -1;
+          if (!kept) S.f.box(u, fa, d, u1, fa, d, ground === 'glass' ? C.dtFrame : C.dtNavyPanel);
+          for (let m = u + 2; m < u1 - 1; m += 3) S.f.box(m, ya, d, m, ground === 'colonnade' ? ut - 3 : ut - 1, d, ground === 'glass' ? C.metal : C.dtFrame);
+          S.f.box(u, (ground === 'colonnade' ? ut - 3 : ut - 1) - 2, d, u1, ground === 'colonnade' ? ut - 3 : ut - 1, d, C.winCool);
+          if (!kept) {
+            S.f.box(u, gy0, d, u1, gy0, d, C.darkGray);
+            S.f.box(u, gt - 3, d, u1, gt - 2, d, C.winCool);
+            // ground-floor doors every other bay (a shop / lobby entrance)
+            if (i % 2 === 1) { S.f.box(mid - 1, gy0 + 1, d, mid + 1, gy0 + 8, d, C.dtGlassDark); S.f.box(mid, gy0 + 1, d, mid, gy0 + 8, d, C.dtFrame); }
+          }
+        }
+        if (ground === 'glass' && !kept) {
+          // cantilevered canopy over the ground storey + a slim sign board
+          S.f.box(u - 1, fa, 1, u1 + 1, fa, 3, C.dtFrame);
+          S.f.box(u - 1, fa + 1, 3, u1 + 1, fa + 1, 3, o.canopyC != null ? o.canopyC : C.dtGlassHi);
+          if (i % 2 === 0) { S.f.box(u + 1, fa + 2, 1, u1 - 1, fa + 4, 1, col); S.f.box(u + 2, fa + 3, 1, u1 - 2, fa + 3, 1, C.signWhite); }
+        }
+        // piers: full height (arcade), columns with base + capital
+        // (colonnade) or slim proud fins (glass)
+        if (i < us.length - 1) {
+          const pa = u1 + 1, pb = us[i + 1] - 1;
+          if (ground === 'colonnade') {
+            S.f.box(pa, gy0, 1, pb, ut - 2, 1, colC);
+            S.f.box(pa - 1, gy0, 1, pb + 1, gy0 + 1, 2, C.stoneDark);
+            S.f.box(pa - 1, ut - 3, 1, pb + 1, ut - 2, 2, colC);
+          } else if (ground === 'glass') S.f.box(pa, gy0, 1, pb, ut - 1, 2, colC);
+          else S.f.box(pa, gy0, 1, pb, ut, 1, wall);
+        }
+        if (ground === 'arcade' && !(kept && o.skipUpper)) {
+          const a = u + 1, b = u1 - 1, y0 = fb + 3, y1 = ut - 1;
+          S.f.clear(a, y0, 0, b, y1, 0);
+          S.f.box(a, y0, -1, b, y1, -1, upG);
+          S.f.box(a, y1 - 2, -1, b, y1, -1, C.winCool);
+          S.f.box((a + b) >> 1, y0, -1, (a + b) >> 1, y1, -1, C.dtFrame);
+          S.f.box(a - 1, y1 + 1, 0, b + 1, y1 + 1, 1, pier);
+          S.f.box(a - 1, y0 - 1, 0, b + 1, y0 - 1, 1, pier);
+        }
+        return;
+      }
       if (!kept) {
         // (1 deep: a 2-deep alcove with cheeks cost ~2x; the fascia and
         // awning above already cast the shadow line)
@@ -1204,6 +1276,29 @@ function portico(g, zf, o) {
       g.box(xa, y, lz0, xa, y, zf - 1, roofC); g.box(xb, y, lz0, xb, y, zf - 1, roofC);
       g.set(xa, y, lz0 - 1, stone); g.set(xb, y, lz0 - 1, stone);
     }
+  } else if (kind === 'marquee') {
+    // (w10) theatre marquee (deco / ONYX): a deep canopy whose fascia wraps
+    // three sides, a row of bulbs top + bottom, the name in lit letters
+    const fc = fascia, bulb = o.bulb != null ? o.bulb : C.lamp;
+    g.box(lx0, ry, lz0, lx1, ry, zf - 1, frame);
+    g.walls(lx0 - 1, ry + 1, lz0 - 1, lx1 + 1, ry + 9, zf - 1, fc);
+    g.box(lx0, ry + 9, lz0, lx1, ry + 9, zf - 1, frame);
+    for (let x = lx0 - 1; x <= lx1 + 1; x += 2) for (const y of [ry + 1, ry + 9]) g.set(x, y, lz0 - 2, bulb);
+    for (let z = lz0 + 1; z < zf - 1; z += 2) for (const x of [lx0 - 2, lx1 + 2]) { g.set(x, ry + 1, z, bulb); g.set(x, ry + 9, z, bulb); }
+    if (o.text) text5(facade(g, 'front', lz0 - 1), o.xc, ry + 2, o.text, o.textC != null ? o.textC : C.gold, 1, 1);
+    // a vertical blade sign over the marquee
+    const bx = lx1 - 1;
+    g.box(bx, ry + 10, lz0 + 1, bx + 1, ry + 34, lz0 + 5, fc);
+    for (let y = ry + 12; y < ry + 33; y += 4) { g.set(bx - 1, y, lz0 + 3, bulb); g.set(bx + 2, y, lz0 + 3, bulb); }
+    g.box(bx, ry + 35, lz0 + 1, bx + 1, ry + 35, lz0 + 5, frame);
+  } else if (kind === 'pergola') {
+    // (w10) timber pergola with climbing plants (eco tower): slatted beams,
+    // hedges hung along the top, the name in green letters standing on it
+    g.box(lx0, ry, lz0, lx1, ry, lz0, C.woodDark); g.box(lx0, ry, zf - 1, lx1, ry, zf - 1, C.woodDark);
+    for (let x = lx0; x <= lx1; x += 2) g.box(x, ry + 1, lz0 - 1, x, ry + 1, zf - 1, C.wood);
+    for (let x = lx0 + 1; x <= lx1; x += 4) g.box(x, ry + 2, lz0, x + 1, ry + 2, zf - 2, C.bush);
+    g.box(lx0, ry + 1, lz0 - 1, lx0, ry + 3, lz0 + 1, C.leafMid); g.box(lx1, ry + 1, lz0 - 1, lx1, ry + 3, lz0 + 1, C.leafMid);
+    if (o.text) { text5(facade(g, 'front', lz0 + 1), o.xc, ry + 3, o.text, o.textC != null ? o.textC : C.roofGreen, 0, 1); text5(facade(g, 'front', lz0 + 2), o.xc, ry + 3, o.text, o.textC != null ? o.textC : C.roofGreen, 0, 1); }
   } else {
     g.box(lx0, ry, lz0, lx1, ry + 1, zf - 1, frame);
     if (kind === 'glass') {
@@ -1211,7 +1306,16 @@ function portico(g, zf, o) {
       g.walls(lx0, ry + 2, lz0, lx1, ry + 2, zf - 1, frame);
     }
     g.box(lx0, ry, lz0 - 1, lx1, ry + 2, lz0 - 1, fascia);            // fascia front edge
-    if (o.text) {
+    if (o.text && o.sign === 'letters') {
+      // (w10) free-standing letters on the canopy (ref05 HOTEL / POLICE
+      // STATION): 2 deep, lit colour, a thin dark rail under them — the
+      // black sign box repeated on every tower read as one template
+      const tc = o.textC != null ? o.textC : C.signWhite;
+      text5(facade(g, 'front', lz0 + 1), o.xc, ry + 3, o.text, tc, 0, 1);
+      text5(facade(g, 'front', lz0 + 2), o.xc, ry + 3, o.text, tc, 0, 1);
+      const TW = o.text.length * 6 - 1;
+      g.box(o.xc - (TW >> 1) - 1, ry + 2, lz0 + 1, o.xc + (TW >> 1) + 1, ry + 2, lz0 + 2, C.darkGray);
+    } else if (o.text) {
       const TW = o.text.length * 6 - 1, hw = Math.max(5, (TW + 5) >> 1);
       g.box(o.xc - hw, ry + 3, lz0 - 1, o.xc + hw, ry + 11, lz0, fascia);
       g.box(o.xc - hw, ry + 11, lz0 - 1, o.xc + hw, ry + 11, lz0, frame);
@@ -1240,7 +1344,7 @@ const GLASS = [C.dtGlass, C.dtGlassDeep, C.dtGlassTeal];
 // cornice, parapet, a rooftop billboard, lift house, condensers, water tank.
 function bSmallOffice(rng, v) {
   const sk = (v + ((rng() * 3) | 0)) % 3;
-  const [wall, stone, trim] = [[C.brick, C.dtLime, C.stoneDark], [C.dtStone, C.dtFrame, C.dtNavyPanel],
+  const [wall, stone, trim] = [[C.resTerracotta, C.cream, C.brickDark], [C.dtStone, C.dtFrame, C.dtNavyPanel],
     [C.brickDark, C.dtLimeShade, C.darkGray]][sk];
   const nf = 3 + v;
   const g = grid(31, 160, 31, R);
@@ -1248,7 +1352,7 @@ function bSmallOffice(rng, v) {
   const B = box(4, 10, 26, 28), O = ins(B, -1), P = box(2, 8, 28, 29);
   // (r9) a two-storey street podium in a contrasting material + a portico
   const [pw0, pp0, pf0] = [POD.lime, POD.brick, POD.sand][sk]();
-  const gt = streetPodium(g, P, Y, { wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: v }) - 2, st = gt + 2 + FL * nf;
+  const gt = streetPodium(g, P, Y, { ground: 'colonnade', colC: [C.dtLime, C.cream, C.dtFrame][sk], wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: v }) - 2, st = gt + 2 + FL * nf;
   shell(g, B, gt + 2, st, wall, C.roofGray);
   portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'temple', colC: pp0, stone: C.dtLimeShade, roofC: trim, text: pk(rng, ['LAW', 'CITY', 'POST']), textC: C.dtNavyPanel });
   // shaft: oriel bay on the front, framed punched windows, quoins
@@ -1289,18 +1393,18 @@ function bSmallOffice(rng, v) {
 // condensers, a mast.
 function bGlassOffice(rng, v) {
   const glass = pk(rng, [[C.dtGlassDeep, C.dtGlass, C.dtGlassHi], [C.dtGlassDark, C.dtGlassTeal, C.dtGlassHi], [C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi]]);
-  const wall = [C.dtLime, C.dtStone, C.resSage][(v + ((rng() * 3) | 0)) % 3];   // r9: warmer shafts (critic r8: monochrome blue/grey)
+  const wall = [C.dtLimeShade, C.dtGlassDeep, C.dtGlassTeal][v % 3];   // w10: a teal-clad tower (brief: brick / terracotta / teal / dark glass)   // r9: warmer shafts (critic r8: monochrome blue/grey)
   const nf = 5 + v;
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
   const B = box(6, 10, 25, 28), P = box(2, 8, 28, 29);
   // (r9) modern street podium (glass ribbon upper storey) + glass portico
   const [pw0, pp0, pf0] = [POD.terra, POD.teal, POD.slate][v % 3]();
-  const bt = streetPodium(g, P, Y, { wall: pw0, pier: pp0, fascia: pf0, style: 'modern', upperGlass: glass[0], skipF: [8, 22], seed: 3 + v }) - 1, top = bt + 1 + FL * nf;
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: pf0, text: pk(rng, ['CORP', 'MEDIA', 'CITY']) });
+  const bt = streetPodium(g, P, Y, { ground: 'glass', wall: pw0, pier: pp0, fascia: pf0, style: 'modern', glass: glass[1], skipF: [8, 22], seed: 3 + v }) - 1, top = bt + 1 + FL * nf;
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: pf0, sign: 'letters', textC: C.yellow, text: pk(rng, ['CORP', 'MEDIA', 'CITY']) });
   // shaft
   shell(g, B, bt + 1, top, wall, C.roofGray);
-  framedBays(g, B, 'fblr', { y0: bt + 1, y1: top - 1, bw: 5, pw: 1, cw: 1, pd: 1, cpd: 2, pierC: wall, spand: C.dtGlassDeep, inset: 0, sillC: null, deep: false, ledgeC: wall, ledgeOut: 1,
+  framedBays(g, B, 'fblr', { y0: bt + 1, y1: top - 1, bw: 5, pw: 1, cw: 1, pd: 1, cpd: 2, pierC: wall, spand: C.dtGlassDeep, inset: 0, sillC: null, deep: false, ledgeC: C.dtFrame, ledgeOut: 1,
     sill: 2, wh: 9, glassFn: skyGlass(SKY, nf, 6), sheen: C.dtGlassHi, hi: C.winCool, bandEvery: 3, bandOut: 2, bandH: 2, bandC: wall,
     ac: (S, k, r) => S.s !== 'f' && ((k * 3 + r * 5) % 7) === 2 });
   notch(g, B, box(B.x1 - 5, B.z0, B.x1, B.z0 + 5), bt + 1, top - 1, { floor: FL, back: C.dtGlassDeep, slab: wall, plants: true });
@@ -1342,7 +1446,7 @@ function bBrickHighrise(rng, v) {
   const [pw0, pp0, pf0] = [POD.lime, POD.sand, POD.teal][v % 3]();
   const bt = streetPodium(g, P, Y, { wall: pw0, pier: pp0 === C.dtFrame ? C.dtLimeShade : pp0, fascia: pf0, skipF: [8, 22], seed: 5 + v, cornC: stone }) - 2, top = bt + 2 + FL * nf;
   shell(g, B, bt, top, brick, C.roofGray);
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, frame: C.gold, glassTop: C.dtCopper, fascia: C.darkGray, text: 'APTS', textC: C.gold });
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, frame: C.gold, glassTop: C.dtCopper, fascia: C.darkGray, sign: 'letters', text: 'APTS', textC: C.gold });
   // shaft: bay-window stack on the front, paired punched windows
   const Bw = box(11, B.z0 - 3, 19, B.z1);
   g.box(11, bt + 2, B.z0 - 3, 19, top - 1, B.z0, brick);
@@ -1394,7 +1498,7 @@ function bDecoTower(rng, v) {
   // (r9) street podium in a contrasting material under stage one
   const [pw0, pp0, pf0] = [POD.teal, POD.brick, POD.deepBrick][v % 3]();
   const P = box(3, 8, 27, 29);
-  let y0 = streetPodium(g, P, Y, { wall: pw0, pier: C.gold === pp0 ? C.cream : pp0, fascia: pf0, skipF: [8, 22], seed: 1 + v, cornC: C.gold });
+  let y0 = streetPodium(g, P, Y, { ground: 'arcade', wall: pw0, pier: C.gold === pp0 ? C.cream : pp0, fascia: pf0, skipF: [8, 22], seed: 1 + v, cornC: C.gold });
   for (let i = 0; i < stages.length; i++) {
     const [B, yt] = stages[i];
     shell(g, B, y0, yt, stone, stone);
@@ -1412,7 +1516,7 @@ function bDecoTower(rng, v) {
     void O;
   }
   // base: gold-framed glass portico on the podium
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.gold, frame: C.gold, glassTop: C.dtGlassTeal, fascia: C.black, text: 'DECO', textC: C.gold, mat: C.navy });
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'marquee', colC: C.gold, frame: C.gold, fascia: C.dtNavyPanel, text: 'DECO', textC: C.gold, mat: C.navy });
   // crown: stepped gold/stone fins + spire
   const top = y0, Bt = stages[2][0];
   for (let k = 0; k < 4; k++) g.walls(Bt.x0 + 1 + k, top + k * 3, Bt.z0 + 1 + k, Bt.x1 - 1 - k, top + k * 3 + 2, Bt.z1 - 1 - k, k % 2 ? stone : C.gold);
@@ -1439,9 +1543,9 @@ function bGreenGlassTower(rng, v) {
   // (r9) a warm street podium (brick / sandstone / terracotta, arched upper
   // storey) + a glass portico; the balcony tower rises from its roof
   const [pw0, pp0, pf0] = [POD.brick, POD.sand, POD.terra][v % 3]();
-  const bt = streetPodium(g, P, Y, { wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: 2 + v }) - 1, top = bt + FL * nf;
+  const bt = streetPodium(g, P, Y, { ground: 'glass', canopyC: C.bush, glass: C.dtGlassGreen, wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: 2 + v }) - 1, top = bt + FL * nf;
   shell(g, B, bt, top, C.dtFrame, C.lotGrass);
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassGreen, fascia: C.roofGreen, text: 'ECO' });
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'pergola', colC: C.wood, fascia: C.roofGreen, text: 'ECO', textC: C.signWhite, mat: C.roofGreen });
   // shaft: glass ribbons, balconies on front + right, sunshades behind
   ribbons(g, B, 'fblr', { y0: bt + 1, y1: top - 1, floor: FL, sill: 1, wh: 10, d: 1, cw: 1, pitch: 4, glassFn: skyGlass(glass, nf, 7), hiRows: 1 });
   for (let i = 0, y = bt; y < top; y += FL, i++) {
@@ -1478,24 +1582,20 @@ function bGreenGlassTower(rng, v) {
 // TOP: a clock stage with a clock on every face, dentils + cornice, corner
 // pinnacles, an arcaded lantern and a roof in the accent colour + finial.
 function bClockTower(rng, v) {
-  const [stone, shade, roofC] = [[C.dtStone, C.stone, C.dtCopper], [C.brick, C.cream, C.roofBlue],
-    [C.cream, C.sandDark, C.roofRed]][(v + ((rng() * 3) | 0)) % 3];
+  const k0 = (v + ((rng() * 3) | 0)) % 3;
+  const [stone, shade, roofC] = [[C.dtStone, C.stone, C.dtCopper], [C.dtLime, C.dtLimeShade, C.roofGreen],
+    [C.cream, C.sandDark, C.roofRed]][k0];
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
   g.box(10, 1, 1, 20, 1, 5, C.lotPaveDark);
   const B = box(7, 12, 23, 28), O = ins(B, -2);
-  const bt = Y + 20, nf = 3 + v, st = bt + 2 + FL * nf, ct = st + 22;
-  // base: glass hall behind a colonnade, podium slab over the columns
-  const H = ins(B, 2);
-  shell(g, H, Y, bt, C.dtGlassDark, C.roofGray);
-  for (const S of sides(g, H)) { for (let u = S.u0 + 1; u < S.u1; u += 4) S.f.box(u, Y, 0, u, bt - 3, 0, C.dtNavyPanel); S.f.box(S.u0, bt - 7, 0, S.u1, bt - 3, 0, C.dtGlassTeal); }
-  const C0 = ins(B, -2);
-  for (const S of sides(g, C0)) for (const u of bays(S.u0, S.u1, 0, 5, 2)) S.f.box(u, Y + 1, 0, u + 1, bt - 3, -1, stone);
-  g.box(C0.x0 - 1, Y, C0.z0 - 1, C0.x1 + 1, Y, C0.z1, shade);
-  g.box(C0.x0, bt - 2, C0.z0, C0.x1, bt, C0.z1, stone);
-  course(g, C0, bt, shade, 1, 1, 0);
-  g.box(10, Y, 5, 20, Y, C0.z0 - 1, shade); g.box(11, Y + 1, C0.z0 - 1, 19, Y + 1, C0.z0 + 1, shade);
-  door(facade(g, 'front', H.z0), 12, Y + 1, 7, 12, { color: C.woodDark, glass: C.win, frame: C.gold, double: true, step: null });
+  // (w10) base: a two-storey colonnade podium (giant order in front of a dark
+  // glass hall) + a temple portico over a broad stair — the old red column
+  // cage read as "pipes on a thin plinth", not a civic base
+  const k = k0, P = box(3, 9, 27, 29);
+  const bt = streetPodium(g, P, Y, { ground: 'colonnade', colC: [C.dtFrame, C.cream, C.dtLime][k], wall: shade, pier: stone, skipF: [8, 22], seed: 5 + v, cornC: stone }) - 1;
+  const nf = 3 + v, st = bt + 2 + FL * nf, ct = st + 22;
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'temple', colC: [C.dtFrame, C.cream, C.dtLime][k], stone: C.dtLimeShade, roofC, text: 'TOWN', textC: C.dtNavyPanel });
   // shaft
   shell(g, B, bt + 1, ct, stone, C.roofGray);
   punch(g, B, 'fblr', { y0: bt + 2, y1: st - 1, floor: FL, sill: 3, wh: 7, w: 3, pitch: 5, margin: 3,
@@ -1534,7 +1634,10 @@ function bClockTower(rng, v) {
 // Round Tower — glass drum with white floor ribbons on a round podium,
 // crown ring, drum + dome + beacon mast.
 function bRoundTower(rng, v) {
-  const glass = pk(rng, GLASS);
+  const glass = [C.dtGlass, C.dtGlassTeal, C.dtGlassDeep][v % 3]; void pk(rng, GLASS);
+  // (w10) per-variant slab colour: white / terracotta / cream (the drum was
+  // one blue-and-white stripe in every variant, repeated 4x in iso-mid)
+  const slabC = [C.dtFrame, C.resTerracotta, C.cream][v % 3];
   const nf = 6 + v;
   const g = grid(31, 192, 31, R);
   const Y = lotPlinth(g, 0, 0, 30, 30);
@@ -1551,26 +1654,26 @@ function bRoundTower(rng, v) {
   // a tiny plinth) — terracotta / cream / teal, arched upper storey, portico
   const P = box(3, 7, 27, 29);
   const [pw0, pp0, pf0] = [POD.terra, POD.cream, POD.teal][v % 3]();
-  const y0 = streetPodium(g, P, Y, { wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: 4 + v });
-  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'slab', colC: C.dtFrame, fascia: pf0, text: ['ORBIT', 'HALO', 'ROUND'][v % 3], planters: false });
+  const y0 = streetPodium(g, P, Y, { ground: 'arcade', wall: pw0, pier: pp0, fascia: pf0, skipF: [8, 22], seed: 4 + v });
+  portico(g, P.z0, { Y, xc: 15, w: 9, depth: 5, kind: 'slab', colC: C.dtFrame, fascia: pf0, sign: 'letters', textC: C.yellow, text: ['ORBIT', 'HALO', 'ROUND'][v % 3], planters: false });
   const top = y0 + FL * nf;
   disc(10, y0, top, (e, y) => {
     if (!e) return y === top ? C.roofGray : null;
     const k = (y - y0) % FL;
-    return k < 3 ? C.dtFrame : (k >= FL - 2 ? C.winCool : glass);
+    return k < 3 ? slabC : (k >= FL - 2 ? C.winCool : glass);
   });
   // mullions: eight vertical white lines
-  for (let y = y0; y < top; y++) for (const [x, z] of [[0, -10], [0, 10], [-10, 0], [10, 0], [-7, -7], [7, -7], [-7, 7], [7, 7]]) g.set(cx + x, y, cz + z, C.dtFrame);
+  for (let y = y0; y < top; y++) for (const [x, z] of [[0, -10], [0, 10], [-10, 0], [10, 0], [-7, -7], [7, -7], [-7, 7], [7, 7]]) g.set(cx + x, y, cz + z, slabC);
   // proud floor slabs; every third one a balcony ring with a glass rail, and
   // a vertical glass fin up the front (critic: "a uniform striped drum")
   for (let y = y0 + FL, i = 1; y < top - 2; y += FL, i++) {
-    if (i % 3 === 0) { disc(12, y, y, (e) => (e ? C.dtFrame : null)); disc(12, y + 1, y + 2, (e) => (e ? C.dtGlassHi : null)); disc(12, y + 3, y + 3, (e) => (e ? C.dtFrame : null)); }
-    else disc(11, y, y, (e) => (e ? C.dtFrame : null));
+    if (i % 3 === 0) { disc(12, y, y, (e) => (e ? slabC : null)); disc(12, y + 1, y + 2, (e) => (e ? C.dtGlassHi : null)); disc(12, y + 3, y + 3, (e) => (e ? slabC : null)); }
+    else disc(11, y, y, (e) => (e ? slabC : null));
   }
-  for (let y = y0; y < top + 6; y++) { g.box(cx - 1, y, cz - 12, cx + 1, y, cz - 11, y % 6 < 1 ? C.dtFrame : C.dtGlassTeal); }
-  disc(11, top - 1, top, (e) => (e ? C.dtFrame : null));
+  for (let y = y0; y < top + 6; y++) { g.box(cx - 1, y, cz - 12, cx + 1, y, cz - 11, y % 6 < 1 ? slabC : C.dtGlassTeal); }
+  disc(11, top - 1, top, (e) => (e ? slabC : null));
   disc(11, top + 1, top + 2, (e) => (e ? C.dtGlassHi : null));
-  disc(7, top + 1, top + 8, (e, y) => (e ? (y > top + 3 ? glass : C.dtFrame) : (y === top + 8 ? C.dtFrame : null)));
+  disc(7, top + 1, top + 8, (e, y) => (e ? (y > top + 3 ? glass : slabC) : (y === top + 8 ? slabC : null)));
   for (let k = 0; k < 5; k++) disc(6 - k, top + 9 + k, top + 9 + k, () => C.metal);
   mast(g, cx, cz, top + 14, 12);
   // lot
@@ -1672,7 +1775,7 @@ function bHotel(rng, v) {
 // granite lobby storey, a projecting glass stair tower with the CITY sign,
 // a lower wing with a roof terrace, penthouse + solar; side car park.
 function bOfficeBlock(rng, v) {
-  const [wall, band] = [[C.dtFrame, C.dtTerra], [C.resSlate, C.dtCopper]][v % 2];   // r8: no navy spandrels   // r6: per-variant material
+  const [wall, band] = [[C.dtFrame, C.dtTerra], [C.cream, C.dtGlassTeal]][v % 2];   // w10: cream + teal (v1 was a grey slab)   // r8: no navy spandrels   // r6: per-variant material
   const glass = pk(rng, [[C.dtGlassDeep, C.dtGlass, C.dtGlassHi], [C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi]]);
   const g = grid(63, 256, 31, R);
   const Y = lotPlinth(g, 0, 0, 62, 30);
@@ -1683,7 +1786,7 @@ function bOfficeBlock(rng, v) {
   // windows / teal with a glass ribbon) + a columned portico under the stair bay
   const Pd = box(20, 9, 61, 29);
   const [pw0, pp0, pf0] = [POD.brick, POD.teal][v % 2]();
-  const gt = streetPodium(g, Pd, Y, { wall: pw0, pier: pp0, fascia: pf0, style: v % 2 ? 'modern' : 'arch', skipF: [38, 54], seed: 6 + v }) - 1, top = gt + FL * nf, wt = top - FL * 2;
+  const gt = streetPodium(g, Pd, Y, { ground: v % 2 ? 'glass' : 'arcade', wall: pw0, pier: pp0, fascia: pf0, style: v % 2 ? 'modern' : 'arch', skipF: [38, 54], seed: 6 + v }) - 1, top = gt + FL * nf, wt = top - FL * 2;
   const M = box(34, 11, 59, 27), W = box(21, 12, 34, 27);
   shell(g, M, gt, top, wall, C.roofGray);
   shell(g, W, gt, wt, wall, C.lotGrass);
@@ -1704,7 +1807,7 @@ function bOfficeBlock(rng, v) {
   shell(g, Fb, gt, top + 6, wall, C.roofGray);
   ribbons(g, Fb, 'flr', { y0: gt + 1, y1: top + 3, floor: FL, sill: 1, wh: 10, d: 1, cw: 1, pitch: 3, glassFn: skyGlass([C.dtGlassDeep, C.dtGlassTeal, C.dtGlassHi], nf + 1), hiRows: 1, mullC: wall });
   g.box(Fb.x0, gt - 1, Fb.z0, Fb.x1, gt - 1, Pd.z0 - 1, wall);
-  portico(g, Pd.z0, { Y, xc: 46, w: 9, depth: 6, kind: 'slab', cols: 4, fascia: band, colC: pp0 === C.dtFrame ? C.dtFrame : C.cream, stone: C.dtLimeShade, roofC: band, text: 'CITY', textC: C.dtNavyPanel });
+  portico(g, Pd.z0, { Y, xc: 46, w: 9, depth: 6, kind: 'slab', cols: 4, fascia: band, colC: pp0 === C.dtFrame ? C.dtFrame : C.cream, stone: C.dtLimeShade, roofC: band, sign: 'letters', text: 'CITY', textC: C.yellow });
   // wing roof terrace
   parapetOn(g, W, wt + 1, 1, C.dtGlassHi, null);
   umbrella(g, 26, wt + 1, 13, C.red, C.signWhite); umbrella(g, 27, wt + 1, 22, C.teal, C.signWhite);
@@ -1819,8 +1922,12 @@ function bGlassSkyscraper(rng, v) {
   // for). The fins between the slots are blue glass (v1: teal), so the shaft
   // reads as one tinted curtain wall; white only on the corner piers, the
   // sky-lobby bands and the cornices. The glass lightens up the height.
-  const [fin, spandG, tones, pierS] = [[C.dtGlassDeep, C.dtGlassDeep, [C.dtGlass, C.dtGlass, C.dtGlassHi, C.dtGlassHi], C.dtStone],
-    [C.dtGlassTeal, C.dtGlassTeal, [C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi, C.dtGlassHi], C.dtLime]][v % 2];
+  // (w10) a DARK-GLASS tower: glass-coloured pilasters + spandrels, so the
+  // shaft reads as one deep-blue (v1 teal) curtain wall ruled by white frames
+  // and a white ledge on every floor (SKY, SPIRE and BLOX were three pale
+  // grey-white shafts side by side)
+  const [fin, spandG, tones, pierS] = [[C.dtGlassDeep, C.dtGlassDark, [C.dtGlass, C.dtGlass, C.dtGlassHi, C.dtGlassHi], C.dtGlassDeep],
+    [C.dtGlassTeal, C.dtGlassTeal, [C.dtGlass, C.dtGlass, C.dtGlassHi, C.dtGlassHi], C.dtGlassTeal]][v % 2];
   const wall = C.dtFrame;
   const g = grid(63, 256, 63, R);
   const Y = lotPlinth(g, 0, 0, 62, 62);
@@ -1829,9 +1936,9 @@ function bGlassSkyscraper(rng, v) {
   // (r9) a warm two-storey street podium (terracotta glass-ribbon / brick
   // arcade) with shop signs + awnings, and a teal-glass portico on columns
   const [pw0, pp0, pf0] = [POD.terra, POD.brick][v % 2]();
-  const pt = streetPodium(g, P, Y, { wall: pw0, pier: pp0, fascia: pf0, style: v % 2 ? 'arch' : 'modern', skipF: [22, 40], seed: v }) - 1;
+  const pt = streetPodium(g, P, Y, { ground: 'colonnade', wall: v % 2 ? C.dtLimeShade : C.cream, colC: C.dtFrame, pier: C.dtFrame, fascia: pf0, skipF: [22, 40], seed: v }) - 1;
   tiles(g, 1, 1, 61, 15, Y - 1, C.lotPaveDark, 5);
-  portico(g, P.z0, { Y, xc: 31, w: 15, depth: 7, kind: 'glass', cols: 4, colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: C.black, text: 'SKY', textC: C.yellow, planters: false });
+  portico(g, P.z0, { Y, xc: 31, w: 15, depth: 7, kind: 'glass', cols: 4, colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: C.dtNavyPanel, sign: 'letters', text: 'SKY', textC: C.yellow, planters: false });
   // shaft
   const T = box(13, 19, 49, 50), nf = 8 + v;
   const y0 = pt + 1, top = y0 + FL * nf;
@@ -1842,7 +1949,7 @@ function bGlassSkyscraper(rng, v) {
   // strip, nothing marks the floors". Now: silver-stone pilasters standing 1
   // proud between white-framed windows, a white ledge on EVERY floor (lit top
   // + shadow line), light corner piers (no navy mass), bright glass.
-  { const skyB = { y0, y1: top - 1, pw: 1, cw: 1, pd: 1, cpd: 2, pierC: pierS, cornerC: wall, spand: spandG, inset: 0, sillC: null, frameC: wall, mullC: pierS,
+  { const skyB = { y0, y1: top - 1, pw: 1, cw: 1, pd: 1, cpd: 2, pierC: pierS, cornerC: fin, spand: spandG, inset: 0, sillC: null, frameC: C.dtGlassHi, mullC: pierS,
     sill: 2, wh: 8, glassFn: skyGlass(tones, nf, 9), sheen: C.dtGlassHi, hi: C.winCool, bandEvery: 4, bandH: 2, bandOut: 3, bandC: wall, deep: false,
     ledgeC: wall, ledgeOut: 1,
     balc: (S, k, r) => r % 4 !== 3 && (k === 0 || k === 3) && r % 2 === 0, balcC: wall, railC: C.dtGlassHi,
@@ -1900,7 +2007,7 @@ function bDarkSkyscraper(rng, v) {
   // (r9) an art-deco street podium: cream (v1 limestone) with gold trim,
   // arched windows, black fascia with shop boards, a gold-framed portico
   const P = box(9, 12, 53, 55);
-  let y0 = streetPodium(g, P, Y, { wall: v % 2 ? C.dtLime : C.cream, pier: C.gold, fascia: C.black, skipF: [22, 40], seed: 2 + v, cornC: C.dtPad });
+  let y0 = streetPodium(g, P, Y, { ground: 'arcade', wall: v % 2 ? C.dtLime : C.cream, pier: C.gold, fascia: C.black, skipF: [22, 40], seed: 2 + v, cornC: C.dtPad });
   for (let i = 0; i < stages.length; i++) {
     const [B, yt] = stages[i];
     shell(g, B, y0, yt, C.dtPad, C.roofGray);
@@ -1926,7 +2033,7 @@ function bDarkSkyscraper(rng, v) {
   }
   // gold-framed portico on the podium
   const B0 = stages[0][0];
-  portico(g, P.z0, { Y, xc: 31, w: 11, depth: 6, kind: 'glass', cols: 4, colC: C.gold, frame: C.gold, glassTop: C.dtGlassTeal, fascia: C.black, text: 'ONYX', textC: C.gold, mat: C.navy, planters: false });
+  portico(g, P.z0, { Y, xc: 31, w: 11, depth: 6, kind: 'marquee', cols: 4, colC: C.gold, frame: C.gold, fascia: C.dtPad, text: 'ONYX', textC: C.gold, mat: C.navy, planters: false });
   // crown: roof kit on the last setback, neon lantern + spire
   const top = y0, Bt = stages[2][0];
   const L = ins(Bt, 5);
@@ -1986,7 +2093,7 @@ function bCorporateHQ(rng, v) {
   // ribbon (v1: sandstone arcade), shop signs + awnings, a columned portico
   const [pw0, pp0, pf0] = [POD.terra, POD.sand][v % 2]();
   const eb = bayStarts(L.x0, L.x1, 9, 2, 3)[1];
-  const fTop = streetPodium(g, L, Y, { wall: pw0, pier: pp0, fascia: pf0, style: v % 2 ? 'arch' : 'modern', upperGlass: band[0], skipF: [eb - 6, eb + 14], seed: 3 + v }) - 1;
+  const fTop = streetPodium(g, L, Y, { ground: 'glass', wall: pw0, pier: pp0, fascia: pf0, glass: band[0], skipF: [eb - 6, eb + 14], seed: 3 + v }) - 1;
   const s0 = fTop - FL, wTop = s0 + FL * 4, tTop = s0 + FL * nf;
   g.box(Wf.x0 + 1, fTop, Wf.z0 + 1, Wf.x1 - 1, fTop, Wf.z1 - 1, C.lotGrass);
   shell(g, Wl, fTop, wTop, slab, C.roofGray);
@@ -2036,7 +2143,7 @@ function bCorporateHQ(rng, v) {
   people(g, 8, 16, 45, 26, fTop + 1, 5, rng);
   // entrance: glass lobby, stepped terrace, glass canopy with BLOX, planters
   tiles(g, 1, 1, 47, 13, Y - 1, C.lotPaveDark, 5);
-  portico(g, L.z0, { Y, xc: eb + 4, w: 9, depth: 7, kind: 'slab', cols: 4, colC: C.dtFrame, fascia: C.black, text: 'BLOX', planters: false, lamps: false });
+  portico(g, L.z0, { Y, xc: eb + 4, w: 9, depth: 7, kind: 'slab', cols: 4, colC: C.dtFrame, fascia: C.dtNavyPanel, sign: 'letters', text: 'BLOX', textC: C.signWhite, planters: false, lamps: false });
   // lot: flags, bike rack, taxi lay-by; car park down the right, lane on the left
   flag(g, 41, Y, 3, 22, C.blue); flag(g, 44, Y, 3, 22, C.teal); flag(g, 38, Y, 3, 22, C.red);
   bikeRack(g, 6, Y, 10, 3);
@@ -2071,7 +2178,7 @@ function bTwinSetback(rng, v) {
   // black shop fascia, and a temple portico (4 columns, TWINS on the
   // entablature, a copper pediment) — the ref05 bank's front
   const P = box(7, 14, 55, 53);
-  const pt = streetPodium(g, P, Y, { h: 34, wall: stone, pier: C.gold, fascia: C.black, skipF: [18, 44], seed: 1 + v, cornC: stone }) - 1;
+  const pt = streetPodium(g, P, Y, { h: 34, ground: 'arcade', wall: stone, pier: C.gold, fascia: C.black, skipF: [18, 44], seed: 1 + v, cornC: stone }) - 1;
   tiles(g, 1, 1, 61, 13, Y - 1, C.lotPaveDark, 5);
   portico(g, P.z0, { Y, xc: 31, w: 19, depth: 7, kind: 'temple', cols: 4, colC: stone, stone: C.dtLimeShade, roofC: C.dtCopper, text: 'TWINS', textC: C.brickDark, planters: false });
   const top = pt + 96 + v * 8;
@@ -2151,7 +2258,7 @@ function bSpireTower(rng, v) {
   // Tier 3: a pale glass cage. Sky-lobby glass band + heavy cornice at each
   // setback, a lantern and a striped antenna.
   const glassT = [[C.dtGlassDark, C.dtGlassDeep, C.dtGlassDeep, C.dtGlass], [C.dtGlassDark, C.dtGlassTeal, C.dtGlassTeal, C.dtGlassHi]][v % 2];
-  const stone = [C.dtStone, C.dtLime][v % 2], spandC = C.dtGlassDeep;   // r8: was navy (critic r7: dark masses)
+  const stone = [C.dtLimeShade, C.resTerracotta][v % 2], spandC = C.dtGlassDeep;   // w10: warm beige stone (v1 terracotta; was silver: a third pale shaft)   // r8: was navy (critic r7: dark masses)
   const g = grid(63, 256, 63, R);
   const Y = lotPlinth(g, 0, 0, 62, 62);
   // the podium steps in from the lot edge so the ground floor can be dressed
@@ -2161,7 +2268,7 @@ function bSpireTower(rng, v) {
   // a temple portico carrying SPIRE (critic r8: no real podium or entrance)
   const [pw0, pp0, pf0] = [POD.brick, POD.sand][v % 2]();
   const st = [[box(12, 16, 50, 50), Y + 100], [box(17, 21, 45, 45), Y + 138 + v * 4], [box(21, 25, 41, 41), Y + 166 + v * 4]];
-  let y0 = streetPodium(g, P, Y, { wall: pw0, pier: pp0, fascia: pf0, skipF: [16, 46], seed: 2 + v }) + 1, row0 = 0;
+  let y0 = streetPodium(g, P, Y, { ground: 'colonnade', wall: pw0, colC: v % 2 ? C.dtFrame : C.cream, pier: pp0, fascia: pf0, skipF: [16, 46], seed: 2 + v }) + 1, row0 = 0;
   const nAll = Math.floor((Y + 166 - y0) / FL);
   for (let i = 0; i < st.length; i++) {
     const [B, yt] = st[i];
@@ -2231,7 +2338,7 @@ function bTechCampus(rng, v) {
   // (r9) the lower block is a terracotta street podium: shopfronts under a
   // black fascia with signs + awnings, a glass ribbon (v1: arcade) above
   const Lb = box(5, 22, 57, 58), Ub = box(12, 14, 50, 50);
-  const lt = streetPodium(g, Lb, Y, { wall: terra, pier: C.dtFrame, fascia: C.black, style: v % 2 ? 'arch' : 'modern', upperGlass: tones[0], skipF: [22, 40], seed: 4 + v, roof: C.lotGrass }) - 1;
+  const lt = streetPodium(g, Lb, Y, { ground: 'glass', wall: terra, pier: C.dtFrame, fascia: C.black, glass: tones[0], skipF: [22, 40], seed: 4 + v, roof: C.lotGrass }) - 1;
   const ut = lt + 2 + FL * (3 + v);
   // upper block, cantilevered forward over the plaza
   shell(g, Ub, lt + 1, ut, C.dtGlassDark, C.roofGray);
@@ -2254,7 +2361,7 @@ function bTechCampus(rng, v) {
   people(g, 6, 51, 56, 57, lt + 1, 4, rng);
   // entrance under the cantilever
   tiles(g, 5, 13, 57, 21, Y - 1, C.lotPaveDark, 4);
-  portico(g, Lb.z0, { Y, xc: 31, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: logo, planters: false, lamps: false, mat: logo });
+  portico(g, Lb.z0, { Y, xc: 31, w: 9, depth: 5, kind: 'glass', colC: C.dtFrame, glassTop: C.dtGlassTeal, fascia: logo, sign: 'letters', text: 'TECH', textC: logo, planters: false, lamps: false, mat: logo });
   for (const x of [6, 50]) planter(g, x, 15, x + 6, 19, Y, { box: C.dtStone, flowers: [logo, C.signWhite] });
   people(g, 5, 13, 57, 21, Y, 8, rng);
   for (const z of [26, 38, 50]) { tree(g, 0, Y, z - 2, 4); tree(g, 58, Y, z - 2, 4); }

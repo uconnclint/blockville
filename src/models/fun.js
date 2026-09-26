@@ -14,7 +14,7 @@ import {
 import {
   V, tree, bush, flower, lampPost, bin, car, umbrella, lounger, flagPole, disc, rrDist, roofBox, civText, benchS, hipRoof,
   person, crowd, kiosk, umbTable, parkingRow, hiText, doneHi,
-  hiGrid, hiFacade, fineWin, INK, inkBand, inkEdges, brickCourse, fineUmbrella, fineLounger, fineAC, fineBand, fineDentils, fineBalustrade, fineHipRoof, gclr, lumpHedge, fineDome, fineBlooms, fineColumn, fineStatue,
+  hiGrid, hiFacade, fineWin, lotTree, INK, inkBand, inkEdges, brickCourse, fineUmbrella, fineLounger, fineAC, fineBand, fineDentils, fineBalustrade, fineHipRoof, gclr, lumpHedge, fineDome, fineBlooms, fineColumn, fineStatue,
 } from './civic.js';
 
 const R4 = 4;
@@ -297,12 +297,36 @@ function bStadium(rng, v) {
   const seat = C.civSeat, seatAlt = C.civSeatAlt;               // ref05: blue bowl, orange aisles
   const panelTop = vi ? C.civNavy : C.civSeat;
   const cx = 63, cz = 63, HX = 31, HZ = 23, RR = 6, DMAX = 27;
-  const A = HX - RR, B = HZ - RR, RREF = RR + 14;
-  const perim = (x, z) => {
+  const A = HX - RR, B = HZ - RR;
+  // (w2r1) Continuous loop parameter round the rounded rect at ring d, with
+  // every corner arc stretched to a whole number of periods P, so stripes,
+  // piers and roof panels run round the corners with no seams (4A+4B = 168 is
+  // a multiple of 8, 12 and 14). This let the corner ramp towers go: ref05's
+  // bowl is one smooth rounded mass.
+  const loopS = (x, z, d, P) => {
     const px = x - cx, pz = z - cz;
-    if (Math.abs(px) <= A) return px + 400;
-    if (Math.abs(pz) <= B) return pz + 400;
-    return Math.round(Math.atan2(Math.abs(pz) - B, Math.abs(px) - A) * RREF) + 400;
+    const L = P * Math.max(1, Math.round(Math.PI / 2 * (RR + d) / P));
+    const Q = (a, b) => Math.atan2(a, b) / (Math.PI / 2) * L;
+    if (pz < -B && px >= -A && px <= A) return px + A;
+    if (px > A && pz < -B) return 2 * A + Q(px - A, -(pz + B));
+    if (px > A && pz <= B) return 2 * A + L + (pz + B);
+    if (px > A) return 2 * A + L + 2 * B + Q(pz - B, px - A);
+    if (pz > B && px >= -A) return 2 * A + 2 * L + 2 * B + (A - px);
+    if (pz > B) return 4 * A + 2 * B + 2 * L + Q(-(px + A), pz - B);
+    if (px < -A && pz >= -B) return 4 * A + 2 * B + 3 * L + (B - pz);
+    return 4 * A + 4 * B + 3 * L + Q(-(pz + B), -(px + A));
+  };
+  const perim = (x, z, d = DMAX, P = 8) => Math.floor(loopS(x, z, d, P));
+  // True on ONE cell-wide line every P along the loop (phase-matched to the
+  // ring dRef), at any ring d: on the corner arcs the parameter is rescaled
+  // to cells so voxel staircases don't sprout double ribs.
+  const lineAt = (x, z, d, dRef, P) => {
+    const onArc = Math.abs(x - cx) > A && Math.abs(z - cz) > B;
+    const h = onArc ? 0.5 : 0;
+    const t = loopS(x + h, z + h, dRef, P) / P;
+    const off = Math.abs(t - Math.round(t)) * P;
+    const k = onArc ? (Math.PI / 2 * (RR + d + 0.5)) / (P * Math.max(1, Math.round(Math.PI / 2 * (RR + dRef) / P))) : 1;
+    return off * k < 0.5;
   };
   const topOf = (d) => d <= 1 ? Y + 2 : d <= 13 ? Y + 4 + 2 * ((d - 2) >> 1) : d <= 15 ? Y + 15
     : d === 16 ? Y + 21 : d <= 24 ? Y + 22 + 3 * ((d - 17) >> 1) : Y + 33;
@@ -325,19 +349,25 @@ function bStadium(rng, v) {
     }
     return false;
   };
+  // (w2r1) ref05 facade: horizontal bands, dark over light — a dark arcade at
+  // the base, a white ledge, a navy glazed band, pale panels, a blue glazed
+  // band, a white string course, a deep navy band under the white roof lip.
+  // Piers are pale grey, not white, so the drum reads banded, not white.
   const facadeCol = (k, s) => {
-    if (k <= 7) {                                                    // ref05 arcade: white piers, arched dark bays
-      const m = mod(s, 8);
-      if (m < 2 || k === 7) return C.civRoof;
-      if (k === 6) return (m === 2 || m === 7) ? C.civRoof : C.civNavy;
-      if (k === 5) return (m === 2 || m === 7) ? C.civRoof : C.darkGray;
+    const m = mod(s, 8);
+    if (k <= 7) {                                                    // arcade: grey piers, arched dark bays
+      if (m < 2 || k === 7) return C.civPanel;
+      if (k === 6) return (m === 2 || m === 7) ? C.civPanel : C.civNavy;
+      if (k === 5) return (m === 2 || m === 7) ? C.civPanel : C.darkGray;
       return (k >= 2 && m >= 4 && m <= 5) ? C.civGlass : C.darkGray;
     }
-    if (k <= 9) return C.civPanel;
-    if (k >= 31) return C.civRoof;
-    if (k >= 26 && k <= 28) return C.civNavy;                        // dark structural band under the roof
-    if ((Math.floor((k - 10) / 3) & 1) === 1) return (mod(s, 8) >= 3 && mod(s, 8) <= 6) ? C.civGlass : C.civNavy;
-    return C.civPanel;
+    if (k <= 9) return C.civRoof;
+    if (k <= 14) return (k >= 11 && k <= 13 && m >= 3 && m <= 6) ? C.civGlass : C.darkGray;
+    if (k <= 16) return C.civPanel;
+    if (k <= 21) return m === 0 ? C.civPanel : (k === 21 ? C.civNavy : C.civGlass);
+    if (k <= 23) return C.civRoof;
+    if (k <= 31) return (k >= 26 && k <= 28 && m >= 2 && m <= 6) ? C.civNavy : C.darkGray;   // (w2r1) civNavy renders mid-blue in game: the dark bands are darkGray
+    return C.civRoof;
   };
   for (let x = 0; x < S; x++) for (let z = 0; z < S; z++) {
     const dist = rrDist(x, z, cx, cz, HX, HZ, RR);
@@ -349,7 +379,8 @@ function bStadium(rng, v) {
     }
     const d = Math.floor(dist);
     if (d > DMAX + 2) continue;
-    const s = perim(x, z);
+    const s = perim(x, z, Math.min(d, DMAX), 8);
+    const s14 = perim(x, z, d, 14);
     // players' tunnel through the lower tier at the +x end
     if (px > A && Math.abs(pz) <= 3 && d <= 12) {
       if (Math.abs(pz) === 3) g.box(x, Y, z, x, topOf(d), z, C.civNavy);
@@ -362,38 +393,37 @@ function bStadium(rng, v) {
       if (mod(s, 4) === 0) g.set(x, Y + 9, z, C.signWhite);
       continue;
     }
-    if (d === DMAX + 1) {                                            // proud pillars + concourse deck
+    if (d === DMAX + 1) {                                            // proud grey ribs + concourse deck
       g.set(x, Y + 8, z, C.civPanel);
-      if (mod(s, 8) < 2) g.box(x, Y + 8, z, x, Y + 33, z, C.civRoof);
+      if (lineAt(x, z, d, DMAX, 8)) g.box(x, Y + 9, z, x, Y + 31, z, C.civPanel);
       continue;
     }
     const top = topOf(d);
-    if (d <= 1) { g.box(x, Y, z, x, top, z, d === 0 ? ads[mod(s >> 3, 4)] : C.civNavy); continue; }
-    if (d <= 13) { g.set(x, top, z, stripe(s) ? seatAlt : seat); g.set(x, top - 1, z, C.civNavy); continue; }
+    if (d <= 1) { g.box(x, Y, z, x, top, z, d === 0 ? ads[mod(s14 >> 3, 4)] : C.civNavy); continue; }
+    if (d <= 13) { g.set(x, top, z, stripe(s14) ? seatAlt : seat); g.set(x, top - 1, z, C.civNavy); continue; }
     if (d <= 15) { g.set(x, top, z, C.civPanel); g.set(x, top - 1, z, C.civNavy); continue; }
     if (d === 16) {
-      for (let yy = Y + 14; yy <= top; yy++) g.set(x, yy, z, (yy >= Y + 17 && yy <= Y + 20 && mod(s, 6) !== 0) ? C.civGlass : C.civNavy);
-      continue;
-    }
-    if (d <= 24) {
-      const sc = stripe(s) ? seatAlt : seat;
+      for (let yy = Y + 14; yy <= top; yy++) g.set(x, yy, z, (yy >= Y + 17 && yy <= Y + 20 && mod(s14, 7) !== 0) ? C.civGlass : C.civNavy);
+    } else if (d <= 24) {
+      const sc = stripe(s14) ? seatAlt : seat;
       g.set(x, top, z, sc); g.set(x, top - 1, z, sc); g.set(x, top - 2, z, C.civNavy);
     } else if (d < DMAX) {
       g.box(x, Y + 30, z, x, top, z, C.civNavy);
     } else {
       for (let yy = Y; yy <= top; yy++) g.set(x, yy, z, facadeCol(yy - Y, s));
     }
-    if (d >= 17) {                                                   // roof ring
-      // (r10) critic r9: "lacks the white cantilevered roof ring" of ref05 —
-      // a wide WHITE ring now cantilevers over the whole upper tier: white
-      // membrane with grey structural ribs, a translucent blue band along
-      // the inner edge, a deep white fascia with floodlights under its lip
-      const rib = mod(s, 8) === 0;
+    if (d >= 16) {
+      // (w2r1) ref05 roof ring: WIDE (d 16..27, ~45% of the bowl), white,
+      // panelled by raised white radial ribs every 8 and a ring rib at d 22 —
+      // translucent BLUE panels on the outer half, pale panels on the inner
+      // half, a raised white lip on both edges, floodlights along the inner lip.
+      const sR = perim(x, z, 22, 8);
+      const rib = d === 22 || lineAt(x, z, d, 22, 8);
       g.set(x, Y + 34, z, C.civRoof);
-      g.set(x, Y + 35, z, d <= 18 ? C.civGlass : rib ? C.civPanel : C.civRoof);
-      if (d === 17) { g.set(x, Y + 33, z, mod(s, 10) === 5 ? C.lamp : C.civRoof); g.set(x, Y + 36, z, C.civRoof); }
-      if (d === DMAX) g.set(x, Y + 36, z, C.civRoof);
-      if (rib && d >= 19 && d < DMAX) g.set(x, Y + 36, z, C.civRoof);
+      if (d <= 17 || d === DMAX) { g.set(x, Y + 35, z, C.civRoof); g.set(x, Y + 36, z, C.civRoof); }
+      else if (rib) { g.set(x, Y + 35, z, C.civRoof); g.set(x, Y + 36, z, C.civRoof); }
+      else g.set(x, Y + 35, z, d >= 23 ? C.civGlass : C.civPanel);
+      if (d === 16) g.set(x, Y + 33, z, mod(sR, 12) === 6 ? C.lamp : C.civRoof);
     }
   }
   // (r9) fine facade trim on the four straight sides (critic r8: "its facade
@@ -406,25 +436,25 @@ function bStadium(rng, v) {
     const H = hiGrid(g);
     for (let x = 0; x < S; x++) for (let z = 0; z < S; z++) {
       const dd = rrDist(x, z, cx, cz, HX, HZ, RR);
-      if (dd >= 17 && dd < 18) for (const [i, k] of [[0, 0], [1, 0], [0, 1], [1, 1]]) H.set(2 * x + i, 2 * (Y + 33) - 1, 2 * z + k, INK());
+      if (dd >= 16 && dd < 17) for (const [i, k] of [[0, 0], [1, 0], [0, 1], [1, 1]]) H.set(2 * x + i, 2 * (Y + 34) - 1, 2 * z + k, INK());
     }
   }
-  for (const [side, pl, u0, u1, c0] of [['front', cz - HZ - DMAX, cx - A, cx + A, cx], ['back', cz + HZ + DMAX, cx - A, cx + A, cx], ['left', cx - HX - DMAX, cz - B, cz + B, cz], ['right', cx + HX + DMAX, cz - B, cz + B, cz]]) {
+  // (w2r1) fine trim on the four straight sides, phased by the same loop
+  // parameter as the res-4 bands: sill ledges under both glazed bands,
+  // mullions, and fine white dentils under the white string course.
+  for (const [side, pl, u0, u1] of [['front', cz - HZ - DMAX, cx - A, cx + A], ['back', cz + HZ + DMAX, cx - A, cx + A], ['left', cx - HX - DMAX, cz - B, cz + B], ['right', cx + HX + DMAX, cz - B, cz + B]]) {
     const E = hiFacade(g, side, pl);
+    const xz = side === 'front' || side === 'back';
     for (let u = u0; u <= u1; u++) {
-      const m = mod(u - c0 + 400, 8);
-      if (m === 0) {                                                 // a pier (cells m 0..1, one proud)
-        E.box(2 * u - 1, 2 * (Y + 33) - 2, 2, 2 * u + 4, 2 * (Y + 33) - 1, 2, C.civRoof);
-        E.box(2 * u - 1, 2 * (Y + 8), 2, 2 * u + 4, 2 * (Y + 8) + 1, 2, C.civPanel);
-        E.box(2 * u + 1, 2 * (Y + 10), 2, 2 * u + 2, 2 * (Y + 31), 2, C.civRoof);   // a fine fillet up the pier
+      const m = mod(xz ? perim(u, pl, DMAX, 8) : perim(pl, u, DMAX, 8), 8);
+      if (m === 0) { E.box(2 * u, 2 * (Y + 22), 2, 2 * u + 1, 2 * (Y + 23) + 1, 2, C.civRoof); continue; }   // rib capital
+      if (m >= 3 && m <= 6) {
+        E.box(2 * u, 2 * (Y + 11) - 1, 0, 2 * u + 1, 2 * (Y + 11) - 1, 1, C.signWhite);
+        if (m === 3 || m === 5) E.box(2 * u + 1, 2 * (Y + 11), 0, 2 * u + 1, 2 * (Y + 14) - 1, 0, C.civPanel);
       }
-      if (m < 2) continue;
-      for (const k0 of [13, 19]) {
-        E.box(2 * u, 2 * (Y + k0) - 1, 0, 2 * u + 1, 2 * (Y + k0) - 1, 1, C.signWhite);   // sill ledge
-        E.box(2 * u, 2 * (Y + k0 + 3), 0, 2 * u + 1, 2 * (Y + k0 + 3), 0, C.civPanel);    // head
-        if (m === 5 || m === 3) E.box(2 * u, 2 * (Y + k0), 0, 2 * u, 2 * (Y + k0 + 3) - 1, 0, C.signWhite);
-      }
-      if ((u & 1) === 0) E.box(2 * u, 2 * (Y + 26) - 2, 0, 2 * u, 2 * (Y + 26) - 1, 0, C.civRoof);   // dentils
+      E.box(2 * u, 2 * (Y + 17) - 1, 0, 2 * u + 1, 2 * (Y + 17) - 1, 1, C.signWhite);
+      if (m === 4) E.box(2 * u, 2 * (Y + 17), 0, 2 * u, 2 * (Y + 21) - 1, 0, C.civPanel);
+      if ((u & 1) === 0) E.box(2 * u, 2 * (Y + 22) - 1, 0, 2 * u, 2 * (Y + 22) - 1, 0, C.signWhite);
     }
   }
   // concourse paving joints + the match-day crowd milling round the base
@@ -449,30 +479,6 @@ function bStadium(rng, v) {
     F.box(-4 + cx, Y + 17, 1, 4 + cx, Y + 25, 1, C.civNavy); F.box(-3 + cx, Y + 16, 1, 3 + cx, Y + 26, 1, C.civNavy);
     F.box(-2 + cx, Y + 18, 2, 2 + cx, Y + 24, 2, C.civSeat); F.box(-1 + cx, Y + 19, 3, 1 + cx, Y + 23, 3, C.signWhite);
     F.set(cx, Y + 21, 4, C.civSeatAlt);
-  }
-  // floodlight rigs on the roof ring's four corners, lamps facing the pitch
-  for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-    const rx = cx + sx * (A + 17), rz = cz + sz * (B + 17);
-    g.box(rx - 3, Y + 36, rz - 3, rx + 3, Y + 40, rz + 3, C.darkGray);
-    g.box(rx - 2, Y + 41, rz - 2, rx + 2, Y + 41, rz + 2, C.civNavy);
-    g.box(rx - sx * 3, Y + 37, rz - 2, rx - sx * 3, Y + 39, rz + 2, C.lamp);
-    g.box(rx - 2, Y + 37, rz - sz * 3, rx + 2, Y + 39, rz - sz * 3, C.lamp);
-  }
-  // four corner ramp towers (helical white ramp on a navy drum) — they also
-  // cover the facade's corner seams
-  for (const [sx, sz] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-    const tx = cx + sx * (A + 28), tz = cz + sz * (B + 28);
-    for (let yy = Y; yy <= Y + 30; yy++) {                          // ramp decks (white) round a navy drum
-      const k = (yy - Y) % 7, deck = k === 5 || k === 6;
-      for (let x = tx - 7; x <= tx + 7; x++) for (let z = tz - 7; z <= tz + 7; z++) {
-        const dd = Math.hypot(x - tx, z - tz);
-        if (dd > (deck ? 6.6 : 5.2)) continue;
-        g.set(x, yy, z, deck ? C.signWhite : (k >= 1 && k <= 3 ? C.civGlass : C.civNavy));
-      }
-    }
-    disc(g, tx, Y + 31, tz, 6.6, C.civRoof); disc(g, tx, Y + 32, tz, 5, C.civSeat);
-    const bx = tx - sx * 7, bz = tz - sz * 7;                        // footbridge to the concourse
-    g.box(Math.min(bx, bx - sx * 4), Y + 16, Math.min(bz, bz - sz * 4), Math.max(bx, bx - sx * 4), Y + 17, Math.max(bz, bz - sz * 4), C.civPanel);
   }
   // plaza clutter: flag row, food kiosks with umbrellas, benches, lamp masts
   const flagCols = [C.civSeat, C.civSeatAlt, C.signWhite, C.yellow, C.red, C.roofGreen];
@@ -636,62 +642,100 @@ function penguin(g, x, y, z) {
   g.set(x - 1, y + 2, z + 1, C.black); g.set(x + 3, y + 2, z + 1, C.black);
 }
 function bZoo(rng, v) {
+  // (w2r1) Rebuilt as a landscaped zoo: the brown picket fences that boxed
+  // every pen (the whole lot read as orange fencing) became low stone kerb
+  // walls with a slim dark railing, like ref05's lot rims; the perimeter is a
+  // clipped hedge; each enclosure has its own ground (savanna, dirt + pond,
+  // rock + sand, ice + pool) with stamped vegetation trees and rocks; a
+  // green-roofed entrance pavilion with the ZOO name carries the gate.
   const S = 95, g = grid(S, 64, S, R4);
-  const y = lotPlinth(g, 0, 0, S - 1, S - 1, { fill: 'grass' });
+  const y = lotPlinth(g, 0, 0, S - 1, S - 1, { fill: C.civPlaza });
   const vi = mod(v, 2);
-  const path = C.civPlaza, cx = 47;
-  g.box(cx - 4, y - 1, 1, cx + 4, y - 1, S - 2, path);                         // main avenue
-  g.box(1, y - 1, 43, S - 2, y - 1, 51, path);                                  // cross avenue
+  const path = C.lotPave, cx = 47;
+  // enclosure grounds (the plinth top row is y - 1)
+  const ground = (x0, z0, x1, z1, c) => g.box(x0, y - 1, z0, x1, y - 1, z1, c);
+  ground(3, 3, 41, 40, C.lotGrass);                                   // giraffes: grassland
+  ground(53, 3, 91, 40, C.lotGrass);                                  // elephants: grass + dirt + pond
+  ground(3, 54, 41, 91, C.sand);                                      // lions: sand + rock
+  ground(53, 54, 91, 91, C.signWhite);                                // penguins: ice
+  // savanna patches + a worn dirt track in the grass pens
+  for (const [x0, z0, x1, z1] of [[8, 20, 20, 30], [22, 8, 34, 16], [58, 8, 70, 18], [60, 26, 66, 36]]) ground(x0, z0, x1, z1, C.dirt);
+  // perimeter hedge (gap at the front gate) + avenues
+  lumpHedge(g, 1, 1, cx - 10, 2, y, 0); lumpHedge(g, cx + 10, 1, S - 2, 2, y, 3);
+  lumpHedge(g, 1, S - 3, S - 2, S - 2, y, 1);
+  lumpHedge(g, 1, 3, 2, S - 4, y, 2); lumpHedge(g, S - 3, 3, S - 2, S - 4, y, 4);
+  g.box(cx - 5, y - 1, 1, cx + 5, y - 1, S - 4, path);                // main avenue
+  g.box(3, y - 1, 43, S - 4, y - 1, 51, path);                        // cross avenue
   disc(g, cx, y - 1, 47, 11, path);
-  // centre: kiosk with umbrella tables
-  g.box(cx - 3, y, 44, cx + 3, y + 7, 50, C.signWhite);
-  g.box(cx - 4, y + 8, 43, cx + 4, y + 8, 51, C.red);
-  g.box(cx - 2, y + 9, 45, cx + 2, y + 9, 49, C.signWhite);
-  g.box(cx - 2, y + 3, 43, cx + 2, y + 5, 43, C.civGlass);
-  for (const [ux, uz] of [[cx - 8, 40], [cx + 8, 55]]) umbrella(g, ux, y, uz, C.yellow, C.signWhite, 8);
-  // gate arch + ZOO sign at the front
-  for (const gx of [cx - 8, cx + 7]) g.box(gx, y, 2, gx + 1, y + 20, 5, C.civMarble);
-  g.box(cx - 9, y + 21, 2, cx + 9, y + 23, 5, C.roofGreen);
-  g.box(cx - 7, y + 24, 3, cx + 7, y + 30, 4, C.yellow);
-  const Fg = facade(g, 'front', 3);
-  pixelText(Fg, cx - 5, y + 25, 'ZOO', C.roofGreen, 2);
-  const Bg = facade(g, 'back', 4);
-  pixelText(Bg, cx + 5, y + 25, 'ZOO', C.roofGreen, 2);
-  // perimeter fence (wood) except the gate
-  fenceRun(g, 1, 1, cx - 9, 1, y); fenceRun(g, cx + 9, 1, S - 2, 1, y);
-  fenceRun(g, 1, S - 2, S - 2, S - 2, y); fenceRun(g, 1, 1, 1, S - 2, y); fenceRun(g, S - 2, 1, S - 2, S - 2, y);
-  const pen = (x0, z0, x1, z1) => {
-    fenceRun(g, x0, z0, x1, z0, y, { post: C.woodDark, rail: C.wood, h: 5 }); fenceRun(g, x0, z1, x1, z1, y, { post: C.woodDark, rail: C.wood, h: 5 });
-    fenceRun(g, x0, z0, x0, z1, y, { post: C.woodDark, rail: C.wood, h: 5 }); fenceRun(g, x1, z0, x1, z1, y, { post: C.woodDark, rail: C.wood, h: 5 });
+  for (let z = 4; z < S - 4; z += 6) g.box(cx - 5, y - 1, z, cx + 5, y - 1, z, C.lotPaveDark);   // paving joints
+  // enclosure walls: stone kerb (2 high, pale coping) + a slim dark railing
+  const Hz = hiGrid(g);
+  const wallRun = (x0, z0, x1, z1) => {
+    g.box(x0, y, z0, x1, y, z1, C.lotSide);
+    g.box(x0, y + 1, z0, x1, y + 1, z1, C.lotRim);
+    // a slim FINE railing (res 8): posts every 2 res-4 voxels, one top rail
+    const alongX = z0 === z1, a0 = alongX ? x0 : z0, a1 = alongX ? x1 : z1, c = alongX ? z0 : x0;
+    const top = 2 * (y + 4);
+    for (let a = 2 * a0; a <= 2 * a1 + 1; a++) {
+      const set = (yy) => (alongX ? Hz.set(a, yy, 2 * c + 1, C.metalDark) : Hz.set(2 * c + 1, yy, a, C.metalDark));
+      set(top);
+      if (a % 4 === 0) for (let yy = 2 * (y + 2); yy < top; yy++) set(yy);
+    }
   };
+  const pen = (x0, z0, x1, z1) => { wallRun(x0, z0, x1, z0); wallRun(x0, z1, x1, z1); wallRun(x0, z0, x0, z1); wallRun(x1, z0, x1, z1); };
   // front-left: giraffes among tall trees
-  pen(4, 5, 40, 39);
-  giraffe(g, 12, y, 14); giraffe(g, 24, y, 26);
-  tree(g, 33, y, 12, { w: 9, h: 8, trunk: 16 }); tree(g, 10, y, 32, { w: 9, h: 8, trunk: 14 });
-  tree(g, 34, y, 33, { w: 7, h: 7, trunk: 12 }); rocks(g, 9, y, 8, 5, 3);
-  bush(g, 16, y, 34, 24, 37, 4); g.box(24, y, 8, 28, y + 1, 11, C.woodDark);         // feeding trough
-  // front-right: elephants + pond
-  pen(54, 5, 90, 39);
-  g.box(72, y - 1, 24, 86, y - 1, 36, C.civPool); g.walls(71, y - 1, 23, 87, y - 1, 37, C.dirt);
-  elephant(g, 58, y, 12); if (vi === 0) elephant(g, 72, y, 10);
-  rocks(g, 62, y, 32, 9, 5); tree(g, 84, y, 12, { w: 9, h: 8, trunk: 7 }); bush(g, 56, y, 20, 59, 30, 4);
-  // back-left: lions on a rock + sand
-  pen(4, 55, 40, 90);
-  g.box(5, y - 1, 56, 39, y - 1, 89, C.sand);
-  rocks(g, 22, y, 76, 15, 7); rocks(g, 27, y + 7, 78, 7, 3);
+  pen(3, 3, 41, 40);
+  giraffe(g, 12, y, 14); giraffe(g, 24, y, 25);
+  lotTree(g, 'column', 33, y, 11, 3); lotTree(g, 'round', 10, y, 33, 5); lotTree(g, 'cluster', 34, y, 32, 7);
+  rocks(g, 9, y, 8, 5, 3);
+  bush(g, 16, y, 34, 24, 37, 4); g.box(24, y, 8, 28, y + 1, 11, C.woodDark);       // feeding trough
+  g.box(21, y + 12, 7, 31, y + 12, 12, C.roofGreen); for (const [px, pz] of [[21, 7], [31, 7], [21, 12], [31, 12]]) g.box(px, y, pz, px, y + 11, pz, C.woodDark);   // feeding platform
+  // front-right: elephants + pond with a rock rim
+  pen(53, 3, 91, 40);
+  g.box(72, y - 1, 23, 88, y - 1, 37, C.civPool); g.walls(71, y - 1, 22, 89, y - 1, 38, C.civPoolLt);
+  g.box(74, y - 1, 25, 80, y - 1, 29, C.civPoolLt);
+  elephant(g, 58, y, 12); if (vi === 0) elephant(g, 74, y, 10);
+  rocks(g, 62, y, 32, 9, 5); rocks(g, 88, y, 22, 5, 3);
+  lotTree(g, 'round', 85, y, 11, 2); lotTree(g, 'cluster', 57, y, 26, 4);
+  // back-left: lions on a big stepped rock
+  pen(3, 54, 41, 91);
+  rocks(g, 22, y, 76, 15, 7); rocks(g, 27, y + 7, 78, 7, 3); rocks(g, 12, y, 84, 7, 4);
   lion(g, 20, y + 7, 72); lion(g, 9, y, 60);
-  tree(g, 34, y, 62, { w: 7, h: 7, trunk: 6 });
-  // back-right: penguin pool with ice
-  pen(54, 55, 90, 90);
-  g.box(55, y - 1, 56, 89, y - 1, 89, C.signWhite);
-  g.box(60, y - 1, 60, 84, y - 1, 84, C.civPool);
+  lotTree(g, 'round', 34, y, 62, 8); bush(g, 30, y, 84, 38, 88, 3);
+  // back-right: penguin pool with an ice floe
+  pen(53, 54, 91, 91);
+  g.box(59, y - 1, 60, 85, y - 1, 85, C.civPool); g.walls(58, y - 1, 59, 86, y - 1, 86, C.civPoolLt);
   g.box(66, y, 66, 74, y + 2, 74, C.civPoolLt); g.box(68, y + 3, 68, 72, y + 4, 72, C.signWhite);
-  for (const [px, pz] of [[67, 65], [70, 67], [73, 69], [58, 58], [61, 86], [85, 61]]) penguin(g, px, y + (px > 60 && px < 80 && pz > 60 && pz < 80 ? 5 : 0), pz);
-  // lamps + benches + bushes along the avenues
-  for (const [lx, lz] of [[cx - 7, 20], [cx + 7, 70], [20, 41], [74, 53]]) lampPost(g, lx, y, lz, 10, { small: true });
-  benchS(g, cx - 12, y, 52, 'x', 5); benchS(g, cx + 6, y, 36, 'x', 5);
-  bush(g, cx + 6, y, 8, cx + 10, 30, 4); bush(g, cx - 10, y, 60, cx - 6, 90, 4, { flowers: [C.pink, C.yellow] });
-  crowd(g, [[cx - 4, 6, cx + 4, 92], [2, 43, 92, 51]], y, 44, 21 + vi);
+  for (const [px, pz] of [[67, 65], [70, 67], [73, 69], [56, 57], [61, 88], [88, 61], [56, 70]]) penguin(g, px, y + (px > 60 && px < 80 && pz > 60 && pz < 80 ? 5 : 0), pz);
+  // centre: café kiosk with a green roof, umbrella tables round the roundel
+  g.box(cx - 3, y, 44, cx + 3, y + 6, 50, C.cream);
+  g.box(cx - 3, y + 2, 43, cx + 3, y + 4, 43, C.civGlass); g.box(cx - 3, y + 2, 51, cx + 3, y + 4, 51, C.civGlass);
+  g.box(cx - 5, y + 7, 42, cx + 5, y + 7, 52, C.roofGreen); g.box(cx - 3, y + 8, 44, cx + 3, y + 8, 50, C.roofGreen);
+  g.box(cx - 1, y + 9, 46, cx + 1, y + 9, 48, C.signWhite);
+  for (const [ux, uz] of [[cx - 9, 40], [cx + 9, 55], [cx + 9, 40], [cx - 9, 55]]) umbTable(g, ux, y, uz, (ux + uz) & 2 ? C.yellow : C.red);
+  // entrance pavilion + gate: two cream booths with green hip roofs linked
+  // by a green arch beam carrying the ZOO name on a yellow board
+  for (const gx of [cx - 13, cx + 7]) {
+    g.box(gx, y, 1, gx + 6, y + 9, 7, C.cream);
+    g.box(gx + 1, y + 3, 0, gx + 5, y + 6, 0, C.civGlass);
+    g.box(gx - 1, y + 10, 0, gx + 7, y + 10, 8, C.roofGreen);
+    hipRoof(g, gx, 1, gx + 6, 7, y + 11, 3, C.roofGreen);
+  }
+  g.box(cx - 7, y + 12, 2, cx + 7, y + 14, 5, C.roofGreen);
+  g.box(cx - 6, y + 15, 3, cx + 6, y + 21, 4, C.yellow);
+  g.box(cx - 7, y + 22, 3, cx + 7, y + 22, 4, C.roofGreen);
+  for (const ex of [cx - 7, cx + 7]) g.box(ex, y + 15, 3, ex, y + 22, 4, C.roofGreen);
+  const Fg = facade(g, 'front', 3);
+  pixelText(Fg, cx - 5, y + 16, 'ZOO', C.roofGreen, 1);
+  const Bg = facade(g, 'back', 4);
+  pixelText(Bg, cx + 5, y + 16, 'ZOO', C.roofGreen, 1);
+  for (let x = cx - 5; x <= cx + 5; x += 2) g.box(x, y, 2, x, y + 1, 2, C.metal);                  // turnstiles
+  // lamps + benches + flower beds along the avenues
+  for (const [lx, lz] of [[cx - 7, 20], [cx + 7, 70], [20, 42], [74, 52], [cx + 7, 24], [cx - 7, 76]]) lampPost(g, lx, y, lz, 10, { small: true });
+  benchS(g, cx - 14, y, 52, 'x', 5); benchS(g, cx + 9, y, 36, 'x', 5); benchS(g, cx + 9, y, 58, 'x', 5);
+  bush(g, cx + 7, y, 9, cx + 9, 18, 3, { flowers: [C.pink, C.yellow] }); bush(g, cx - 9, y, 60, cx - 7, 90, 3, { flowers: [C.pink, C.yellow] });
+  bush(g, cx - 9, y, 9, cx - 7, 18, 3); bush(g, cx + 7, y, 60, cx + 9, 90, 3);
+  crowd(g, [[cx - 5, 6, cx + 5, 90], [4, 43, 90, 51]], y, 50, 21 + vi);
   return doneHi(g);
 }
 
@@ -1186,24 +1230,60 @@ function dHedge(rng, v) {
   return doneHi(g);
 }
 function dStreetlight(rng, v) {
-  // ~4-unit streetlight on a paved foot with a flower ring.
-  const G = grid(15, 20, 15, R4);
-  disc(G, 7, 0, 7, 6.6, C.lotRim); disc(G, 7, 0, 7, 5.6, C.lotPave);
-  for (let a = 0; a < 20; a++) {
-    const t = a / 20 * Math.PI * 2, fx = Math.round(7 + Math.cos(t) * 4.4), fz = Math.round(7 + Math.sin(t) * 4.4);
-    G.set(fx, 1, fz, V.bush); if (a % 2 === 0) G.set(fx, 2, fz, V.petals[(a >> 1) % V.petals.length]);
+  // (w2r1) A lamp corner, not a lone pole on the grass: a round paved pad
+  // with a light kerb, a clipped flower ring, and an ornate park lamp on a
+  // stepped plinth — v0 twin lanterns on a scrolled crossbar, v1 a
+  // four-lantern cluster, v2 a tall single lantern carrying two banners —
+  // plus a bench and a bin at the pad's edge. Fine (res-8) lanterns + pole.
+  const G = grid(23, 24, 23, R4);
+  const vi = mod(v, 3), c = 11;
+  disc(G, c, 0, c, 10.6, C.lotRim); disc(G, c, 0, c, 9.6, C.lotPave);
+  for (let x = 1; x < 22; x += 5) for (let z = 1; z < 22; z++) if (Math.hypot(x - c, z - c) < 9.4) G.set(x, 0, z, C.lotPaveDark);
+  // flower ring round the lamp
+  for (let a = 0; a < 28; a++) {
+    const t = a / 28 * Math.PI * 2, fx = Math.round(c + Math.cos(t) * 4.2), fz = Math.round(c + Math.sin(t) * 4.2);
+    G.set(fx, 1, fz, V.bush);
   }
-  const vi = mod(v, 3);
-  const pole = [C.darkGray, C.roofGreen, C.metal][vi];
-  G.box(6, 1, 6, 8, 1, 8, C.concrete);
-  G.box(7, 2, 7, 7, 15, 7, pole); G.set(7, 2, 7, pole);
-  if (vi === 1) {                                            // classic lantern
-    G.box(6, 15, 6, 8, 15, 8, pole); G.box(6, 16, 6, 8, 17, 8, C.lamp); G.box(6, 18, 6, 8, 18, 8, pole); G.set(7, 19, 7, pole);
-  } else {                                                   // arm(s) reaching out
-    const arms = vi === 2 ? [-1, 1] : [-1];
-    for (const dz of arms) { for (let k = 1; k <= 3; k++) G.set(7, 15, 7 + dz * k, pole); G.set(7, 14, 7 + dz * 3, C.lamp); }
+  disc(G, c, 1, c, 3.3, C.dirtDark);
+  fineBlooms(G, c - 3, c - 3, c + 3, c + 3, 2, [C.red, C.yellow, C.signWhite, C.pink], 2);
+  const pole = [C.darkGray, C.roofGreen, C.civNavy][vi];
+  // stepped plinth
+  G.box(c - 1, 1, c - 1, c + 1, 2, c + 1, C.civMarble); G.box(c - 1, 3, c - 1, c + 1, 3, c + 1, C.signWhite);
+  const H = hiGrid(G), X = 2 * c, Z = 2 * c;                         // fine lamp: centre cells X..X+1
+  const top = vi === 2 ? 44 : 38;
+  H.box(X - 1, 8, Z - 1, X + 2, 11, Z + 2, pole);                   // base collar
+  H.box(X, 12, Z, X + 1, top, Z + 1, pole);                          // shaft
+  H.box(X - 1, 20, Z - 1, X + 2, 20, Z + 2, pole);                   // ring
+  const lantern = (lx, ly, lz) => {
+    H.box(lx - 1, ly, lz - 1, lx + 2, ly, lz + 2, pole);
+    H.box(lx - 1, ly + 1, lz - 1, lx + 2, ly + 3, lz + 2, C.lamp);
+    H.box(lx - 1, ly + 4, lz - 1, lx + 2, ly + 4, lz + 2, pole); H.box(lx, ly + 5, lz, lx + 1, ly + 5, lz + 1, pole);
+  };
+  if (vi === 0) {
+    H.box(X - 6, top - 3, Z, X + 7, top - 3, Z + 1, pole);          // crossbar
+    H.set(X - 5, top - 4, Z, pole); H.set(X + 6, top - 4, Z, pole); // scrolls
+    lantern(X - 6, top - 9, Z); lantern(X + 6, top - 9, Z);
+    for (const lx of [X - 6, X + 7]) H.box(lx, top - 4, Z, lx, top - 4, Z + 1, pole);
+    H.box(X, top + 1, Z, X + 1, top + 2, Z + 1, C.gold);
+  } else if (vi === 1) {
+    for (const [dx, dz] of [[-5, 0], [5, 0], [0, -5], [0, 5]]) {
+      H.box(Math.min(X, X + dx), top - 2, Math.min(Z, Z + dz), Math.max(X + 1, X + 1 + dx), top - 2, Math.max(Z + 1, Z + 1 + dz), pole);
+      lantern(X + dx, top - 1, Z + dz);
+    }
+    lantern(X, top + 1, Z);
+  } else {
+    lantern(X, top + 1, Z);
+    for (const [dz, col] of [[-1, C.red], [2, C.civSeat]]) {
+      H.box(X, top - 3, Z + dz, X + 1, top - 3, Z + dz + (dz < 0 ? -5 : 5) , pole);
+      const z0 = dz < 0 ? Z + dz - 5 : Z + dz + 1, z1 = dz < 0 ? Z + dz - 1 : Z + dz + 5;
+      H.box(X, top - 12, Math.min(z0, z1), X + 1, top - 4, Math.max(z0, z1), col);
+      H.box(X, top - 8, Math.min(z0, z1), X + 1, top - 8, Math.max(z0, z1), C.signWhite);
+    }
   }
-  return G.done();
+  // bench + bin on the pad edge (away from the lens corner)
+  benchS(G, 6, 1, 17, 'x', 5, { seat: C.wood });
+  G.box(17, 1, 17, 18, 2, 18, C.roofGreen); G.box(17, 3, 17, 18, 3, 18, C.darkGray);
+  return doneHi(G);
 }
 function dStatue(rng, v) {
   // ref05 memorial in miniature (critic r4: "a thin white column on a small

@@ -347,3 +347,30 @@ gal-shops-1 frame 558k tris (r9 528k). 0 console errors on gal-shops-1/2, one-ba
 **Next:** the tris growth comes mostly from gables with double logos and from the flush lettering. If the budget bites, drop the inner gable logo on 1-floor shops.
 Upper walls are still strongly coloured (pink/teal/red). ref05's row is mostly white, cream and brick with colour in the awnings, so try calmer `upper` picks.
 Mall unit fascias still use full-bay colour strips.
+
+## 2026-09-25 — wave 2, round 1 (builder)
+**Target (consensus):** slim bold legible fascia signs, mostly-glass GF shopfronts with mullions, a few clean solid awnings,
+3-4 deliberate roof props, lots with a few distinct props and breathing room. No coherence items were tagged `shops`.
+**Changed** (src/models/commercial.js only; no palette keys):
+- **Slim sign:** new 5-row stem-bold font `F5B` (2-voxel stems, 1-voxel bars, the ref02 SHOP pixel look) + `namePanel()`: a 9-row
+  panel (1 border, 1 pad, 5-row letters flush, 1 pad, 1 border), proud 1 of an 8-row fascia (`levels`: B1 = GY1+12, TOP = GY1+13;
+  r11 was an 11-row 7-row-letter board on a 10-row band). Letters = 5/16 of an upper storey. Explicit `S.signBd` is now respected.
+  Panels are white letters on a saturated brand or dark panel per shop (cream-panel/colour-letter variants read low contrast in-game).
+- **GF:** default `bayW` 16: one big mullioned glass bay each side of the door on a 1×1 front, 2 per side face. Awnings SOLID
+  (`awnStripe` now only sets the lip colour; `'force'` for stripes). Blade signs off by default (`blade: true` to enable).
+  'flat' nameplate gables removed (read as extra roof boards); toy-store window awnings removed.
+- **Roof:** new `roofProps()` + `RPROP` (solar 2×2, solar2, ac, acBig, vent(s), hatch, tank, stair, sky, garden/gardenL):
+  3-4 props at named anchors (fl/fr/bl/br/c/cl/cr/fc/bc), 3 voxels apart, the rest of the deck clean. Every catalog shop has a
+  `roofKit`; zoned C picks from `ROOFKITS`. `roofPlan` still works (cinema/mall untouched, still roofScape).
+- **Lots:** 1-2 slot items per side, displays off or on one bay only, default crowd 2 (was 4).
+- **Burger:** one name — BURGERS on the roof box (slim panel, box widened to 49) under the 3D burger; the fascia is a plain red band
+  with burger logo tiles at the corners (Mac Auto 'M' tiles); terrace tables without parasols.
+- **Diner:** Mac Auto: no fascia name, no OPEN pole sign, no EAT side name; DINER slim panel on the roof box under the star;
+  burger logo tiles on the band corners; each flank just 2 plain red table sets + planters.
+**Tooling (scratchpad/shopwork):** `dump.mjs` + `iso.py` = a 0.3 s software iso preview of any model (`pv.sh id seed view`,
+`sheet.sh out.png id[:seed] ...`) — iterate there, then confirm with shoot.mjs.
+**Measured:** models `_selfTest` ok; all modules parse. gal-shops-1 frame 276k tris (was 500k), gal-shops-2 292k (was 513k),
+one-bakery 167k (was 290k). 0 console errors on all 4 shots. one-diner 61 fps; the gallery shots 15-24 fps with load avg ~21
+from other builders' Chromes (not a budget reading). Shots in `rounds/shops/r1-builder`.
+**Next:** the diner's 3D star reads as a little figure at iso angles — try a thicker star or a milkshake icon. Bring the cinema and
+mall onto roofProps + namePanel. GF glass under deep awnings renders near-slate; consider lighter frames on some shops.

@@ -538,3 +538,43 @@ edge to edge in warm tan / grey tiles with props (r12) rather than flat fill.
 - The iso-park frame now shows almost no open field. If a critic asks for "some green", add a road-framed field block with row trees (ref05 top-left), not a return to open lawn.
 - Lot tops in outer "homes" blocks: 2 houses plus terrain-dressed remainder. Check these read as filled edge to edge.
 - Hand the mountain-shadow band to lighting.
+
+## 2026-09-25, wave 2 round 1 (builder)
+**Inputs:** the coherence tags for [ground]: (a) a new city is a lattice of hundreds of identical small trees; (b) mountains are flat grey blocks with near-black sides; (c) a sand notch at bridge ends; (d) terrain lots at night are lighter and flatter than building lots. Grass tone left alone (settled).
+
+**Changed (terrain.js)**
+- Mountains rebuilt (`_buildRock`, `_rockSubH`, `_stone`, `STONE_HEX`, `MTN_SUB`, `MTN_APRON`):
+  - Meshed on a half-tile grid (4-unit cells). Each cell samples its tile height bilinearly a quarter of the way toward its neighbours and snaps to 2-unit terraces, so every level change becomes two terraces. There is an occasional crag or notch (6%/5%).
+  - Colour is authored through aPaint in stone strata: earthy warm stone at the foot, warm grey mid-slope, cool blue-grey under the snow. Bands alternate every 4 units.
+  - Foothills and tile-clustered ledges wear the field grass, with a painted turf lip down each riser. Their frequency thins with height. Summit terraces are snow with a snow lip.
+  - An **off-map apron**: sim ranges hug the corners, so every range used to end in a sheer cliff at the border. Border chunks now continue the range outside the map, stepping down to the skirt over 6–10 tiles.
+- Shader:
+  - Rock risers get the ref06 split (left 0.80, right 0.64).
+  - Painted rock tops get a +22% boost, so they are the brightest face.
+  - New `uRockFill` is sky fill on shade-side risers (and 35% on tops), so the shade side reads as coloured stone, not #1c1f24. It is off at night.
+  - New `uNightLotK` = 0.66 dims painted lot surfaces at night. The terrain lot rim measured #9c9cc0 against building plinth rims of #6c6ca8; it now reads the same as the building lots. (coherence #6)
+  - `uGrassShade` blue 0.96 → 0.84, so big cast shadows read as green shade.
+
+**Changed (props.js)**
+- `meadow()` is now a world FIELD LATTICE with pitch 12 (about 0.44 slots per tile, against r14's 0.8 per tile). The points sit on the kerb row's 4-unit grid, so the rows still line up with street planting.
+- An fbm clearing mask (about 5–10 tiles across) keeps roughly half the land as clean lime, with evenly spaced treed stretches between. Inside a stretch the lattice stays perfectly even.
+- Trees are a size up (0.46–0.60).
+- The diagonal mid-points carry a rock (9%, bigger so they read as clusters rather than specks) or a bush (5%). No flowers.
+- The small-tree "understorey swap" no longer fires on field trees; it had been turning a third of them into rock/bush/flower speckle.
+- Off-map band: uses the same lattice. Mountain borders get scree only past the apron.
+
+**Bridge notch (c):** I could not reproduce it. On a fresh new-city bridge (z=56) the deck is dark asphalt and runs flush from the beach onto the water. The notch in the coherence shot is the map's own one-tile inlet under water.js's cream deck rim, and the pale glow rectangles were gone. Both belong to water/roads if they come back.
+
+**Measured**
+- Terrain and props selfTests PASS. check.sh passes. Zero console errors in every shot.
+- fps is noise (load 20+): 19/19/30 on iso-mid, iso-park and iso-wide at DPR 2.
+- Shots: `rounds/ground/r1-builder` (official), `gs/m4` (new city, mountain close/wide, off-map apron), `w2r1-d/nightcrop.png` (night lots).
+
+**Still open / not mine**
+- The pale blurred band running down-left from the mountain in iso-wide is still there. It is lighting's (sun-aligned, and it stays with the grass shadow terms off).
+- A grainy dark contact band shows at the foot of right-facing walls at iso-mid scale. It looks like post SSAO or world-AO noise.
+- The sim's own T_TREE forest tiles (engine.addProp tree models) are dense clumps. They are fine as copses.
+
+**Next**
+- The mountain apron could take a few scree rocks on its lowest terraces.
+- Check the apron against a water border (ocean on the same edge as a range).

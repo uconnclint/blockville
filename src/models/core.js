@@ -135,7 +135,7 @@ const _colors = {
   // [downtown]  ref05 bank / hotel / hospital / apartment tower look (r8: dtPad + dtGlassDark lightened — critic r7: ONYX read near-black)
   dtGlass: 0x4f86bd, dtGlassHi: 0x9ad2f2, dtGlassDeep: 0x2a5b9f, dtGlassTeal: 0x238f9c,
   dtGlassDark: 0x2b4776, dtGlassGreen: 0x49ae88, dtLime: 0xece5d4, dtLimeShade: 0xd3c6ab,
-  dtTerra: 0xb8645a, dtCopper: 0x5fb9a3, dtPad: 0x5b6476, dtFrame: 0xf4f5f1,
+  dtTerra: 0xb8645a, dtCopper: 0x5fb9a3, dtPad: 0x3f6b78, dtFrame: 0xf4f5f1,
   dtNavyPanel: 0x34496b, dtStone: 0xc6ccd4,
   // [civic+fun]  ref05 stadium / fire station / monument plaza / pool
   civPitchA: 0x93cc3c, civPitchB: 0x7fbb33, civSeat: 0x3b9de0, civSeatAlt: 0xf26a2b,
@@ -146,7 +146,7 @@ const _colors = {
   civBrick: 0xc23d25, civCornice: 0x4f806a, civApron: 0x243a35, civPool: 0x2ea3ee,
   civPoolLt: 0x86d4f7, civPlaza: 0xdcad7a, civMarble: 0xefece5, civRubber: 0xe4644c,
   civFireRoof: 0x5f8a74,
-  civHall: 0xe4e3d3, civHallDk: 0x5f8f8e, civConcourse: 0x4b535f, civConcourseLt: 0x6d7682,
+  civHall: 0xb3cfbf, civHallDk: 0x5f8f8e, civConcourse: 0x4b535f, civConcourseLt: 0x6d7682,
   civSign: 0x2c3e66, civBronze: 0x6f8f86, civSlate: 0x3f6269, civStone: 0xd9d3c3,
   // [industrial]
   // r12 (critic r11: "almost all of our industrial district is pale white or

@@ -63,19 +63,28 @@ export function constructionModel() {
 // coherence 09-25: the old res-1 wooden plank deck (checkered orange planks
 // with post "crenellations") predated the render overhaul and read as a
 // different game next to roads.js's near-black asphalt, light kerbs and white
-// dashes. This one continues the street across the water: asphalt deck with
-// a white centre dash and yellow edge lines, raised light-concrete sidewalks
-// and a low parapet on the open sides, a lot-side-grey deck band and two
+// dashes. This one is the structure under the street (see below): a
+// lot-side-grey deck band, a low light parapet on the open sides and two
 // concrete piers standing in the pool.
 //
 // The model is authored from the basin floor up and carries yOffset = -DROP
-// (engine.addProp honours it), so the deck top lands on the road surface
-// (y ~ 0) and the piers reach down past the water (water.js WATER_Y -2.6).
+// (engine.addProp honours it), so the deck top lands just under the road
+// surface and the piers reach down past the water (water.js WATER_Y -2.6).
+//
+// roads wave 2 r1: the deck's top face read mid-grey (#6f7a89) next to the
+// near-black street -- the voxel material's dark floor + sky fill lift a
+// large flat near-black top. roads.js now draws bridge tiles itself (the same
+// asphalt shader, dashes, kerbs and lamps as every street), so this model is
+// ONLY the structure under / beside that surface: a slab whose top sits 0.05
+// below the asphalt (hidden), a lot-side-grey deck band, a dark girder line,
+// piers, and on each open side a light concrete parapet column from the deck
+// band up past the sidewalk top (roads.js skips its own outer kerb face on
+// bridge tiles, so the parapet IS the bridge's edge).
 // ---------------------------------------------------------------------------
 const BR_RES = 4, BR_N = 32;
-const BR_DROP = 2.75;                    // world units the model is lowered by
-const BR_DECK0 = 8, BR_DECK1 = 10;       // deck slab layers (top at 11/4 - 2.75 = 0)
-const BR_WALK = 11;                      // sidewalk layer (top +0.25, roads.js kerb is 0.30)
+const BR_DROP = 2.80;                    // world units the model is lowered by
+const BR_DECK0 = 8, BR_DECK1 = 10;       // deck slab layers (top at 11/4 - 2.80 = -0.05)
+const BR_PAR0 = 11, BR_PAR1 = 13;        // parapet layers: -0.05 .. 0.70 (roads.js walk top 0.32)
 const _bridgeCache = new Map();
 export function bridgeModel(mask) {
   mask = (mask | 0) & 15;
@@ -88,36 +97,17 @@ export function bridgeModel(mask) {
   const alongX = !!(E || W);
   const g = grid(BR_N, 15, BR_N, BR_RES);
   const L = BR_N - 1;
-  const ASPH = C.infraDeck, RIM = C.lotRim, SIDE = C.lotSide, LINE = C.roadLine;   // deck: darkest paint (materials' dark floor lifts it) to sit near roads.js asphalt
-  // deck slab + side band
-  g.box(0, BR_DECK0, 0, L, BR_DECK1, L, ASPH);
-  g.walls(0, BR_DECK0, 0, L, BR_DECK1 - 1, L, SIDE);
+  const SIDE = C.lotSide;
+  // deck slab (its top is hidden under roads.js's asphalt) + side band
+  g.box(0, BR_DECK0, 0, L, BR_DECK1, L, C.infraDeck);
+  g.walls(0, BR_DECK0, 0, L, BR_DECK1, L, SIDE);
   g.box(0, BR_DECK0 - 1, 0, L, BR_DECK0 - 1, L, C.stoneDark);   // girder shadow line under the band
-  // open (non-connected) sides: sidewalk strip + parapet
-  const WALK_W = 3;   // 0.75 units, like roads.js's kerb band
-  const edge = (open, fn) => { if (open) for (let a = 0; a <= L; a++) for (let d = 0; d < WALK_W; d++) fn(a, d); };
-  const walk = (x, z, d) => {
-    g.set(x, BR_WALK, z, RIM);
-    g.set(x, BR_DECK1, z, SIDE);
-    if (d === 0) { g.set(x, BR_WALK + 1, z, C.concrete); g.set(x, BR_WALK + 2, z, C.concrete); }
-  };
-  edge(!N, (a, d) => walk(a, d, d));
-  edge(!S, (a, d) => walk(a, L - d, d));
-  edge(!W, (a, d) => walk(d, a, d));
-  edge(!E, (a, d) => walk(L - d, a, d));
-  // markings (roads.js: yellow edge line inside the kerb, white centre dash)
-  const y = BR_DECK1;
-  if (alongZ && !alongX) {
-    for (let z = 0; z <= L; z++) {
-      g.set(WALK_W + 1, y, z, LINE); g.set(L - WALK_W - 1, y, z, LINE);
-      if ((z >> 2) % 2 === 0) { g.set(15, y, z, C.signWhite); g.set(16, y, z, C.signWhite); }
-    }
-  } else if (alongX && !alongZ) {
-    for (let x = 0; x <= L; x++) {
-      g.set(x, y, WALK_W + 1, LINE); g.set(x, y, L - WALK_W - 1, LINE);
-      if ((x >> 2) % 2 === 0) { g.set(x, y, 15, C.signWhite); g.set(x, y, 16, C.signWhite); }
-    }
-  }
+  // open (non-connected) sides: one-voxel concrete parapet column on the edge
+  const par = (x, z) => g.box(x, BR_PAR0, z, x, BR_PAR1, z, C.lotRim);
+  if (!N) for (let a = 0; a <= L; a++) par(a, 0);
+  if (!S) for (let a = 0; a <= L; a++) par(a, L);
+  if (!W) for (let a = 0; a <= L; a++) par(0, a);
+  if (!E) for (let a = 0; a <= L; a++) par(L, a);
   // two square concrete piers under the deck, on the cross axis
   const pier = (cx, cz) => g.box(cx - 2, 0, cz - 2, cx + 1, BR_DECK0 - 2, cz + 1, C.concrete);
   if (alongZ && !alongX) { pier(7, 16); pier(25, 16); }

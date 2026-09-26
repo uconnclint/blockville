@@ -1813,14 +1813,29 @@ export class LightingRig {
       // fix (the visible DISC is sky.js's; see the note in _updateCelestial).
       // null disables the floor entirely.
       moonKeyElevation: 30,      // degrees
-      lampColor: 0xffcf8a,
+      lampColor: 0xffc47c,   // night r1: a touch warmer than 0xffcf8a (sodium-ish, still cheerful)
       // coherence 09-25: 9.5 / 1.0 were tuned for the old perspective camera
       // and sparse lamps. With the iso camera and ~1 lamp per road tile the
       // additive pools overlapped into solid orange roads (markings, zebras
       // and asphalt all gone) — measured the whole night street grid as sand.
       // Small, dim pools keep the warm puddles and leave the roads readable.
-      lampRadius: 5.0,
-      lampIntensity: 0.10,
+      // night r1: 5.0 / 0.10 left a faint, wide orange smear whose dim fringe
+      // sat right on post.js's asphalt gates (sparkle). A smaller, brighter
+      // pool reads as a lamp's own puddle of light and still leaves the
+      // asphalt, markings and zebras between lamps (coherence #1 kept).
+      lampRadius: 3.4,
+      lampIntensity: 0.24,
+      // night r1: the bulb billboard was a 3-unit disc (glowRadius 1.5) on a
+      // 2.3-unit lamp — a floating orange ball bigger than the post. A small
+      // hot core; bloom supplies the halo.
+      lampGlowRadius: 0.55,
+      lampGlowIntensity: 1.1,
+      // night r1: camera-facing window-spill billboards clip against the
+      // facades they sit in and printed pale "wedges" / warm haze sheets over
+      // whole blocks (coherence #2, surface r5 notes). The lit panes carry the
+      // read on their own; the list is still accepted (and still feeds the
+      // sky's city glow via engine.js), it is just not drawn.
+      windowGlowBillboards: false,
       // Casters render their BACK faces. Blockville's casters are closed voxel
       // shells, so the stored depth is a whole object-thickness behind the lit
       // surface and self-shadow acne simply cannot occur — which is what lets
@@ -2187,7 +2202,8 @@ export class LightingRig {
     if (p.maxPenumbra !== undefined) this.uniforms.uCsmSoft.value.w = p.maxPenumbra;
     if (p.blockerSearchWorld !== undefined) this.uniforms.uCsmSoft.value.y = p.blockerSearchWorld;
     this._applyAoParams();
-    if (p.lampColor !== undefined || p.lampRadius !== undefined || p.lampIntensity !== undefined) {
+    if (p.lampColor !== undefined || p.lampRadius !== undefined || p.lampIntensity !== undefined ||
+        p.lampGlowRadius !== undefined || p.lampGlowIntensity !== undefined || p.windowGlowBillboards !== undefined) {
       this._rebuildPools();
     }
     // Any skylight/moon key change must be visible without waiting for the next
@@ -3608,7 +3624,7 @@ export class LightingRig {
 
   _rebuildGlows() {
     const lamps = this._lampAnchors;
-    const wins = this._windowGlows;
+    const wins = this.opts.windowGlowBillboards ? this._windowGlows : [];
     const total = lamps.length + wins.length;
     if (total === 0) {
       if (this._glowMesh) this._glowMesh.count = 0;
@@ -3652,7 +3668,8 @@ export class LightingRig {
       mesh.setMatrixAt(k, m);
       col.setHex(a.color !== undefined ? a.color : this.opts.lampColor, THREE.SRGBColorSpace);
       tint.setXYZ(k, col.r, col.g, col.b);
-      param.setXYZ(k, (a.glowRadius || 1.5), (a.intensity !== undefined ? a.intensity : 1) * 0.8, (i % 97) / 97);
+      param.setXYZ(k, (a.glowRadius || this.opts.lampGlowRadius || 1.5),
+        (a.intensity !== undefined ? a.intensity : 1) * (this.opts.lampGlowIntensity != null ? this.opts.lampGlowIntensity : 0.8), (i % 97) / 97);
     }
     for (let i = 0; i < wins.length; i++, k++) {
       const a = wins[i];

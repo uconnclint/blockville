@@ -76,20 +76,26 @@ const CAR_COLOURS = 10; // colour seeds per kind (variant = kind + 14 * seed; va
 // more trade vans + delivery trucks in the mix, every livery in play
 // r13 (the r12 critic: "oversized pink vans dominate the street ... looks like a
 // toy set rather than city traffic"): mostly private cars, fewer vans / taxis
-const CAR_MIX = [0.245, 0.05, 0.045, 0.01, 0.02, 0.11, 0.05, 0.03, 0.07, 0.05, 0.10, 0.06, 0.02, 0.14];
+// w1 (09-25 wave consensus: "emergency vehicles RARE and in context"): no
+// fire engines or ambulances in the general mix at all — they only come from
+// their station's streets (SITE_KINDS) and its kerb (FLEET); police is a rare
+// patrol; school buses stay near schools.
+const CAR_MIX = [0.25, 0.045, 0.045, 0.004, 0, 0.12, 0.012, 0, 0.075, 0.05, 0.10, 0.075, 0.004, 0.17];
 //                  sedan taxi  bus  ice  fire hatch pol  amb  box  pick suv  van  schl city
 const CAR_SPEED = [5.6, 5.6, 4, 3.6, 6, 5.6, 6.4, 6.4, 4.4, 5.2, 5.2, 4.8, 4, 5.6];
 // Service vehicles hang around their home buildings (spawn on nearby roads):
 // ref05 parks fire engines at the fire station, ambulances at the hospital.
 const SITE_KINDS = {
-  'fire-station': [4, 4, 7, 6], 'school': [12, 2, 13], 'park': [3], 'playground': [3],
-  'zoo': [3, 2], 'stadium': [2, 6, 1], 'ferris-wheel': [3], 'carousel': [3], 'water-slide': [3],
-  'city-bank': [6, 1], 'hotel': [1, 13], 'corporate-hq': [1, 0], 'glass-skyscraper': [1, 10],
+  'fire-station': [4, 4, 7, 6, 0], 'school': [12, 2, 13], 'park': [3, 13], 'playground': [3, 13],
+  'zoo': [3, 2], 'stadium': [2, 1, 13], 'ferris-wheel': [3, 13], 'carousel': [3, 13], 'water-slide': [3, 13],
+  'city-bank': [1, 0, 6], 'hotel': [1, 13], 'corporate-hq': [1, 0], 'glass-skyscraper': [1, 10],
   'mall': [11, 8, 1], 'grocery': [8, 11], 'warehouse': [8, 8, 11], 'workshop': [9, 11],
   'car-factory': [8, 9], 'toy-factory': [8, 11], 'mega-factory': [8, 8], 'sawmill': [9, 8],
   'recycling-center': [8, 9], 'museum': [2, 1],
 };
-const SITE_P = 0.35;    // share of spawns that go to a service site in view
+const SITE_P = 0.25;    // share of spawns that go to a service site in view
+const EMERGENCY = [0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0];   // fire engine, police, ambulance
+const EMERG_CAP = 3;    // w1: most emergency vehicles driving at once (they park at their station)
 // Kerbside parking (round 3): service fleets stand in painted bays along the
 // kerb in front of their building (ref05: ambulances in the hospital's bays,
 // fire engines on the station apron, box trucks in the depot yard), shoppers'
@@ -99,12 +105,12 @@ const SITE_P = 0.35;    // share of spawns that go to a service site in view
 // (models/vehicles.js VAN_LIV / BOX_LIV), so a depot lines up ONE fleet.
 const V = (k, liv) => k + CAR_KINDS * liv;
 const FLEET = {
-  'fire-station': [4, 4, 7, 6, 4, 7], 'school': [12, 12, 13], 'city-bank': [6, 6, 0, 13], 'hotel': [1, 1, 13],
-  'corporate-hq': [1, 0, 10], 'glass-skyscraper': [1, 13], 'museum': [2, 13, 0], 'stadium': [7, 6, 2, 1, 13, 0],
+  'fire-station': [4, 4, 7, 6, 4, 7], 'school': [12, 12, 13], 'city-bank': [6, 0, 13, 10], 'hotel': [1, 1, 13],
+  'corporate-hq': [1, 0, 10], 'glass-skyscraper': [1, 13], 'museum': [2, 13, 0], 'stadium': [2, 1, 13, 0, 10, 5],
   'zoo': [2, 13], 'park': [3, 13], 'playground': [3, 13],
   // r13 (the r12 critic: ref05's ambulances / police "parked with purpose"):
   // no hospital in the catalog, so the first-aid posts are the big venues
-  'swimming-pool': [7, 13, 0], 'mini-golf': [13, 0],
+  'swimming-pool': [13, 0, 5], 'mini-golf': [13, 0],   // w1: no ambulances away from the fire station (no hospital yet)
   // depots (r11: ref05's logistics yard = rows of orange delivery trucks)
   'warehouse': [V(8, 0), V(8, 0), V(8, 4), V(11, 0)], 'mega-factory': [V(8, 0), V(8, 0), V(8, 5), V(11, 0)],
   'car-factory': [V(8, 1), 9, 10], 'toy-factory': [V(8, 3), V(8, 3), V(11, 0)], 'sawmill': [9, V(8, 1)],
@@ -1019,6 +1025,13 @@ export class Life {
     // never pop into existence inside a junction: crossing flows there are
     // only kept apart by the claim logic, which a fresh car would bypass
     if (this._junc[idx(cur.x, cur.z)]) return null;
+    // w1: emergency vehicles stay RARE — at most EMERG_CAP fire engines /
+    // ambulances / police cars driving at once, whatever the site spawns ask
+    if (kind != null && EMERGENCY[kind]) {
+      let n = 0;
+      for (const c of this.cars) if (c.active && EMERGENCY[((c.variant % CAR_KINDS) + CAR_KINDS) % CAR_KINDS]) n++;
+      if (n >= EMERG_CAP) kind = 0;
+    }
 
     const variant = this._pickCarVariant(kind);
     const car = this._slot(this.cars, CAR_CAP,

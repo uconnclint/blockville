@@ -83,8 +83,9 @@
 //   aBvMask    float  0..15 connectivity mask, bit1=N(-Z) 2=E(+X) 4=S(+Z) 8=W(-X)
 //   aBvKind    float  0 = asphalt, 1 = sidewalk top, 2 = curb / kerb face
 //
-// What this module does NOT do: place props (it only returns anchors), draw
-// bridge tiles (state.bridge[i]===1 is skipped entirely), or touch terrain.
+// What this module does NOT do: place props (it only returns anchors) or touch
+// terrain. Bridge tiles ARE drawn (road surface only; infra.js bridgeModel
+// is the structure under it).
 
 import * as THREE from '../../vendor/three.module.js';
 import { TILE, N, CHUNK } from '../constants.js';
@@ -241,9 +242,20 @@ const APRON = 0.3;
 const APRON_Y = 0.445;
 // Albedo, sRGB (ART-DIRECTION.md: near-black asphalt ~#1c1d20, light concrete
 // kerbs ~#dcd8cc). Tuned against the lit, tonemapped frame, not in isolation.
+// Wave 2 r1: asphalt 0x2a292f -> 0x1e1d1f. The current light/post chain
+// renders 0x2a292f as a blue-grey (40,40,45) in the demo city (was ~(25,27,26)
+// when tuned); a sweep in the live iso-close frame: 0x1e1e1e -> (27,28,26)
+// greenish, 0x222222 -> (32,34,31), 0x1e1d1f -> (23,23,24) = ref05's neutral
+// (22,22,22). The grade is steep this close to black, so retune by sweeping
+// BV.engine._roads.setPalette({asphalt}) in the live frame, never by eye.
 const PALETTE = {
-  asphalt: 0x2a292f,
+  asphalt: 0x1e1d1f,
   concrete: 0xcdc9d0,
+  // Wave 2 r2: the walk field and the kerb face have their own albedos (were
+  // concrete x BV_WALK_K and concrete x 0.66), so they can be swept live via
+  // setPalette({walk, kerbFace}) against the lit frame like the asphalt.
+  walk: 0xb8b4c0,
+  kerbFace: 0xaaa7af,
   paintWhite: 0xffffff,
   paintYellow: 0xffe03a,
 };
@@ -308,6 +320,8 @@ uniform float uBvRoadSh;
 uniform vec3  uBvTint;
 uniform vec3  uBvAsphalt;
 uniform vec3  uBvConcrete;
+uniform vec3  uBvWalk;
+uniform vec3  uBvKerbFace;
 uniform vec3  uBvPaintW;
 uniform vec3  uBvPaintY;
 uniform sampler2D uBvTileTex;
@@ -319,7 +333,6 @@ uniform sampler2D uBvTileTex;
 #define BV_KS ${KERB_STONE.toFixed(4)}
 #define BV_OUTER_K ${OUTER_K.toFixed(4)}
 #define BV_APRON_Y ${APRON_Y.toFixed(4)}
-#define BV_WALK_K vec3( 0.80, 0.80, 0.85 )
 // Round 14: fine yellow edge line on the asphalt, its centre BV_EDGE_D from
 // the kerb edge AS SEEN (see the view-aware kdv in the asphalt branch)
 #define BV_EDGE_D 0.13
@@ -720,7 +733,7 @@ if ( bvKind < 0.5 ) {
     // mid-grey bands"); the key/fill already give the face its own tone.
     // Round 13: x0.84 -> x0.66 (r12 critic: a kerb with "a lit top and a
     // shaded side" -- with the yellow line gone the face IS the edge).
-    base *= vec3( 0.66, 0.66, 0.68 );
+    base = uBvKerbFace;
     base *= mix( 0.82, 1.0, smoothstep( 0.0, 0.35, bvCurbT ) );
     // Round 10: the OUTER face (sidewalk down to the lawn) is the block's side
     // band, like a lot plinth's C.lotSide: clearly darker than the lit top so
@@ -756,7 +769,7 @@ if ( bvKind < 0.5 ) {
     // cream rim. The raw concrete lit to (251,250,236) -- the same cream as
     // the rim -- so the walk field (not the lip strip) is toned down and
     // cooled; the lip keeps the full bright tone as the crisp bevel line.
-    base *= mix( BV_WALK_K, vec3( 1.0 ), stone );
+    base = mix( uBvWalk, base, stone );
     if ( bvKind < 1.5 ) {
       // Round 14: PAVING JOINTS. The r13 critic: the walks were "flat light-grey
       // slabs ... no paving joints". Fine dark joints on the 1-unit grid: with
@@ -933,6 +946,8 @@ export class Roads {
       uBvTileTex: { value: this._tileTex },
       uBvAsphalt: { value: new THREE.Vector3() },
       uBvConcrete: { value: new THREE.Vector3() },
+      uBvWalk: { value: new THREE.Vector3() },
+      uBvKerbFace: { value: new THREE.Vector3() },
       uBvPaintW: { value: new THREE.Vector3() },
       uBvPaintY: { value: new THREE.Vector3() },
     };
@@ -964,6 +979,8 @@ export class Roads {
     };
     put(this.uniforms.uBvAsphalt, p.asphalt);
     put(this.uniforms.uBvConcrete, p.concrete);
+    put(this.uniforms.uBvWalk, p.walk);
+    put(this.uniforms.uBvKerbFace, p.kerbFace);
     put(this.uniforms.uBvPaintW, p.paintWhite);
     put(this.uniforms.uBvPaintY, p.paintYellow);
   }
@@ -975,7 +992,7 @@ export class Roads {
       color: 0xffffff,
       roughness: 0.85,
       metalness: 0.0,
-      dithering: true,           // large flat asphalt bands otherwise
+      dithering: false,   // night r1: the scene target is half-float (no banding), and three's +/-0.5/255 dither sat under the tonemap's black plateau, then sparkled as grain wherever a lamp pool lifted the asphalt out of it
       side: THREE.FrontSide,
     });
     mat.name = 'bv-roads';
@@ -992,7 +1009,7 @@ export class Roads {
         .replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n' + GLSL_WALK_SHADOW);
       mat.userData.shader = shader;
     };
-    mat.customProgramCacheKey = () => 'bv-roads-v22';
+    mat.customProgramCacheKey = () => 'bv-roads-v23';
     return mat;
   }
 
@@ -1015,10 +1032,19 @@ export class Roads {
     return state.map[tz * N + tx] === ROAD_TYPE;
   }
 
-  /** A road tile that we actually draw (bridges render as water + a deck prop). */
+  /** A road tile that we actually draw. Wave 2 r1 (coherence: "the bridge
+   *  deck renders mid-grey next to near-black road"): bridge tiles are drawn
+   *  too -- the same asphalt, dashes, kerbs and lamps continue across the
+   *  water, and infra.js bridgeModel only supplies the structure BELOW the
+   *  road surface (deck band, girder, piers) plus a parapet. One asphalt
+   *  shader everywhere, so the deck can never drift from the street tone. */
   _isDrawn(state, tx, tz) {
-    if (!this._isRoad(state, tx, tz)) return false;
-    return !(state.bridge && state.bridge[tz * N + tx] === 1);
+    return this._isRoad(state, tx, tz);
+  }
+
+  _isBridge(state, tx, tz) {
+    if (tx < 0 || tz < 0 || tx >= N || tz >= N) return false;
+    return !!(state.bridge && state.bridge[tz * N + tx] === 1);
   }
 
   /** 4-neighbour connectivity mask. Bridges DO count as neighbours so the shore
@@ -1104,7 +1130,7 @@ export class Roads {
       const row = tz * N;
       for (let tx = 0; tx < N; tx++) {
         const i = row + tx;
-        if (map[i] !== ROAD_TYPE || (bridge && bridge[i] === 1)) { road[i] = 0; mask[i] = 0; continue; }
+        if (map[i] !== ROAD_TYPE) { road[i] = 0; mask[i] = 0; continue; }
         road[i] = 1;
         let m = 0;
         if (tz > 0 && map[i - N] === ROAD_TYPE) m |= BIT_N;
@@ -1199,7 +1225,7 @@ export class Roads {
         const nx = jx + DIRS[d].dx, nz = jz + DIRS[d].dz;
         if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
         const ni = nz * N + nx;
-        if (!road[ni]) continue;
+        if (!road[ni] || (bridge && bridge[ni] === 1)) continue;
         if (POPCOUNT[mask[ni]] >= 3 && ni < ji) continue;
         z |= 1 << d;
       }
@@ -1522,11 +1548,15 @@ export class Roads {
         if (oS && oE) { face(ox, oz, 3, 8 - wc[2], 8 - wc[2], 8, yA, yT, mask); face(ox, oz, 0, 8 - wc[2], 8 - wc[2], 8, yA, yT, mask); }
         if (oS && oW) { face(ox, oz, 1, wc[3], 8 - wc[3], 8, yA, yT, mask); face(ox, oz, 0, 8 - wc[3], 0, wc[3], yA, yT, mask); }
 
-        // outer faces, down onto the terrain
-        if (!oN) face(ox, oz, 0, 0, 0, 8, 0, yT, mask, V_OUTER);
-        if (!oS) face(ox, oz, 2, 8, 0, 8, 0, yT, mask, V_OUTER);
-        if (!oW) face(ox, oz, 3, 0, 0, 8, 0, yT, mask, V_OUTER);
-        if (!oE) face(ox, oz, 1, 8, 0, 8, 0, yT, mask, V_OUTER);
+        // outer faces, down onto the terrain. On a bridge tile infra.js's
+        // parapet column is the outer edge (it would z-fight this face).
+        const onBr = this._isBridge(state, tx, tz);
+        if (!onBr) {
+          if (!oN) face(ox, oz, 0, 0, 0, 8, 0, yT, mask, V_OUTER);
+          if (!oS) face(ox, oz, 2, 8, 0, 8, 0, yT, mask, V_OUTER);
+          if (!oW) face(ox, oz, 3, 0, 0, 8, 0, yT, mask, V_OUTER);
+          if (!oE) face(ox, oz, 1, 8, 0, 8, 0, yT, mask, V_OUTER);
+        }
 
         // Band ends on an open arm. The next tile continues the same band
         // (or an island of the same width), EXCEPT when both tiles close that
@@ -1586,6 +1616,7 @@ export class Roads {
           } else if (bridgeE) face(ox, oz, 1, x, 8 - wc[2], 8, 0, yT, mask, V_OUTER);
         }
 
+        this._onBridge = onBr;
         this._tileAnchors(tx, tz, mask, anchors);
       }
     }
@@ -1712,6 +1743,8 @@ export class Roads {
       put(d, kerbSide(ws[d]), 4, 'lamp');
     }
 
+    // a bridge deck carries lamps only (no benches / bins / hydrants over water)
+    if (this._onBridge) return;
     if (straightNS || straightEW) {
       const sides = straightNS ? [1, 3] : [0, 2];
       for (let j = 0; j < 2; j++) {

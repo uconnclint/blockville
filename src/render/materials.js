@@ -338,6 +338,11 @@ uniform float uWinMullion;
 uniform float uWinOff;        // fraction of windows unlit at night
 uniform vec3  uWinLevel;      // per-window night intensity (lo, hi, gamma)
 uniform float uWinTemp;       // per-window colour-temperature jitter
+uniform float uWinOffVary;    // per-building spread of uWinOff (night r1)
+uniform vec3  uWinWarm;       // (building warm skew pow, per-window jitter, cool-pane pull)
+uniform vec3  uWinCoolTo;     // linear colour cool panes are pulled toward at night
+uniform vec4  uGlassNight;    // (amount, extra unlit share, level, min height) night r1 plain glass
+uniform vec3  uNightGlassCol[6]; // linear palette colours treated as office glass at night
 uniform vec3  uWinDusk;       // (firstOnAt, spread, rampWidth) in nightT
 uniform float uWinSizeVary;   // per-window frame-width jitter -> pane SIZE
 uniform float uWinSill;       // ledge/sill under every pane
@@ -375,6 +380,8 @@ uniform vec4  uShadowCrisp;   // x amount, y lo, z hi: penumbra re-shaping on vo
 uniform vec4  uBounce;        // x strength, y hue carry, zw unused: sun bounce into shaded faces
 uniform vec3  uBounceTint;    // colour of that bounce (linear)
 uniform vec4  uShadeSide;     // x depth, y hue carry, z away ramp: key-away faces' fill (params.shadeSide)
+uniform vec2  uGlassDiffuse;
+uniform float uGlassReflTint; // how much the glass body hue colours its sky/env reflection (surface w2 r1)  // (direct, indirect) diffuse scale on glass by day (surface w2 r1)
 uniform float uWallKey;        // direct-diffuse scale on vertical faces by day (params.wallKey)
 uniform vec4  uAOHue;          // x hue carry into AO darkening, y extra depth (params.aoHue)
 ${COMMON_PARS}
@@ -494,6 +501,14 @@ vec2 voxFaceUV(out vec3 cellId, out vec2 plane, out float salt) {
 // cells -> 63.1% lit before, 70.0% after.
 float voxCellRand(vec3 cell, float seed, float salt) {
   float v = sin((voxHash13(cell + salt) + seed) * 6.2831853);
+  return clamp(0.5 + asin(clamp(v, -1.0, 1.0)) * 0.3183098862, 0.0, 1.0);
+}
+
+// Per-BUILDING uniform random (night r1). Same trick as voxCellRand: a sine of
+// the (continuous) instance seeds, so a moving object fades rather than
+// strobes; many cycles across the seed range so neighbours decorrelate.
+float voxBldRand(vec2 seed, float salt) {
+  float v = sin((seed.x * 13.7 + seed.y * 7.3 + salt) * 6.2831853);
   return clamp(0.5 + asin(clamp(v, -1.0, 1.0)) * 0.3183098862, 0.0, 1.0);
 }
 
@@ -634,9 +649,12 @@ const FRAG_COLOR = /* glsl */`
     float nG = max(1.0, floor(qRange / 1.6 + 0.5));
     float ph = fract(q * nG);
     float pw = fwidth(q * nG);
-    float b1 = 1.0 - smoothstep(0.0, 0.15 + pw, abs(ph - 0.30));
-    float b2 = 1.0 - smoothstep(0.0, 0.045 + pw, abs(ph - 0.56));
-    float glint = b1 * b1 * (3.0 - 2.0 * b1) + 0.55 * b2;
+    // wave-2 r1: the broad band was 0.15 half-width, which on the narrow
+    // (2-4 voxel) res-4 panes covered half the window and read as a white
+    // slash over a pale pane. Narrower main band, fainter thin one.
+    float b1 = 1.0 - smoothstep(0.0, 0.095 + pw, abs(ph - 0.30));
+    float b2 = 1.0 - smoothstep(0.0, 0.035 + pw, abs(ph - 0.52));
+    float glint = b1 * b1 * (3.0 - 2.0 * b1) + 0.40 * b2;
     float panePx = 1.0 / max(length(gPy), 1e-6);
     float sheen = glint * smoothstep(6.0, 16.0, panePx) * (1.0 - smoothstep(0.35, 0.8, pw));
     float onPane = voxGlass * (1.0 - voxFrame) * (1.0 - voxSill);
@@ -820,8 +838,21 @@ const FRAG_AO = /* glsl */`
   // what makes a window read as a pane instead of pale paint. Keyed off the RAW
   // attribute class (voxGlass), since a remapped pane is metallic now.
   reflectedLight.indirectSpecular *= mix(1.0, uGlassEnv, voxGlass);
+  // wave-2 r1: coated/tinted glass colours what it reflects. The grey-white
+  // sky/env reflection was what lifted every pane's R channel into a pale
+  // blue-grey (measured R 70-130 vs the reference's 15-60). Tint the env and
+  // the analytic mirror below by the pane's own hue (peak-normalised, so it
+  // only removes the weak channels); the cyan sheen band is added untinted.
+  vec3 glassReflHue = vec3(1.0);
+  if (voxGlass > 0.0) {
+    float pkG = max(max(diffuseColor.r, diffuseColor.g), max(diffuseColor.b, 0.02));
+    glassReflHue = mix(vec3(1.0), clamp(diffuseColor.rgb / pkG, 0.0, 1.0), uGlassReflTint * voxGlass * (1.0 - uNight));
+    reflectedLight.indirectSpecular *= glassReflHue;
+  }
   // Glass streak (see FRAG_COLOR): sky-coloured reflected light.
-  reflectedLight.indirectSpecular += uSkyFillColor * vec3(0.85, 0.95, 1.0) * (uGlassSheen * 1.1 * voxSheenV);
+  // wave-2 r1: tinted toward the reference's light cyan highlight (~#8fd0f0)
+  // rather than the plain sky colour, which read as a white slash.
+  reflectedLight.indirectSpecular += uSkyFillColor * vec3(0.62, 0.90, 1.0) * (uGlassSheen * 1.1 * voxSheenV);
   reflectedLight.directSpecular   *= mix(1.0, 1.0 + uGlassSpec * 1.6, voxGlass);
 
   // --- ANALYTIC SKY/HORIZON/GROUND MIRROR on glass ------------------------
@@ -920,7 +951,7 @@ const FRAG_AO = /* glsl */`
     // sits in the reveal's shade and sees less sky); 0.5 = no pane data.
     fr *= 1.25 - 0.5 * voxPaneUp;
     reflectedLight.indirectSpecular +=
-      envC * mix(vec3(1.0), material.specularColor * 1.7, 0.65) *
+      envC * glassReflHue * mix(vec3(1.0), material.specularColor * 1.7, 0.65) *
       (uGlassSky * voxGlass * fr * aoIndirect);
   }
 
@@ -1015,6 +1046,21 @@ const FRAG_AO = /* glsl */`
       (uBounce.x * away * aoIndirect * (1.0 - metalnessFactor) * (1.0 - 0.5 * voxGlass));
   }
   #endif
+
+  // --- GLASS BODY (params.glassDiffuse, surface wave-2 r1) ------------------
+  // Coordinator / civic, downtown, shops critics: "windows are low-contrast
+  // blue-grey slits with no dark glass". A pane is transparent: its 'albedo'
+  // is the dim room behind it, so it should not take the full sun + sky fill
+  // a painted wall does (measured: the sunlit side's panes rendered
+  // (133,175,244), near-white; ref04/ref05 panes sit at ~(45,95,150)). Scale the
+  // diffuse on glass so the pane body is a deep saturated blue on BOTH wall
+  // directions, and let the reflection (mirror + sheen band) carry the light.
+  // Day only: the night window glow is emissive and untouched.
+  {
+    float gdK = voxGlass * (1.0 - uNight);
+    reflectedLight.directDiffuse   *= mix(1.0, uGlassDiffuse.x, gdK);
+    reflectedLight.indirectDiffuse *= mix(1.0, uGlassDiffuse.y, gdK);
+  }
 }
 `;
 
@@ -1037,9 +1083,17 @@ const FRAG_OUT = /* glsl */`
   // fragments (voxWin == 0) skip the four cell hashes with identical output.
   if (voxWin > 0.0) {
     float onR = voxCellRand(voxCell, vVoxSeed.y, 1.73);
+    // NIGHT r1: every building has its own night PERSONALITY — how busy it is
+    // (share of rooms lit) and what bulbs it burns (amber flats, warm-white
+    // shops, the odd cool office). One city-wide uWinOff made every block the
+    // same speckle. voxBldRand is smooth in the instance seed (see its note),
+    // mirrored on the CPU by _bldRand().
+    float bOcc  = voxBldRand(vVoxSeed, 3.7);
+    float bTemp = voxBldRand(vVoxSeed, 8.9);
+    float offB  = clamp(uWinOff + (bOcc - 0.5) * uWinOffVary, 0.03, 0.92);
     // Hard step, exactly like the CPU mirror in computeWindowGlows(): a half-lit
     // window is not a thing, and the soft version disagreed with the lights.
-    float on  = step(uWinOff, onR);
+    float on  = step(offB, onR);
 
     // --- DUSK GATE ---------------------------------------------------------
     // uNight is a linear 0..1 clock, so multiplying emissive by it lit every
@@ -1065,7 +1119,9 @@ const FRAG_OUT = /* glsl */`
     float tr = voxCellRand(voxCell, vVoxSeed.y, 9.43);
     vec3 warm = vec3(1.0 + 0.20 * uWinTemp, 1.0 - 0.02 * uWinTemp, 1.0 - 0.34 * uWinTemp);
     vec3 cool = vec3(1.0 - 0.18 * uWinTemp, 1.0 + 0.02 * uWinTemp, 1.0 + 0.30 * uWinTemp);
-    vec3 tint = mix(warm, cool, tr);
+    // Building temperature skewed WARM (pow), each window jittered around it.
+    float trB = clamp(pow(bTemp, uWinWarm.x) + (tr - 0.5) * uWinWarm.y, 0.0, 1.0);
+    vec3 tint = mix(warm, cool, trB);
 
     // The reveal and the sill are masonry: they stay dark even when the room
     // behind the glass is lit. That border is the only thing that keeps one
@@ -1073,9 +1129,53 @@ const FRAG_OUT = /* glsl */`
     // The legacy frame/sill is painted trim: it never glows, it stays lit
     // as an ordinary surface next to the bright pane.
     float trim = max(voxFrame, voxSill);
-    vec3 winGlow = vVoxGlow * tint * inten;
+    // Cool-glass panes (palette 201, a pale blue) read as a cold blue city at
+    // night; pull them most of the way to a warm white so the glass towers
+    // join the cheerful amber town, keeping only a hint of office cool.
+    float coolPane = smoothstep(0.05, 0.30, vVoxGlow.b - vVoxGlow.r);
+    vec3 paneCol = mix(vVoxGlow, uWinCoolTo, coolPane * uWinWarm.z);
+    vec3 winGlow = paneCol * tint * inten;
     glow   = mix(glow, winGlow, voxWin);
     emiAmt = mix(emiAmt, on * dusk * (1.0 - trim), voxWin);
+  }
+
+  // --- NIGHT r1: plain building glass lights up too ------------------------
+  // The downtown curtain-wall towers are authored in plain 'glass' (not the
+  // 200/201 window indices), so at night they were the darkest things in the
+  // city: dark blue slabs with a few specks. Treat their wall glass as
+  // offices: 2-unit-wide rooms per floor, a sparser share lit than homes,
+  // dimmer and whiter, same dusk gate, same per-building personality. Only
+  // res > 1 WALL glass above uGlassNight.w (world units above the model's
+  // base) — skips car windscreens, roofs, skylights and street-level glass.
+  // Downtown/civic curtain walls are authored in PAINTED glass colours
+  // (dtGlass*, civGlass: voxel.js classes them as paint, so voxGlass misses
+  // them). vVoxGlow carries the exact linear palette colour of a
+  // non-emissive voxel, so match it against that short list (night only).
+  float glassLike = voxGlass;
+  if (uNight * uGlassNight.x > 0.0) {
+    for (int gi = 0; gi < 6; gi++) {
+      glassLike = max(glassLike, 1.0 - step(0.012, distance(vVoxGlow, uNightGlassCol[gi])));
+    }
+  }
+  float plainG = glassLike * (1.0 - step(0.5, vVoxEmi)) * step(1.5, vVoxRes)
+               * (1.0 - step(0.5, abs(vVoxNormalO.y))) * step(uGlassNight.w, vVoxGrid.y);
+  if (plainG * uGlassNight.x * uNight > 0.0) {
+    vec3 room = vec3(floor(voxCell.x * 0.5), voxCell.y, floor(voxCell.z * 0.5));
+    float gOcc = voxBldRand(vVoxSeed, 3.7);
+    float offG = clamp(uWinOff + uGlassNight.y + (gOcc - 0.5) * uWinOffVary, 0.05, 0.97);
+    float onG  = step(offG, voxCellRand(room, vVoxSeed.y, 4.41));
+    float t0G  = uWinDusk.x + uWinDusk.y * sqrt(voxCellRand(room, vVoxSeed.y, 2.91));
+    float dkG  = smoothstep(t0G, t0G + uWinDusk.z, uNight);
+    float irG  = voxCellRand(room, vVoxSeed.y, 5.11);
+    float trG  = clamp(pow(voxBldRand(vVoxSeed, 8.9), uWinWarm.x)
+               + (voxCellRand(room, vVoxSeed.y, 9.43) - 0.5) * uWinWarm.y, 0.0, 1.0);
+    vec3 wmG = vec3(1.0 + 0.20 * uWinTemp, 1.0 - 0.02 * uWinTemp, 1.0 - 0.34 * uWinTemp);
+    vec3 clG = vec3(1.0 - 0.18 * uWinTemp, 1.0 + 0.02 * uWinTemp, 1.0 + 0.30 * uWinTemp);
+    vec3 gG  = uWinCoolTo * mix(wmG, clG, trG)
+             * mix(uWinLevel.x, uWinLevel.y, pow(irG, uWinLevel.z)) * uGlassNight.z;
+    float aG = onG * dkG * plainG * uGlassNight.x;
+    glow   = mix(glow, gG, aG);
+    emiAmt = max(emiAmt, aG);
   }
 
   // --- Rim / silhouette separation ---------------------------------------
@@ -1206,6 +1306,25 @@ function _cellRand(cx, cy, cz, seed, salt) {
   return Math.max(0, Math.min(1, 0.5 + Math.asin(Math.max(-1, Math.min(1, v))) * 0.3183098862));
 }
 
+/** 6 linear Vector3s for uNightGlassCol (night r1); -1 / missing -> never matches. */
+function _nightGlassCols(list) {
+  const out = [];
+  for (let i = 0; i < 6; i++) {
+    const h = Array.isArray(list) ? list[i] : undefined;
+    if (typeof h === 'number' && h >= 0) {
+      const c = new THREE.Color().setHex(h, THREE.SRGBColorSpace);
+      out.push(new THREE.Vector3(c.r, c.g, c.b));
+    } else out.push(new THREE.Vector3(-9, -9, -9));
+  }
+  return out;
+}
+
+/** Mirror of voxBldRand() (night r1). */
+function _bldRand(sx, sy, salt) {
+  const v = Math.sin((sx * 13.7 + sy * 7.3 + salt) * 6.2831853);
+  return Math.max(0, Math.min(1, 0.5 + Math.asin(Math.max(-1, Math.min(1, v))) * 0.3183098862));
+}
+
 /** Mirror of the vertex shader's lattice snap. */
 function _gridOffset(v) {
   return _fract(Math.floor(_fract(v) * 2.0 + 0.5) * 0.5);
@@ -1216,6 +1335,8 @@ const GLOW_DEFAULTS = {
   winOff: 0.34,       // must match params.winOff or the lights lie
   winLevel: [0.34, 1.30, 0.85],   // must match params.winLevel
   winTemp: 1.0,       // must match params.winTemp
+  winOffVary: 0.50,   // must match params.winOffVary (night r1)
+  winWarm: [2.2, 0.35, 0.75],   // must match params.winWarm
   minCells: 2,        // ignore a band with fewer lit panes than this
   // MEASURED: these billboards were responsible for 30.5% of night building
   // pixels moving by >4 luma — a warm additive wash that filled in the wall
@@ -1277,6 +1398,11 @@ export function computeWindowGlows(objects, opts) {
     mesh.updateWorldMatrix(true, false);
     const m = mesh.matrixWorld;
     const seed = instanceSeed(m.elements[12], m.elements[13], m.elements[14], 11.7);
+    // night r1: the building's own occupancy + bulb temperature (FRAG_OUT).
+    const seedX = instanceSeed(m.elements[12], m.elements[13], m.elements[14], 0.0);
+    const offB = o.winOff < 0 ? o.winOff
+      : Math.max(0.03, Math.min(0.92, o.winOff + (_bldRand(seedX, seed, 3.7) - 0.5) * (o.winOffVary || 0)));
+    const bTempW = Math.pow(_bldRand(seedX, seed, 8.9), (o.winWarm || [1])[0]);
 
     // Lattice offset: constant across the geometry, recovered exactly as the
     // vertex shader does.
@@ -1306,10 +1432,10 @@ export function computeWindowGlows(objects, opts) {
       const key = ix + ',' + iy + ',' + iz;
       if (cells.has(key)) continue;
       // Same on/off decision the shader makes.
-      if (_cellRand(ix, iy, iz, seed, 1.73) < o.winOff) continue;
+      if (_cellRand(ix, iy, iz, seed, 1.73) < offB) continue;
       // Same colour temperature and same brightness distribution the shader
       // uses, so the light a tower casts matches the panes you can see.
-      const tr = _cellRand(ix, iy, iz, seed, 9.43);
+      const tr = Math.max(0, Math.min(1, bTempW + (_cellRand(ix, iy, iz, seed, 9.43) - 0.5) * ((o.winWarm || [1, 1])[1])));
       const ir = _cellRand(ix, iy, iz, seed, 5.11);
       const kt = o.winTemp;
       cells.set(key, {
@@ -1446,7 +1572,7 @@ const DEFAULT_PARAMS = {
                        // 3.2 washed every pane to lavender; the reference's glass
                        // is a clear saturated blue with a light streak (surface r1)
   glassFresnel: 0.85,  // how much of the analytic mirror is fresnel-weighted
-  glassSky: 0.90,      // strength of the analytic sky/horizon/ground mirror
+  glassSky: 0.55,      // wave-2 r1: 0.90 -> 0.55 (+ glassReflTint): the grey sky mirror washed panes pale. strength of the analytic sky/horizon/ground mirror
                        // (2.70 before surface r1 — see glassEnv).
                        // Raised from 1.35 alongside glassCity below: the sky
                        // -visibility term takes brightness AWAY from the bottom
@@ -1504,9 +1630,9 @@ const DEFAULT_PARAMS = {
   winSill: 1.00,
   winMullion: 0.0,     // legacy centre mullion strength
   winFrame: 0xf2efe6,  // legacy frame/sill colour (sRGB) — painted white trim
-  glassTint: 0x4f8fe0, // r8 0x3d74d0 -> lighter (panes measured navy 18,60,120). day glass albedo (sRGB): clear mid blue, ref04/ref05
-  glassTintAmt: 0.88,
-  glassSheen: 0.45,    // r13: 0.60 -> 0.45 (critic r12: "streaky diagonal white slashes ... ref04 uses flat, calm blue panes"). r8: 0.40 -> 0.60 with the PANE-LOCAL soft glint (critic r7: 'no reflection highlight'). diagonal reflection stripe on glass (mostly specular since r2; 0.40 -> 0.55 r3: critic "flat blue, little reflection"; 0.55 -> 0.40 r6: critic "white diagonal stripes read as a cartoon hack")
+  glassTint: 0x2272c8, // wave-2 r1: 0x4f8fe0 -> deeper azure (coordinator: panes ~#2a5aa8-#3a78c8; ref05 hospital/mall glass is a saturated azure with low R). // r8 0x3d74d0 -> lighter (panes measured navy 18,60,120). day glass albedo (sRGB): clear mid blue, ref04/ref05
+  glassTintAmt: 0.95,  // wave-2 r1: 0.88 -> 0.95
+  glassSheen: 0.42,    // wave-2 r1: 0.45 -> 0.42, band narrowed + cyan-tinted in the shader. r13: 0.60 -> 0.45 (critic r12: "streaky diagonal white slashes ... ref04 uses flat, calm blue panes"). r8: 0.40 -> 0.60 with the PANE-LOCAL soft glint (critic r7: 'no reflection highlight'). diagonal reflection stripe on glass (mostly specular since r2; 0.40 -> 0.55 r3: critic "flat blue, little reflection"; 0.55 -> 0.40 r6: critic "white diagonal stripes read as a cartoon hack")
   // r7: per-pane glass grade (head, sill, jamb) — needs voxel.js paneUV
   // (res > 1 walls). Replaces the painted streaks as the "this is glass" cue.
   paneGrade: [1.16, 0.86, 0.10],   // r10 (critic r9: 'one flat mid-blue, no sky gradient'): stronger head-light/sill-deep grade.   // r8: head a touch LIGHTER (sky) — the baked AO now shades the reveal head (r7 [0.74, 1.12, 0.14])
@@ -1555,6 +1681,10 @@ const DEFAULT_PARAMS = {
   // lit pink sat at R 249, on the display clip, where no AO can read. ref04's
   // lit wall peaks at R 200.)
   wallKey: 0.60,
+  // glassDiffuse (surface wave-2 r1): [direct, indirect] diffuse kept on glass
+  // by day. See the GLASS BODY note in FRAG_AO. 1,1 = pre-wave-2.
+  glassDiffuse: [0.7, 0.7],
+  glassReflTint: 0.85,  // pane hue carried into its env/mirror reflection (0 = grey mirror)
   // aoHue (surface r12): colour bleed into the baked AO. [hue carry per unit
   // of AO darkening (clamped to 1), extra neutral depth per unit of
   // darkening]. A 0.6 crease on a pink wall goes a deeper, redder pink
@@ -1576,6 +1706,26 @@ const DEFAULT_PARAMS = {
   winLevel: [0.34, 1.30, 0.85],
   winDusk: [0.44, 0.26, 0.10],  // (first switch-on nightT, spread, ramp width)
   winTemp: 1.0,        // per-window colour temperature spread (1 = ~2400-4200K)
+  // night r1: per-building night personality (see FRAG_OUT). winOffVary is
+  // the spread of each building's unlit share around winOff (0.34 +/- 0.25:
+  // a sleepy block next to a busy one). winWarm = (building temperature skew,
+  // per-window jitter around it, how far cool 201 panes are pulled to
+  // winCoolTo). pow 2.2 puts ~2/3 of buildings on the amber side.
+  winOffVary: 0.50,
+  winWarm: [2.2, 0.35, 0.75],
+  winCoolTo: 0xffe4b8,
+  nightSat: 0.22,      // night r1: extra palette saturation at full night (see update())
+  // night r1: plain res>1 wall glass lit as offices at night (FRAG_OUT):
+  // [amount, extra unlit share over winOff, brightness scale, min height above
+  // the model base in world units].
+  // MEASURED (t7/t8): 0.16/0.75 flooded downtown in gold and bloom; 0.48/0.30
+  // leaves ~1 room in 5 lit, dim enough to stay under the bloom threshold.
+  glassNight: [1.0, 0.48, 0.30, 1.4],
+  // sRGB palette colours that are glass in the models but painted as far as
+  // voxel.js's material classes go (models/core.js dtGlass, dtGlassHi,
+  // dtGlassDeep, dtGlassTeal, dtGlassDark, civGlass). Exactly 6 (uniform
+  // array size); pad with -1 for unused slots.
+  nightGlassColors: [0x4f86bd, 0x9ad2f2, 0x2a5b9f, 0x238f9c, 0x2b4776, 0x5cb3ea],
   neonSat: 1.65,       // saturation applied to neon before the HDR push
   envIntensity: 1.0,
   seasonStrength: 0.0, // buildings are untinted today; engine may raise it
@@ -1818,6 +1968,11 @@ export class MaterialLib {
       uWinSizeVary: { value: p.winSizeVary },
       uWinSill: { value: p.winSill },
       uWinTemp: { value: p.winTemp },
+      uWinOffVary: { value: p.winOffVary },
+      uWinWarm: { value: new THREE.Vector3().fromArray(p.winWarm) },
+      uWinCoolTo: { value: new THREE.Color().setHex(p.winCoolTo, THREE.SRGBColorSpace) },
+      uGlassNight: { value: new THREE.Vector4().fromArray(p.glassNight) },
+      uNightGlassCol: { value: _nightGlassCols(p.nightGlassColors) },
       uPanelH: { value: p.panelH },
       uLedge: { value: p.ledge },
       uGlassTilt: { value: p.glassTilt },
@@ -1854,12 +2009,21 @@ export class MaterialLib {
       uBounceTint: { value: new THREE.Color().setHex(p.bounceTint, THREE.SRGBColorSpace) },
       uShadeSide: { value: new THREE.Vector4(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], 0) },
       uWallKey: { value: p.wallKey },
+      uGlassDiffuse: { value: new THREE.Vector2(p.glassDiffuse[0], p.glassDiffuse[1]) },
+      uGlassReflTint: { value: p.glassReflTint },
       uAOHue: { value: new THREE.Vector4(p.aoHue[0], p.aoHue[1], 0, 0) },
     };
 
     this.voxel = this._makeVoxelMaterial();
     this.ghost = this._makeGhostMaterial();
-    this._mats = [this.voxel, this.ghost];
+    // coherence #8 (surface wave-2 r1): depth-only pre-pass for the ghost, so
+    // only the FRONT-MOST surface of the model is tinted (see prepGhost).
+    this.ghostDepth = new THREE.MeshBasicMaterial({
+      colorWrite: false, depthWrite: true, transparent: true,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    });
+    this.ghostDepth.name = 'voxelGhostDepth';
+    this._mats = [this.voxel, this.ghost, this.ghostDepth];
 
     this._tmpColor = new THREE.Color();
     this.setQuality(this._quality);
@@ -1931,6 +2095,41 @@ export class MaterialLib {
     // tests for.
     mat.customProgramCacheKey = () => 'voxelPBR-v2';
     return mat;
+  }
+
+  /**
+   * Placement ghost: draw each ghost mesh twice, a depth-only pass then the
+   * translucent tint, so the tint lands on the front-most surface only.
+   * Coherence #8: with depthWrite off, every stand, seat row and inner wall
+   * of a dense res-4 model (stadium, mall) blended through the front faces
+   * into a busy see-through wireframe blob. Now the ghost reads as one clean
+   * translucent solid with its silhouette and fresnel rim. Uses geometry
+   * groups (two groups over the whole index) + a [depth, ghost] material
+   * array; single-material meshes ignore groups, so the shared cached
+   * geometry is unaffected elsewhere (scene, shadow and glow passes).
+   * Call after every setGhost (idempotent).
+   */
+  prepGhost(root) {
+    if (!root) return;
+    const mats = this._ghostPair || (this._ghostPair = [this.ghostDepth, this.ghost]);
+    const fix = (m) => {
+      if (!m || !m.isMesh) return;
+      if (m.material !== this.ghost && m.material !== mats) return;
+      const g = m.geometry;
+      if (!g) return;
+      const n = g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0);
+      const gr = g.groups;
+      const ok = gr.length === 2 && gr[0].start === 0 && gr[0].count === n && gr[0].materialIndex === 0 &&
+                 gr[1].start === 0 && gr[1].count === n && gr[1].materialIndex === 1;
+      if (!ok) {
+        if (gr.length) return;              // someone else's groups: leave the mesh alone
+        g.addGroup(0, n, 0);
+        g.addGroup(0, n, 1);
+      }
+      m.material = mats;
+    };
+    fix(root);
+    for (let i = 0; i < root.children.length; i++) fix(root.children[i]);
   }
 
   _makeGhostMaterial() {
@@ -2009,6 +2208,8 @@ export class MaterialLib {
       winOff: p.winOff,
       winLevel: p.winLevel,
       winTemp: p.winTemp,
+      winOffVary: p.winOffVary,
+      winWarm: p.winWarm,
     }, opts || {}));
   }
 
@@ -2030,6 +2231,7 @@ export class MaterialLib {
     this._env = tex || null;
     for (let i = 0; i < this._mats.length; i++) {
       const m = this._mats[i];
+      if (m === this.ghostDepth) continue;   // depth-only: no env
       m.envMap = this._env;
       // Program cache key does not change when only the texture object does,
       // so this re-inits uniforms without recompiling.
@@ -2096,6 +2298,11 @@ export class MaterialLib {
     U.uWinSizeVary.value = p.winSizeVary;
     U.uWinSill.value = p.winSill;
     U.uWinTemp.value = p.winTemp;
+    U.uWinOffVary.value = p.winOffVary;
+    U.uWinWarm.value.fromArray(p.winWarm);
+    U.uWinCoolTo.value.setHex(p.winCoolTo, THREE.SRGBColorSpace);
+    U.uGlassNight.value.fromArray(p.glassNight);
+    U.uNightGlassCol.value = _nightGlassCols(p.nightGlassColors);
     U.uPanelH.value = p.panelH;
     U.uGlassTilt.value = p.glassTilt;
     U.uGlassBow.value = p.glassBow;
@@ -2130,6 +2337,8 @@ export class MaterialLib {
     U.uBounceTint.value.setHex(p.bounceTint, THREE.SRGBColorSpace);
     U.uShadeSide.value.set(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], 0);
     U.uWallKey.value = p.wallKey;
+    U.uGlassDiffuse.value.set(p.glassDiffuse[0], p.glassDiffuse[1]);
+    U.uGlassReflTint.value = p.glassReflTint;
     U.uAOHue.value.set(p.aoHue[0], p.aoHue[1], 0, 0);
     this._applyEnvIntensity();
     this.setQuality(this._quality);   // re-derive the quality-gated values
@@ -2185,6 +2394,11 @@ export class MaterialLib {
       // Rim gets stronger and cooler at night so silhouettes stay readable.
       const p = this._params;
       this.uniforms.uRimStrength.value = p.rim + (p.rimNight - p.rim) * night;
+      // night r1: moonlight is one cool hue over everything, so building
+      // colours converged on lavender-grey. A palette saturation lift that
+      // rides in with the night keeps a red tower red and a green roof green.
+      const nk = Math.min(1, Math.max(0, (night - 0.45) / 0.35));
+      this.uniforms.uSat.value = p.saturation * (1 + (p.nightSat || 0) * nk * nk * (3 - 2 * nk));
       const wet = ctx.weather ? (ctx.weather.rain || 0) : 0;
       this.uniforms.uWet.value = wet;
       this._applyEnvIntensity();

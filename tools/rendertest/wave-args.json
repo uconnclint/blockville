@@ -1,0 +1,142 @@
+{
+ "S": "/private/tmp/claude-501/-Users-clintonmcleod-AI-skylines/5fc12e46-b935-4e31-941f-6553148850f6/scratchpad",
+ "maxRounds": 14,
+ "pieces": [
+  {
+   "id": "light",
+   "name": "Key light, shading & shadows",
+   "brief": "Continue the lighting piece (read pieces/light.md fully, incl. coordinator notes, and pieces/perf.md \u2014 the perf agent restructured shadow filtering/caching; keep its savings). Current key defaults (az -100, el 58, FILL_SCALE 0.8) were set from measurement: tools/rendertest/faceratio.sh OUTDIR prints the white-cube face ratio (now ~1 : 0.92 : 0.69; ref04 target 1 : 0.89 : 0.63). Change key/fill ONLY with faceratio numbers in your notes. Open issues: soft light-grey cast shadows back-right of every building that read clearly on lots/roads, clean contact shadows, dusk salmon cast (coherence.md), no near-black crevices.",
+   "files": "src/render/lighting.js, src/render/sky.js, lighting/sky params in src/engine.js",
+   "shots": "iso-mid,iso-close,iso",
+   "judge": "overall lighting: key/fill balance, 3-tone face separation, shadow softness/strength/colour, ambient occlusion and contact shadows, absence of haze. Judge on iso-mid vs ref05 and iso-close vs ref04.",
+   "history": []
+  },
+  {
+   "id": "post",
+   "name": "Post-process, grade & anti-aliasing",
+   "brief": "Continue the post piece (read pieces/post.md fully, and pieces/perf.md \u2014 keep the perf savings and auto-quality intact). Rules that hold: no always-on edge ink, no sharpen/usm at close zoom (iso-close/one-* must stay clean \u2014 see scratchpad paint/filters-on-vs-off.png), zoom-gated overview local contrast allowed, shadow side ratio measured on target (don't lift shadows globally). Aim for ref05's crisp, airy, saturated read at overview without halos or crushed blacks.",
+   "files": "src/render/post.js, post params in src/engine.js",
+   "shots": "iso-mid,iso,iso-close",
+   "judge": "image-level quality: crispness without halos, AA, grade/saturation/local contrast, AO cleanliness, overall clarity vs ref05.",
+   "history": []
+  },
+  {
+   "id": "roads",
+   "name": "Roads & sidewalks",
+   "brief": "Continue (read pieces/roads.md fully; you won 11 straight blind rounds \u2014 converge, don't swing). Open (coherence.md): new bridge deck renders mid-grey vs near-black road (coordinate with surface: material lifts near-blacks), neutral near-black asphalt (not blue-grey), junctions not oversized-empty, slim street lamps with arm + warm head.",
+   "files": "src/render/roads.js, bridge deck in src/models/infra.js",
+   "shots": "iso-mid,iso,iso-close",
+   "judge": "roads: asphalt, kerbs/sidewalks, markings, crossings, junctions, bridges, street furniture vs ref05's roads.",
+   "history": [
+    "Wave 3 round 1: critic picked ours but was NOT wowed.\nBiggest gap: Our roads end in a flat painted yellow line on the asphalt, and there is barely any kerb step (visible along the block edges and at the junction in iso-close, around x2200-3200 and y650-1450). The reference ref05 edges every road with a light-concrete kerb (about #dcd8cc) that is clearly raised, with a visible darker vertical face and a thin contact shadow on the asphalt, so each block steps up from the road. In ours the blocks look printed onto the road. Fix: drop the yellow edge line, add a raised light kerb 1-2 voxels tall with a mid-grey side face and soft AO where it meets the asphalt, and make it wide enough to read as a sidewalk at iso-mid zoom.\nOther notes: We won on this piece because of the road detail. Ours has dashed lane markings, zebra crossings on every arm, traffic lights, street lamps and dense traffic, while the reference roads are almost bare black with sparse dashes. The large asphalt areas inside junctions are one uniform flat black with no stop-line hierarchy or subtle edge AO, so at iso-mid they read as heavy black voids between blocks. The yellow edge lines are not in the reference palette and add visual noise."
+   ]
+  },
+  {
+   "id": "ground",
+   "name": "Grass, terrain & lots",
+   "brief": "Continue (read pieces/ground.md fully). Grass tone is matched (~#a8c66c vs ref #a2ba6c) \u2014 don't move it. Open (coherence.md): a new city is a lattice of hundreds of identical little trees (use a clean field with sparse, evenly spaced trees + a few rocks), mountains are flat grey blocks with near-black sides (restyle as stepped rock with colour, snow caps), sand notch/pale rectangle at bridge ends, terrain lots flatter than building lots at night (coordinate with night).",
+   "files": "src/render/terrain.js, src/render/props.js (scatter)",
+   "shots": "iso-mid,iso-park,iso-wide",
+   "judge": "the ground plane: grass, open fields, terrain edges, beaches, mountains, filler lots. iso-mid vs ref05 ground areas, iso-park vs ref05 top-left field and ref06.",
+   "history": [
+    "Wave 3 round 1: critic picked ours but was NOT wowed.\nBiggest gap: Open countryside (iso-wide, everywhere outside the road grid) is a vast flat featureless lime sheet with sparse thin twig-like trees, and the bottom-left edge is a blurry, hazy smear. The empty sheet reads as unfinished. ref05's top-left field fills open grass with an even sprinkle of chunky cuboid trees, about one every half tile, with grey stepped rocks and cube bushes between them, so even an empty field has rich detail from geometry. Fix: scatter ref05-sized chunky trees, rocks and bushes densely across the non-city grass, and remove the edge blur and haze. The mountain is also a grey rubble heap with dull muddy terraces, not clean stepped voxel tiers.\nOther notes: The pair's content was not well matched. At the default zooms our ground shows almost no open grass: iso-mid is all roads and lots, so the comparison came down to lots vs field. Our in-city lots (plinths, sports fields, allotments, parking) are crisp and read better than the reference. The beach and sea edge in iso-wide is a stepped sand strip with a very flat blue expanse and no shoreline detail."
+   ]
+  },
+  {
+   "id": "water",
+   "name": "Water & shoreline",
+   "brief": "Continue (read pieces/water.md fully, incl. measured pool colours). You won 7 of 14 \u2014 converge on the measured ref05 pool colours (#00a0d8-#10d0f0 bright azure; darker saturated inner wall), broad smooth depth gradient, sparse large tile patches, a few glints; coherence.md notes the bridge-end sand notch (with ground).",
+   "files": "src/render/water.js",
+   "shots": "iso-water,iso-wide",
+   "judge": "water colour, stylisation, depth read, highlights, shoreline. vs the ref05 pool crop.",
+   "history": [
+    "Wave 3 round 1: critic picked ours but was NOT wowed.\nBiggest gap: The inside walls of the pool (the far/top and right edges of the lake in iso-water) read as a near-black navy band. The open water is one flat, very saturated blue broken only by a few hard-edged dark rectangles. The ref05 pool instead goes from bright cyan shallows along the walls to deeper blue toward the middle. Its walls are a mid-blue with visible tile lines, and soft white shimmer highlights are spread across the whole surface. To fix: lighten the wall tone to a mid-blue, add a lighter shallow band along every wall, and soften or blend the depth patches so they step down gradually.\nOther notes: 1) The sand band around the shore is a plain tan strip with a hard edge against the grass. It has no paving, loungers or umbrellas to match the density of the ref (only a few red kiosks). 2) There are only a few highlight marks, mostly boat wakes and small white dashes, so the surface looks too static next to the ref's scattered glints. 3) The iso-water shot rendered at 6 fps with 3.2M triangles, which is a performance concern but not a visual one."
+   ]
+  },
+  {
+   "id": "life",
+   "name": "Cars, people & boats",
+   "brief": "Continue (read pieces/life.md fully, and pieces/perf.md \u2014 batching cars/people into shared draws is listed there as a perf idea; welcome if you touch that code). Consensus: distinct readable vehicle types (low sedans, taxis, vans, buses, box trucks; emergency vehicles RARE and in context \u2014 ambulances at the hospital, fire engines at the fire station), dark visible wheels, continuous glass band, bright varied paint; no dark cars vanishing into asphalt; vehicles centred in lanes/bays; people readable at iso-close.",
+   "files": "src/models/vehicles.js, src/life.js (+ palette block)",
+   "shots": "iso-mid,iso-close,iso-water",
+   "judge": "vehicles/people: model quality, scale, placement, variety vs ref05's vehicles.",
+   "history": [
+    "Wave 3 round 1: critic picked ours but was NOT wowed.\nBiggest gap: Traffic has no lane discipline or purpose. In iso-close, cars sit at random offsets and spacing, straddling the centre dashes and sitting on crosswalks and in intersection boxes, so the street reads as scattered confetti instead of flowing lanes. The lots are also missing the vehicles that ref05 parks where they belong: articulated semis (cab plus long trailer) backed into loading docks, ambulances in the hospital bays, fire engines at the station. Snap moving cars to the lane centres with consistent spacing, keep intersections and crosswalks clear, and park larger themed vehicles on the lots of the buildings they belong to.\nOther notes: Our vehicles themselves are crisp and readable, with good colour variety (taxis, vans, ambulance, bus, police car). The reference crop is AI-upscaled and slightly soft, which helped ours. The pedestrians are tiny 2-3 voxel blobs that are hard to read as people at iso-close, and they have no poses or groupings. The boats in iso-water (sailboat, speedboats with wakes) look good."
+   ]
+  },
+  {
+   "id": "surface",
+   "name": "Voxel faces & materials",
+   "brief": "Continue (read pieces/surface.md fully AND pieces/perf.md: voxel AO now lives in a shared AO atlas texture and hidden faces are culled \u2014 keep that architecture and its perf). Open: AO midpoint (r9-11 too faint vs r12 muddy \u2014 cap combined AO ~0.65 on vertical faces, wide soft pooling under cornices/sills), shared GLASS reads pale across all categories (darker saturated pane ~#2a5aa8-#3a78c8 with a light highlight band), ghost placement preview is a busy see-through blob on dense models (coherence.md), bridge deck near-black renders mid-grey (material lifts near-blacks on big flat tops \u2014 coherence.md, coordinate with roads).",
+   "files": "src/render/voxel.js, src/render/materials.js (not the night-only branches \u2014 night piece owns those)",
+   "shots": "iso-mid,iso-close,one-bakery",
+   "judge": "surface quality of buildings: face cleanliness (no grid lines/noise), colour fidelity, AO in corners/contacts, glass/material response. Compare iso-close or one-bakery against ref04 (and ref02).",
+   "history": []
+  },
+  {
+   "id": "industry",
+   "name": "Industry & utilities",
+   "brief": "Continue (read pieces/industry.md fully, esp. the 22:35 palette note verified against ref05 \u2014 scratchpad ref/industry-crop.png). Light walls + big blue glass curtain walls + mid-grey roofs loaded with darker equipment + orange/white banded chimneys; yards packed with pipe racks, tanks, crates, docks with trucks on dark marked asphalt.",
+   "files": "src/models/industrial.js (+ palette block)",
+   "shots": "gal-factories-1,gal-factories-2,gal-factories-3,one-mega-factory",
+   "judge": "industrial design: silhouettes (chimneys, tanks, silos), loading docks, trucks, pipes, signage, lots \u2014 versus the power plant, warehouse and factories in ref05.",
+   "history": []
+  },
+  {
+   "id": "shops",
+   "name": "Shops & food",
+   "brief": "Continue (read pieces/shops.md fully). Consensus: slim, bold, legible fascia signs (letters 1/4-1/3 storey on a contrasting panel), mostly-glass ground-floor shopfronts with mullions, a few clean solid awnings, 3-4 deliberate roof props, lots with a few distinct props with breathing room. Look at ref02 closely.",
+   "files": "src/models/commercial.js (+ palette block)",
+   "shots": "gal-shops-1,gal-shops-2,one-bakery,one-diner",
+   "judge": "shop design vs ref02 and the shops/fast-food/supermarket in ref05.",
+   "history": [
+    "Wave 3 round 1: critic picked the REFERENCE.\nBiggest gap: The shop roofs are large, blank, pale-grey slabs. BURGERS, CAFE and TOYS each have only one or two small props sitting in the middle of an empty flat roof, and the plain roofs take up about a third of every building's silhouette. The facades are also uniform grids of identical small blue windows in a single colour band. The ref05 shops (the Mac Auto burger place, the supermarket and the market-row storefronts) crowd their roofs with AC units, vents, sign frames, patio seating and coloured clutter. Each ref facade also mixes materials, big storefront glazing, awnings and trim, so almost no area reads as flat. Fix: fill each shop roof with 4-8 varied props, such as AC clusters, vents, parapet steps, rooftop seating or planters, and sign support frames. Break up the facade window grids with large ground-floor display glazing, coloured pilasters and trim, and vary window sizes between floors.\nOther notes: No console errors; the gallery built slowly (about 64-83 s) and ran at 19-23 fps during the critic run. Ours is bolder and cleaner, and the signs (BURGERS, SCOOPS, PIZZA) read instantly with nice rooftop icons. The lots, though, are mostly plain cream pavement with few props compared with ref05's busy parking areas and seating. The side faces of the red and green shops go close to flat saturated colour and lack the subtle AO in corners that the reference has."
+   ]
+  },
+  {
+   "id": "civic",
+   "name": "Civic, fun & deco",
+   "brief": "Continue (read pieces/civic.md fully; school/fire/fountain/pool are 2x2 now). Consensus: broad LOW landmark masses filling ~70% of the lot, crisp facade detail (brick coursing, framed windows, dark trim), readable signage, rooftop clutter, furnished forecourts/aprons/parking with service vehicles; the monument should be an ornate obelisk plaza like ref05.",
+   "files": "src/models/civic.js, src/models/fun.js (+ palette block)",
+   "shots": "gal-fun-1,gal-fun-2,gal-fun-3,gal-deco-1,one-stadium,one-school",
+   "judge": "civic/fun/deco design: detail, readability, signature pieces (stadium, fire station, school, pool, monument/statue), lots \u2014 versus the corresponding buildings in ref05.",
+   "history": []
+  },
+  {
+   "id": "res",
+   "name": "Houses & apartments",
+   "brief": "Continue (read pieces/res.md fully). Consensus across critics: fewer but BIGGER relief trims (chunky quoins, thick frames, bold parapet), warm clean wall colours, finer window rhythm on apartments, lighter varied roofs (terraces, AC, solar), lots dressed with paving/beds/fences/patio furniture. Construction animation stretches the lot upward (coherence.md) \u2014 check with the engine's construction path and fix so the lot stays flat.",
+   "files": "src/models/residential.js (+ your palette block in core.js)",
+   "shots": "gal-homes-1,gal-homes-2,one-small-house,one-apartment",
+   "judge": "residential design vs houses in ref04, ref05, ref01.",
+   "history": []
+  },
+  {
+   "id": "veg",
+   "name": "Trees, bushes, rocks & flowers",
+   "brief": "Continue (read pieces/veg.md fully; measured ref06 colours there). Open: rocks as one big stepped block + 5-8 chips with a clearly darker right face; varied tree silhouettes (tall column, round, multi-lobe, sapling) with darker lower band and sparse dark pixels; flowers tiny ankle-height accents.",
+   "files": "src/models/vegetation.js, vegetation model generation in src/render/props.js",
+   "shots": "iso-park,iso-mid,gal-deco-1",
+   "judge": "vegetation: tree/bush/rock/flower shapes, colours, crispness, variety \u2014 versus ref06 (crop individual trees/rocks) and trees in ref05.",
+   "history": []
+  },
+  {
+   "id": "downtown",
+   "name": "Downtown towers",
+   "brief": "Continue (read pieces/downtown.md fully). The bank is near reference quality. Open: every tower needs a distinct 1-2 storey podium (portico/columns, steps, canopy, signage), per-floor articulation (ledges, framed windows, balconies), material variety per id (brick, terracotta, teal, dark glass \u2014 no near-black masses), full lots.",
+   "files": "src/models/downtown.js (+ palette block)",
+   "shots": "gal-downtown-1,gal-downtown-2,gal-downtown-3,one-glass-skyscraper,iso-mid",
+   "judge": "tower/office design: facade articulation, glass, entrances, rooftops, silhouette variety, lots \u2014 versus the bank/hotel/hospital/tower in ref05.",
+   "history": []
+  },
+  {
+   "id": "night",
+   "name": "Night lights & windows",
+   "brief": "NEW piece (create pieces/night.md). The reference has no night shots, so the bar is: a night city as crafted and cheerful as the day look \u2014 deep blue-violet (not black) sky ambient, readable building masses, warm lit windows varied per building (not every window on), small warm lamp pools on roads, a few neon signs glowing, gentle bloom, no haze sheets. Start from coherence.md's night fixes (they removed orange-flooded streets and blue haze \u2014 keep those gains). Keep perf.md's night-window shader gating.",
+   "files": "night-only branches of src/render/lighting.js (lamp pools, moon), src/render/materials.js (window emissives, night grading), src/render/post.js (bloom), src/render/sky.js (night sky) \u2014 coordinate via notes with light/surface/post, who own the day paths",
+   "shots": "iso-night,iso-mid",
+   "judge": "night look: readability of masses, window lighting variety, lamp pools, bloom quality, sky/ambient colour, cheerfulness \u2014 judge iso-night against ref05 (for craft/readability: would this look as good as the reference city at night) and against our own iso-mid day shot (for consistency).",
+   "history": []
+  }
+ ]
+}

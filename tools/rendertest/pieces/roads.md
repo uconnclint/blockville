@@ -522,3 +522,42 @@ attribute a cost to this piece.
   a nice touch.
 - The parked-car bays in life.js are 1.08 deep from KERB 3.3. Check that a bus at CAR_LANE 1.5 still
   clears them (the visual check looked fine).
+
+## 2026-09-25 — wave 2, round 1 (builder)
+
+Brief: converge. coherence.md items tagged [roads]: bridge deck mid-grey vs near-black road; neutral
+near-black asphalt (not blue-grey); junctions not oversized-empty; slim lamps with arm + warm head.
+
+**Measured first**: the light/post chain has drifted since r14. PALETTE.asphalt 0x2a292f now renders
+BLUE-GREY (39,40,44) in iso-mid/iso-close (ref05 (22,22,22)). Live sweep in the iso-close frame via
+`BV.engine._roads.setPalette({asphalt})` (scratchpad rounds/roads/tools/sweep2.mjs, play.mjs harness):
+0x1a1a1a -> (24,25,23), 0x1e1e1e -> (27,28,26), 0x1e1d1f -> (23,23,24), 0x202020 -> (28,30,27),
+0x222222 -> (32,34,31), 0x221f1d -> (48,45,37), 0x262422 -> (58,57,46). The grade is STEEP and hue-
+twisting this close to black (~8x gain, warm/green push), so a hair of blue in the albedo neutralises.
+
+**Changed**
+- PALETTE.asphalt 0x2a292f -> 0x1e1d1f. After: dominant asphalt bin (21,21,21) in iso-mid and iso,
+  (21-24) in iso-close = ref05 exactly, neutral.
+- BRIDGES DRAWN BY ROADS.JS: `_isDrawn()` no longer skips state.bridge tiles; tile data includes them
+  (dash phase runs straight across the water); zebraArms still skips arms into a bridge; a bridge tile
+  gets lamps only (no bench/bin/hydrant) and no outer kerb faces (new `_isBridge`).
+- infra.js `bridgeModel` is now only the structure: deck slab top at -0.05 (BR_DROP 2.75 -> 2.80,
+  hidden under our asphalt), lot-side band, girder line, piers, and a one-voxel light parapet column
+  (C.lotRim, -0.05..0.70) on each open side = the bridge's edge. Its own asphalt/markings/walk removed.
+- water.js (surgical, 2 lines): the pool wall on a bridge tile tops at -0.03 (was 0.03, poked through
+  the road as a dotted line at the shore seam) and the centre pier tops at -1.0 (was 0.05: its edges
+  drew a "V" on every bridge tile's asphalt). water/roads/models selfTests pass.
+- Lamps: already slim world-unit (pole + arm + warm 202 head) since r9 — verified, unchanged.
+- Junctions: left as the r13/r14 framed box (4 zebras + stop bars + 2 signals). Nothing new added;
+  the ref05 junction is plain black, and critics have swung on clutter here.
+
+**Measured after**: bridge (play.mjs + tools/bridge.mjs): the street continues across the water with
+identical asphalt, dashes, yellow line and kerbs, no seam; light parapet + band + piers read as a
+bridge. iso-mid/iso/iso-close: 0 console errors. fps 7/1/2 this run (load avg ~40 from 13 parallel
+builders; baseline run the same session 25/2/17) — roads adds ~0 tris (bridge tiles are 2 quads more).
+
+**Next**
+- If a critic says the near-side bridge parapet reads as a tall cream slab, drop BR_PAR1 13 -> 12
+  (top 0.45, just a lip over the 0.32 walk).
+- Re-sweep the asphalt whenever light/post change: the grade near black is steep and hue-twisting.
+- Sand-deck slab beside a bridge end and the basin notch are water/ground's (coherence #2).

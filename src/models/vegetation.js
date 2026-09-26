@@ -100,8 +100,10 @@ const SHAPES = {
   },
   // ref06 tree 4: a young sapling — thin stem with a side shoot, a small
   // column canopy with a heavy band, a grass tuft at its foot
+  // wave-2 r1: ref06's sapling carries a much deeper band (~0.28 of its
+  // canopy) than the grown trees; props.js now scatters it too.
   sapling: {
-    sx: 20, sy: 32, sz: 20, pal: LIME, dots: 0.8,
+    sx: 20, sy: 32, sz: 20, pal: LIME, dots: 0.8, band: 0.27,
     parts: [
       ['T', 9, 0, 9, 11, 14, 11],
       ['T', 12, 5, 10, 14, 6, 11],
@@ -209,7 +211,9 @@ const TREE_KINDS = ['column', 'round', 'cluster', 'sapling', 'pine', 'blossom'];
 // r14 (critic r13: "the darker lower band is faint next to ref06's clear
 // two-tone band"): min 2 -> 3, so the round / cluster / blossom lobes (11-16
 // rows) carry a band as deep as ref06's (~0.2 of the face, sapling ~0.21).
-function bandRows(h) { return Math.max(3, Math.round(h * 0.16)); }
+// `k` overrides the share per shape (the ref06 sapling's band is ~0.28 of
+// its little canopy).
+function bandRows(h, k = 0.16) { return Math.max(3, Math.round(h * k)); }
 
 function paint(g, parts) {
   for (const p of parts) {
@@ -222,17 +226,17 @@ function paint(g, parts) {
 // Each lobe: dark band along its bottom rows, leaf above. Leaf always wins
 // over another lobe's band (so a band never paints a stripe across a lobe it
 // is buried in) and a band only fills air or trunk.
-function paintLeaves(g, parts, pal) {
+function paintLeaves(g, parts, pal, bk) {
   const key = (x, y, z) => x + ',' + y + ',' + z;
   for (const p of parts) {
     if (p[0] !== 'L') continue;
     const [, x0, y0, z0, x1, y1, z1] = p;
-    g.box(x0, y0 + bandRows(y1 - y0 + 1), z0, x1, y1, z1, pal.leaf);
+    g.box(x0, y0 + bandRows(y1 - y0 + 1, bk), z0, x1, y1, z1, pal.leaf);
   }
   for (const p of parts) {
     if (p[0] !== 'L') continue;
     const [, x0, y0, z0, x1, y1, z1] = p;
-    const yb = y0 + bandRows(y1 - y0 + 1) - 1;
+    const yb = y0 + bandRows(y1 - y0 + 1, bk) - 1;
     for (let y = y0; y <= yb; y++) for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
       const c = g.map.get(key(x, y, z));
       if (c == null || c === C.vegTrunk) g.set(x, y, z, pal.band);
@@ -254,12 +258,12 @@ function bushSkirt(g) {
 // read the canopies as busy. Dots keep a 2-voxel clear margin from each other
 // and from the face edges / band, and only land on plain leaf with open air
 // in front, so each one is visible and none sits in a crease.
-function sprinkleDots(g, parts, pal, rng, k) {
+function sprinkleDots(g, parts, pal, rng, k, bk) {
   const at = (x, y, z) => g.map.get(x + ',' + y + ',' + z);
   for (const p of parts) {
     if (p[0] !== 'L') continue;
     const [, x0, y0, z0, x1, y1, z1] = p;
-    const b = bandRows(y1 - y0 + 1);
+    const b = bandRows(y1 - y0 + 1, bk);
     const ya = y0 + b + 2, yb = y1 - 2;
     if (yb < ya) continue;
     const faces = [
@@ -314,8 +318,8 @@ function buildShape(kind, seed, flip) {
   const g = grid(s.sx, s.sy, s.sz, RES);
   paint(g, s.parts);
   if (s.pal) {
-    paintLeaves(g, s.parts, s.pal);
-    sprinkleDots(g, s.parts, s.pal, mulberry32(seed >>> 0), s.dots || 1);
+    paintLeaves(g, s.parts, s.pal, s.band);
+    sprinkleDots(g, s.parts, s.pal, mulberry32(seed >>> 0), s.dots || 1, s.band);
   }
   if (s.bush) bushSkirt(g);
   if (s.carve) for (const c of s.carve) {
@@ -405,7 +409,7 @@ export function vegFarBoxes(kind) {
     if (k === 'T') add(x0, y0, z0, x1, y1, z1, C.vegTrunk);
     else if (k === 'S') add(x0, y0, z0, x1, y1, z1, p[7]);
     else {
-      const b = bandRows(y1 - y0 + 1);
+      const b = bandRows(y1 - y0 + 1, s.band);
       add(x0, y0, z0, x1, y0 + b - 1, z1, s.pal.band);
       add(x0, y0 + b, z0, x1, y1, z1, s.pal.leaf);
     }

@@ -528,3 +528,42 @@ art-deco tower whose right face stays blue (glass renders about (66,132,190)).
    sides are dressed, but the BLOX side faces are still plain ribbons.
 4. The last two edits (dtPad 0x58627a→0x5b6476 and glass-office cw 1) came after the final
    shots and were checked only in the iso preview.
+
+## 2026-09-25 — wave 2, round 1 (builder)
+
+**Brief (coordinator):** every tower needs a DISTINCT 1-2 storey podium, per-floor articulation,
+material variety per id (brick / terracotta / teal / dark glass, no near-black masses), full lots.
+coherence.md had no [downtown]-tagged items.
+
+**Changed (downtown.js + dtPad in the [downtown] palette block).**
+- `streetPodium` gained `ground`: 'shop' (the old shopfront + fascia + awnings), 'arcade'
+  (round-arched 2-deep openings, fanlights, keystones, impost band), 'colonnade' (two-storey
+  giant order: columns with bases + capitals in front of a 2-deep dark-glass hall) and 'glass'
+  (two-storey glass lobby behind slim white fins + a cantilevered canopy band with small boards).
+  Before this, 12 of 17 ids shared the same red-brick shopfront podium.
+- `portico` gained kinds 'marquee' (theatre canopy with bulb rows, lit name, vertical blade sign:
+  DECO, ONYX) and 'pergola' (timber + climbers: ECO), and `sign: 'letters'` (free-standing
+  2-deep letters on the canopy instead of the black sign box that sat on every tower).
+- Per id: small office colonnade+temple; glass office glass lobby; APTS shop; deco arcade+marquee;
+  eco glass+pergola; clock tower REBUILT base = colonnade podium + TOWN temple (was a cage of
+  red columns on a thin plinth); round arcade; office block arcade (v0) / glass (v1); SKY
+  colonnade; ONYX arcade+marquee; BLOX glass; twins arcade; spire colonnade; tech glass.
+- Materials: SKY is now a dark-blue (v1 teal) glass tower (glass-coloured pilasters + corners,
+  white ledge every floor); glass office = beige / dark-blue glass / TEAL per variant (gallery
+  shows v2 = teal); spire v0 warm beige stone (v1 terracotta); ONYX dtPad 0x5b6476 -> 0x3f6b78
+  (steel-teal + gold, renders ~#4f8fb0, not black); round tower slab colour per variant (white /
+  terracotta / cream) + glass per variant; office block v1 cream + teal; clock tower brick
+  variant -> limestone + green roof; small office v0 -> terracotta.
+
+**Measured.** avg tris per id 20.5k (19.7k before; spire 45.5k, SKY 35k heaviest). `_selfTest`
+ok, check.sh ok, zero console errors on all shots. fps 8-38 galleries, 10-11 iso-mid at load
+avg ~20 (noise; baseline shots at the same load were 21-37 / 22). Software iso preview
+(scratchpad/dt6/isos.sh) used for all iteration. In game iso-mid now reads teal, blue glass,
+brick red, cream, sage, butter instead of a pale grey-blue field; gal-1 no longer has 4 reds.
+
+**Next.** (1) twins brickDark and resTerracotta render quite saturated coral/salmon; if a critic
+calls them loud, move toward ref05's pink-red. (2) The gallery variant for each id is v2 for
+glass-office (not v0) — check which variant a gallery uses before recolouring. (3) Spire (45k)
+and SKY (35k) are the heaviest; spire tier-1 framedBays with pd 2 is the cost. (4) The hotel is
+still the only 1x1 with its own bespoke podium; consider a porte-cochere variant for others.
+(5) NEVER `git stash` in this shared tree to measure a baseline (I did once; it popped cleanly).

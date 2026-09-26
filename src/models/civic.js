@@ -385,7 +385,8 @@ export function fineWin(g, side, plane, u0, y0, w, h, o = {}) {
   E.box(a0 - 1, b0 - 1, 0, a0 - 1, b1 + 1, D, sc); E.box(a1 + 1, b0 - 1, 0, a1 + 1, b1 + 1, D, sc);
   E.box(a0, b1 + 1, 0, a1, b1 + 1, D, sc);
   if (h >= 4 && o.transom !== false) { const t = b0 + Math.round((b1 - b0) * 0.62); E.box(a0, t, 0, a1, t, 0, frame); }
-  if (w === 3) E.box(a0 + 2, b0, 0, a0 + 3, b1, 0, frame);
+  if (o.mullion === false) { /* (w2r1) open panes: the glass reads dark */ }
+  else if (w === 3) E.box(a0 + 2, b0, 0, a0 + 3, b1, 0, frame);
   else if (w === 4) E.box(a0 + 3, b0, 0, a0 + 4, b1, 0, frame);
   else if (w === 5) { E.box(a0 + 3, b0, 0, a0 + 3, b1, 0, frame); E.box(a0 + 6, b0, 0, a0 + 6, b1, 0, frame); }
   else if (w >= 6) for (let m = a0 + 3; m < a1 - 1; m += 4) E.box(m, b0, 0, m, b1, 0, frame);
@@ -552,7 +553,7 @@ function clockFace(f, u, y, frame) {
   E.set(cu - 1, cy - 1, 2, C.gold);
 }
 // Compact lot tree in the vegetation style (half-scale ref06 specimen).
-function lotTree(g, kind, x, y, z, seed) {
+export function lotTree(g, kind, x, y, z, seed) {
   try { stampVeg(g, kind, x, y, z, seed, 0.5); } catch (e) { tree(g, x, y, z, { w: 7, h: 7, trunk: 5 }); }
 }
 
@@ -708,12 +709,15 @@ function svcSchool(rng, v) {
   // Every variant is now a light wall with DARK pilasters/quoins and a dark
   // slate roof, all trim ink-edged: v0 ref05 cream + grey-teal, v1 red brick
   // + cream stone, v2 sandstone + navy.
-  const wall = [C.civHall, C.civBrick, C.civStone][vi];
+  // (w2r1) the gallery shows v2: it now carries ref05's mint-grey hall wall
+  // (the cream civStone read as white-on-white behind white trim); v0 cream.
+  const wall = [C.civStone, C.civBrick, C.civHall][vi];
   const trim = [C.signWhite, C.cream, C.signWhite][vi];
   const quoin = [C.civHallDk, C.brickDark, C.civSlate][vi];
   const accent = [C.civSlate, C.roofGreen, C.civNavy][vi];
   const slate = [C.civSlate, C.civSlate, C.civSlate][vi], slateTop = C.stone, mb = C.civMarble, mbDk = C.civPanel;
-  const winG = C.dtGlass;
+  // (w2r1) ref05's hall windows are DARK navy glass in white frames
+  const winG = C.dtGlassDark;
   // ---- massing: main block, two end wings (proud front and back), centre
   // pavilion (proud front and back), all three storeys
   const MX0 = 5, MX1 = 57, MZ0 = 16, MZ1 = 38;                    // main block (r10: wider, taller)
@@ -772,7 +776,10 @@ function svcSchool(rng, v) {
   // has dark, glassy, framed windows set into the walls, a strong grid". Dark
   // glass (winG) in a LIGHT proud frame ring (surround = trim), so each
   // opening reads as a dark recess framed in white.
-  const win = (f, u, k, w = 2, h = 5) => fineWin(g, f.side, f.plane, u, fy(k), w, h, { frame: trim, trim, surround: trim, glass: winG, key: k === 1 ? trim : false });
+  // (w2r1) no centre mullion on 3-wide windows: in game the white bars and
+  // ring covered the glass, so the facade read as white blocks (ref05: dark
+  // glass in thin white frames)
+  const win = (f, u, k, w = 2, h = 5) => fineWin(g, f.side, f.plane, u, fy(k), w, h, { frame: trim, trim, surround: trim, glass: winG, key: k === 1 ? trim : false, mullion: false });
   // ---- long faces (front and back): wings, recessed runs, pavilion
   for (const back of [false, true]) {
     const side = back ? 'back' : 'front';

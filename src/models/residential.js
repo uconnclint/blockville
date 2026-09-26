@@ -1093,8 +1093,8 @@ const CROPS = [
   [C.vegBush, C.vegPollen], [C.vegTuft, C.vegPetalR], [C.vegStem, C.pink],
 ];
 function vegBed(g, x0, z0, x1, z1, k = 0) {
-  g.walls(x0, G, z0, x1, G + 1, z1, C.wood);
-  g.walls(x0, G + 2, z0, x1, G + 2, z1, C.woodDark);
+  g.walls(x0, G, z0, x1, G + 1, z1, C.woodDark);
+  g.walls(x0, G + 2, z0, x1, G + 2, z1, C.trunk);
   g.box(x0 + 1, G, z0 + 1, x1 - 1, G + 1, z1 - 1, C.dirtDark);
   const alongX = x1 - x0 >= z1 - z0;
   const [a0, a1, b0, b1] = alongX ? [x0, x1, z0, z1] : [z0, z1, x0, x1];
@@ -1186,7 +1186,7 @@ function dressYard(g, seed) {
       lawn += fw * fd;
       lawnPatch(W, fx0, fz0, fx1, fz1, rnd);
     } else if (kind === 'veg') vegBed(W, fx0, fz0, fx1, fz1, bed++);
-    else if (kind === 'flower') flowerBed(W, fx0, fz0, fx1, fz1, FLOWERS[(bed++) % FLOWERS.length], C.wood);
+    else if (kind === 'flower') flowerBed(W, fx0, fz0, fx1, fz1, FLOWERS[(bed++) % FLOWERS.length], C.woodDark);
     else if (kind === 'patio') {
       W.box(fx0, y, fz0, fx1, y, fz1, C.lotPave);
       W.walls(fx0, y, fz0, fx1, y, fz1, C.lotPaveDark);
@@ -1211,7 +1211,10 @@ function dressYard(g, seed) {
     const i = z * X + x;
     if (!free[i] || keep[i] || W.get(x, y, z) !== LAWN) continue;
     const a = alongX ? z : x, b = alongX ? x : z;
-    W.set(x, y, z, a % 8 === 0 ? C.wood : C.plank);              // warm brick courses (ref05's tan cobbles; lines merge)
+    // (w1) light sandy paving with warm joint courses: ref05's farmhouse yard
+    // measures #f0cc78-#f0e49c; the orange brick (plank) rendered #f0903c and
+    // turned every garden into an orange sea
+    W.set(x, y, z, a % 6 === 0 ? C.plank : C.sand);
   }
   // Paved lots (apartments, towers, townhouses): the side and back paving
   // gets street furniture — box planters, benches with pots, bike racks,
@@ -1488,9 +1491,12 @@ function smallHouse(variant) {
 // solar array, and a roof garden. Tall faces use the flush tower window
 // (frame ring in the wall plane) so the grid stays cheap.
 const APT = [
-  { wall: C.cream, frame: C.white, trim: C.resTerraTrim, base: C.resTerraTrim, pil: C.white, glass: C.winCool, rail: C.resTerraTrim, slab: C.white, awn: [C.roofGreen, C.signWhite], ground: 'shops' },
-  { wall: C.resTerraTrim, frame: C.resQuoin, trim: C.cream, base: C.stoneDark, pil: C.resQuoin, glass: C.win, rail: C.resQuoin, slab: C.cream, awn: [C.red, C.signWhite], ground: 'cafe' },
-  { wall: C.resButter, frame: C.white, trim: C.resSlateDk, base: C.resSlate, pil: C.white, glass: C.winCool, rail: C.white, slab: C.white, awn: [C.resTerraTrim, C.signWhite], ground: 'lobby' },
+  // (w1) warm clean walls, warm bases (v2's slate base read cold / grey).
+  // NB resButter and peach render near-neutral grey-white under the grade;
+  // cream renders the warm tan of ref05's apartments.
+  { wall: C.cream, frame: C.resTerraTrim, trim: C.resTerraTrim, base: C.resTerraTrim, pil: C.white, glass: C.winCool, rail: C.resTerraTrim, slab: C.white, awn: [C.roofGreen, C.signWhite], ground: 'shops' },
+  { wall: C.resTerraTrim, frame: C.resQuoin, trim: C.brickDark, base: C.brickDark, pil: C.resQuoin, glass: C.win, rail: C.resQuoin, slab: C.cream, awn: [C.red, C.signWhite], ground: 'cafe' },
+  { wall: C.resSage, frame: C.resTileGreenDk, trim: C.resTerraTrim, base: C.resTerraTrim, pil: C.cream, glass: C.winCool, rail: C.white, slab: C.white, awn: [C.resTerraTrim, C.signWhite], ground: 'lobby' },
 ];
 function bApartment(rng, variant) {
   const v = vOf(variant, 3), A = APT[v];
@@ -1503,50 +1509,57 @@ function bApartment(rng, variant) {
   solid(g, x0, G, z0, x1, top, z1, A.wall);
   solid(g, x0, G, z0, x1, g1 - 1, z1, A.base);
   cornice(g, x0, z0, x1, z1, g1 - 2, A.pil, A.trim);
-  // (r8) proud string course on every floor (r7 critic: 'ref05 facades have
-  // more ledges, sills and balconies per floor')
-  for (let f = 1; f < nf; f++) belt(g, x0, z0, x1, z1, g1 + f * fh - 1, A.pil);
-  pilasters(g, x0, z0, x1, z1, g1 + 1, top - 3, A.pil, 3);
-  cornice(g, x0, z0, x1, z1, top - 2, A.trim, A.pil);
+  // (w1) FEWER, BIGGER relief trims (critic consensus): chunky 2-proud
+  // quoins up the four corners in place of the slim pilasters, a proud
+  // string course per floor, and a bold crown — a 2-step cornice, a tall
+  // proud parapet with a coping and ref04's stepped corner post caps.
+  for (let f = 1; f < nf; f++) belt(g, x0, z0, x1, z1, g1 + f * fh - 1, A.pil, 2);
+  bigQuoins(g, x0, z0, x1, z1, g1, top - 4, A.pil, 4, [6, 3], 2);
+  cornice(g, x0, z0, x1, z1, top - 3, A.trim, A.trim);
   g.box(x0, top + 1, z0, x1, top + 1, z1, C.stone);
-  g.walls(x0 - 1, top + 1, z0 - 1, x1 + 1, top + 3, z1 + 1, A.wall);            // parapet
-  g.walls(x0 - 2, top + 4, z0 - 2, x1 + 2, top + 4, z1 + 2, A.pil);             // coping
+  g.walls(x0 - 2, top, z0 - 2, x1 + 2, top + 4, z1 + 2, A.pil);                 // parapet
+  g.walls(x0 - 3, top + 5, z0 - 3, x1 + 3, top + 5, z1 + 3, A.trim);            // coping
+  postCaps(g, x0 - 1, z0 - 1, x1 + 1, z1 + 1, top + 5, A.pil, 2, 6);
 
   const F = facade(g, 'front', z0), B = facade(g, 'back', z1);
   const L = facade(g, 'left', x0), Rt = facade(g, 'right', x1);
-  // window columns (u of the glass's left edge), 4-wide glass, 5 per face
-  const colsX = [11, 20, 29, 38, 47], colsZ = [16, 24, 32, 40, 48 - 1];
+  // (w1) finer window rhythm (critic consensus): PAIRS of 3-wide windows
+  // sharing a mullion — three pairs front / back, two on the sides — each a
+  // flush accent frame ring round recessed glass with a transom, on a proud
+  // sill and under a head in the trim tone. Wall piers stay between pairs
+  // (w1-b: single windows at a 6 pitch turned the whole facade white).
+  const pairsX = [15, 27, 39], pairsZ = [22, 34];
   // --- upper floors ---
   for (let f = 0; f < nf; f++) {
-    const y = g1 + 4 + f * fh;
-    for (const [Fc, cols, front] of [[F, colsX, true], [B, colsX, false], [L, colsZ, false], [Rt, colsZ, false]]) {
-      for (let i = 0; i < cols.length; i++) {
-        const u = cols[i];
-        const bal = (front || Fc === B) && (i === 1 || i === 3) && f % 2 === 0;
-        // (r7) every flat gets its own window life (r6 critic: 'the facade
-        // windows repeat with no variation'): warm or cool glass, drawn
-        // curtains or a blind in one of four colours, a flower box on some
-        // sills, a tall French window on the top floor's middle bays.
+    const y = g1 + 5 + f * fh;
+    for (const [Fc, pairs, fb] of [[F, pairsX, true], [B, pairsX, true], [L, pairsZ, false], [Rt, pairsZ, false]]) {
+      // the front / back get one balcony per floor, moving between pairs
+      const bp = fb ? (f + (Fc === B ? 1 : 0)) % 3 : -1;
+      pairs.forEach((u, i) => {
+        const bal = i === bp;
         const hsh = ((f * 7 + i * 13 + (Fc === B ? 5 : Fc === L ? 11 : Fc === Rt ? 17 : 0) + v * 3) * 2654435761) >>> 0;
-        const top = f === nf - 1 && (i === 1 || i === 3) && !bal;
-        const wh = bal || top ? 13 : 10;
-        towerWin(Fc, u, y, 4, wh, (hsh >> 3) % 3 === 0 ? C.win : A.glass, A.frame);
-        Fc.box(u, y + (bal ? 6 : 5), 0, u + 3, y + (bal ? 6 : 5), 0, A.frame);    // sash bar
-        const cur = (hsh >> 6) % 5;
-        if (cur < 4) Fc.box(u, y + wh - 2, 0, u + 3, y + wh - 1, 0, [C.cream, C.pink, C.resSage, C.amber][cur]);   // blind
-        if (bal) railBalcony(Fc, u - 3, u + 6, y, 4, A.slab, A.rail, { h: 6 });
-        else if ((hsh >> 9) % 4 === 0) flowerBox(Fc, u - 1, u + 4, y - 2, FLOWERS[(hsh >> 11) & 3]);
-        else Fc.box(u - 1, y - 2, 1, u + 4, y - 2, 1, A.pil);                   // sill
-        // (r9) a head over every window; some get a striped awning or an AC unit
-        if (!bal && (hsh >> 9) % 4 === 1 && f > 0) awning(Fc, u - 1, u + 4, y + wh + 4, 3, { colors: A.awn, stripe: 1 });
-        else if (!bal) Fc.box(u - 1, y + wh + 1, 1, u + 4, y + wh + 1, 1, A.pil);
-        if (!bal && (hsh >> 9) % 4 === 2 && (hsh >> 14) % 2) wallAC(Fc, u, y - 7, { w: 4, h: 3, d: 3 });
-      }
+        const wh = bal ? 14 : 11;
+        Fc.box(u - 1, y - 1, 0, u + 7, y + wh, 0, A.frame);
+        for (const w0 of [u, u + 4]) {
+          const glass = ((hsh >> (3 + w0 - u)) & 3) === 0 ? C.win : A.glass;
+          Fc.clear(w0, y, 0, w0 + 2, y + wh - 1, 0);
+          Fc.box(w0, y, -1, w0 + 2, y + wh - 1, -1, glass);
+          Fc.box(w0, y + wh - 4, -1, w0 + 2, y + wh - 4, -1, A.frame);    // transom
+        }
+        Fc.box(u - 2, y + wh + 1, 1, u + 8, y + wh + 1, 1, A.pil);         // head
+        if (bal) {
+          railBalcony(Fc, u - 3, u + 9, y, 5, A.slab, A.rail, { h: 7 });
+          Fc.box(u - 2, y, 3, u - 1, y + 1, 4, C.resTerraTrim); Fc.box(u - 2, y + 2, 3, u - 1, y + 3, 4, C.vegBush);
+        } else {
+          Fc.box(u - 2, y - 2, 1, u + 8, y - 2, 2, A.pil);                 // sill
+          if ((hsh >> 9) % 5 === 0) flowerBox(Fc, u, u + 6, y - 3, FLOWERS[(hsh >> 11) & 3]);
+        }
+      });
     }
-    if (f % 2 === 1) { wallAC(Rt, 35, y - 1, { w: 5, h: 4, d: 3 }); wallAC(L, 19, y + 12 - 13, { w: 5, h: 4, d: 3 }); }
-    else wallAC(B, 24, y + 11, { w: 5, h: 4, d: 3 });
+    if (f % 2 === 1) wallAC(Rt, 29, y - 7, { w: 5, h: 4, d: 3 });
+    else wallAC(L, 29, y - 7, { w: 5, h: 4, d: 3 });
   }
-  downpipe(Rt, 14, g1, top - 3, A.trim);
+  downpipe(Rt, 15, g1, top - 4, A.trim);
   // --- ground floor ---
   const gy = G + 3;
   if (A.ground === 'shops' || A.ground === 'cafe') {
@@ -2059,8 +2072,10 @@ function bDuplex(rng, variant) {
 // exterior stone chimney; a woodpile, a stump with an axe, pines, and a
 // per-variant treat (picnic table / fire pit / canoe).
 const CABIN = [
+  // (w1) no plank-orange logs: they turned the cabin + porch + fence into one
+  // orange blob; timber tones are the ref05 farmhouse browns
   { roof: ROOF.green, logs: [C.wood, C.woodDark], door: C.resTerraTrim },
-  { roof: ROOF.slate, logs: [C.plank, C.wood], door: C.brick },
+  { roof: ROOF.slate, logs: [C.woodDark, C.trunkDark], door: C.brick },
   { roof: ROOF.tile, logs: [C.woodDark, C.trunkDark], door: C.roofGreen },
 ];
 function bCabin(rng, variant) {
@@ -2081,8 +2096,8 @@ function bCabin(rng, variant) {
   }
   const roof = gableRoof(g, 'x', x0, x1, z0, z1, top, { roof: K.roof, fill: K.logs[1], edge: true, fascia: C.woodDark, ov: 4, ova: 3 });
   // porch: deck, posts, rail, lean-to roof
-  g.box(x0 - 4, G, 13, x1 + 4, G + 3, z0 - 1, C.plank);
-  for (let x = x0 - 4; x <= x1 + 4; x += 4) g.set(x, G + 3, 13, C.wood);
+  g.box(x0 - 4, G, 13, x1 + 4, G + 3, z0 - 1, C.wood);
+  for (let x = x0 - 4; x <= x1 + 4; x += 4) g.set(x, G + 3, 13, C.woodDark);
   for (const px of [x0 - 3, 30, x1 + 3]) g.box(px, G + 4, 14, px + 1, G + 27, 15, C.woodDark);
   for (const [a, b] of [[x0 - 1, 23], [37, x1 + 1]]) { g.box(a, G + 11, 14, b, G + 11, 14, C.woodDark); for (let x = a; x <= b; x += 3) g.box(x, G + 4, 14, x, G + 10, 14, C.wood); }
   for (let k = 0; k < 8; k++) g.box(x0 - 5, G + 28 + k, 12 + k * 2, x1 + 5, G + 28 + k, 13 + k * 2, k % 2 ? K.roof[0] : K.roof[1]);
@@ -2340,24 +2355,28 @@ function bBeachHouse(rng, variant) {
 //   'loggia' a full-width balcony: slab, bar or glass rail, a potted plant
 //   'corner' balconies on the two end bays only, the middle bays punched
 function towerFloor(Fc, a, b, y, A, style, seed, m = 5) {
-  const us = [];
-  for (let u = a + m; u + 4 <= b - m + 1; u += 8) us.push(u);
+  // (w1) finer window rhythm + fewer small props (critic consensus: the
+  // 5-wide windows with blinds / boxes / AC / awnings read as confetti on
+  // 'stacked blue bands'): pairs of 3-wide windows sharing a mullion (9
+  // wide) with 3-voxel wall piers between pairs, flush frame rings, sills and
+  // heads that run together per pair, and only an occasional flower box or
+  // AC unit.
+  const us = [], span = b - a - 2 * m + 1;
+  const np = Math.max(1, Math.floor((span + 3) / 12));
+  for (let i = 0, u = a + m + ((span - (np * 12 - 3)) >> 1) + 1; i < np; i++, u += 12) us.push(u, u + 4);
   const n = us.length;
   us.forEach((u, i) => {
     const h = ((((seed | 0) * 131 + i * 977 + 7) >>> 0) * 2654435761) >>> 0;
-    const balc = style === 'loggia' || (style === 'corner' && (i === 0 || i === n - 1));
+    const balc = style === 'loggia' || (style === 'corner' && (i <= 1 || i >= n - 2));
     const wh = balc ? 15 : 12;
-    towerWin(Fc, u, y + 1, 5, wh, (h >> 3) % 3 === 0 ? C.win : A.glass, A.frame);
-    Fc.box(u, y + (balc ? 9 : 7), 0, u + 4, y + (balc ? 9 : 7), 0, A.frame);
-    const cur = (h >> 6) % 6;
-    if (cur < 4) Fc.box(u, y + wh - 1, 0, u + 4, y + wh, 0, [C.cream, C.pink, C.resSage, C.amber][cur]);
+    towerWin(Fc, u, y + 1, 3, wh, (h >> 3) % 4 === 0 ? C.win : A.glass, A.frame);
+    Fc.box(u, y + (balc ? 10 : 9), 0, u + 2, y + (balc ? 10 : 9), 0, A.frame);   // transom
     if (balc) return;
-    Fc.box(u - 1, y, 1, u + 5, y, 2, A.trim);                            // proud sill
-    Fc.box(u - 1, y + wh + 2, 1, u + 5, y + wh + 2, 1, A.trim);          // head
-    const k = (h >> 10) % 6;
-    if (k === 0 || k === 3) flowerBox(Fc, u - 1, u + 5, y - 1, FLOWERS[(h >> 13) & 3]);
-    else if (k === 1) wallAC(Fc, u, y - 6, { w: 5, h: 4, d: 3 });
-    else if (k === 2) awning(Fc, u - 1, u + 5, y + wh + 5, 3, { colors: A.awn, stripe: 1 });
+    Fc.box(u - 2, y, 1, u + 4, y, 2, A.trim);                            // sill (runs into a course)
+    Fc.box(u - 2, y + wh + 2, 1, u + 4, y + wh + 2, 1, A.trim);          // head (runs into a course)
+    const k = (h >> 10) % 9;
+    if (k === 0) flowerBox(Fc, u - 1, u + 3, y - 1, FLOWERS[(h >> 13) & 3]);
+    else if (k === 1) wallAC(Fc, u - 1, y - 6, { w: 5, h: 4, d: 3 });
   });
   const bal = (u0, u1, glass, pl) => {
     Fc.box(u0, y - 1, 1, u1, y, 5, A.slab);
@@ -2375,8 +2394,8 @@ function towerFloor(Fc, a, b, y, A, style, seed, m = 5) {
   };
   if (style === 'loggia') bal(a + 1, b - 1, (seed & 1) === 0, a + 3 + ((seed * 8) % Math.max(1, b - a - 8)));
   else if (style === 'corner' && n >= 2) {
-    bal(us[0] - 3, us[0] + 7, (seed & 2) === 0, us[0] + 5);
-    bal(us[n - 1] - 3, us[n - 1] + 7, (seed & 2) === 0, null);
+    bal(us[0] - 2, us[1] + 4, (seed & 2) === 0, us[0] + 4);
+    bal(us[n - 2] - 2, us[n - 1] + 4, (seed & 2) === 0, null);
   }
 }
 const TSTYLE = ['punch', 'corner', 'punch', 'loggia', 'punch', 'punch', 'corner', 'loggia'];
@@ -2389,8 +2408,8 @@ const TSTYLE = ['punch', 'corner', 'punch', 'loggia', 'punch', 'punch', 'corner'
 // (stair house, condensers, tank / garden / solar) crowns it.
 const TALL = [
   { wall: C.cream, trim: C.white, pil: C.resTerraTrim, base: C.resTerraTrim, glass: C.winCool, awn: [C.roofGreen, C.signWhite], frame: C.white, slab: C.white, rail: C.white, bay: C.resTerracotta },
-  { wall: C.resSage, trim: C.white, pil: C.white, base: C.resSlateDk, glass: C.winCool, awn: [C.teal, C.signWhite], frame: C.white, slab: C.white, rail: C.white, bay: C.resQuoin },
-  { wall: C.resQuoin, trim: C.white, pil: C.resSlate, base: C.resSlateDk, glass: C.win, awn: [C.red, C.signWhite], frame: C.white, slab: C.white, rail: C.white, bay: C.resButter },
+  { wall: C.resSage, trim: C.white, pil: C.white, base: C.resTerraTrim, glass: C.winCool, awn: [C.teal, C.signWhite], frame: C.white, slab: C.white, rail: C.white, bay: C.resQuoin },
+  { wall: C.resQuoin, trim: C.white, pil: C.resTerraTrim, base: C.brickDark, glass: C.win, awn: [C.red, C.signWhite], frame: C.white, slab: C.white, rail: C.white, bay: C.resButter },
 ];
 function bTallApartment(rng, variant) {
   const v = vOf(variant, 3), A = TALL[v];
@@ -2408,8 +2427,10 @@ function bTallApartment(rng, variant) {
     const yy = g1 + f * fh - 1;
     if (f < ns) line(g, x0, z0, x1, z1, yy, A.trim); else line(g, xs, zs, x1, z1, yy, A.trim);
   }
-  pilasters(g, x0, z0, x1, z1, g1 + 1, ys - 3, A.pil, 3);
-  pilasters(g, xs, zs, x1, z1, ys + 1, top - 3, A.pil, 3);
+  // (w1) chunky 2-proud quoins instead of slim pilasters (critic consensus:
+  // fewer but bigger relief trims)
+  bigQuoins(g, x0, z0, x1, z1, g1 + 1, ys - 4, A.pil, 4, [5, 3], 2);
+  bigQuoins(g, xs, zs, x1, z1, ys + 1, top - 4, A.pil, 4, [5, 3], 2);
   cornice(g, x0, z0, x1, z1, ys - 2, A.pil, A.trim);
   cornice(g, xs, zs, x1, z1, top - 2, A.pil, A.trim);
 
@@ -2628,7 +2649,8 @@ function bCondoTower(rng, variant) {
 // with lamps, iron railings, side gardens, and a pool terrace at the back
 // (v1 adds a gazebo, v0 a topiary garden).
 const MANSION = [
-  scheme({ wall: C.cream, roof: ROOF.slate, trim: C.white, quoin: C.white, base: C.stone, glass: C.win, shutter: C.resSlateDk, frame: C.resSlateDk, car: 10 }),
+  // (w1) warm roof + cream quoins: the slate roof + white trim read as one grey-white pile
+  scheme({ wall: C.cream, roof: ROOF.red, trim: C.white, quoin: C.resQuoin, base: C.stone, glass: C.win, shutter: C.resTileGreenDk, frame: C.resTerraTrim, car: 10 }),
   scheme({ wall: C.resButter, roof: ROOF.tile, trim: C.white, quoin: C.white, base: C.stone, glass: C.win, shutter: C.resTileGreenDk, car: 0 }),
 ];
 function bMansion(rng, variant) {

@@ -957,8 +957,22 @@ export class Sky {
     const hex = (h, d) => new THREE.Color().setHex(h != null ? h : d, THREE.SRGBColorSpace);
     this._art = {
       amount: A.amount != null ? A.amount : 1.0,
-      elevLo: A.elevLo != null ? A.elevLo : 12,     // deg: fully physical at/below
-      elevHi: A.elevHi != null ? A.elevHi : 24,     // deg: fully authored at/above
+      // Light wave-2 r1: the authored rig now runs through golden hour and
+      // hands over to the physical solution only as the sun reaches the
+      // horizon (was 24 -> 12 deg). Physical dusk was an orange key over a
+      // fill rotated toward #ff8f3f — every face, lit or shaded, went the
+      // same salmon (coherence #5). Dusk is now the authored DUSK palette
+      // below: a golden key on lit faces, a cool fill on shade faces.
+      elevLo: A.elevLo != null ? A.elevLo : -6,     // deg: fully physical at/below
+      elevHi: A.elevHi != null ? A.elevHi : 0,      // deg: fully authored at/above
+      // Dusk ramp (deg of key elevation): 0 at/above duskHi, 1 at/below duskLo.
+      duskHi: A.duskHi != null ? A.duskHi : 32,
+      duskLo: A.duskLo != null ? A.duskLo : 6,
+      duskKey: hex(A.duskKeyHex, 0xffc584),         // golden amber, not orange-red
+      duskKeyScale: A.duskKeyScale != null ? A.duskKeyScale : 0.66,
+      duskSky: hex(A.duskSkyHex, 0xbfc8ec),         // cool lavender-blue fill: shade faces keep their hue, go cool
+      duskGnd: hex(A.duskGroundHex, 0x54463a),      // warm bounce off sunlit ground
+      duskFillScale: A.duskFillScale != null ? A.duskFillScale : 0.72,
       key: hex(A.keyHex, 0xfffaf2),                 // warm white (neutrals measured B-R -10 at #fff6ea; ref05 is 0)
       keyI: A.keyIntensity != null ? A.keyIntensity : 3.3,  // r8: 3.2 -> 3.3 (key at 50 deg: tops keep their value)             // r4: 3.0 -> 2.6; r5: 2.9 (bounce trimmed + deeper open shadows, see engine.js DAY_BOUNCE_SCALE)
       sky: hex(A.skyHex, 0xe4ecf6),                 // hemisphere up: near-white, a touch cool (r6: #f1f3f4)
@@ -1097,8 +1111,11 @@ export class Sky {
       uCloudLightStep: { value: opts.cloudLightStep != null ? opts.cloudLightStep : 0.11 },
       uHighCloud: { value: opts.highCloud != null ? opts.highCloud : 0.38 },
       uStars: { value: 0 },
-      uNightZenith: { value: new THREE.Vector3(0.012, 0.026, 0.075) },
-      uNightHorizon: { value: new THREE.Vector3(0.040, 0.062, 0.140) },
+      // night r1: blue-VIOLET rather than navy. This is also the night hemi
+      // fill (engine copies the zenith into hemi.color), so it is the colour
+      // every shaded face and every roof takes at night.
+      uNightZenith: { value: new THREE.Vector3(0.024, 0.024, 0.086) },
+      uNightHorizon: { value: new THREE.Vector3(0.058, 0.054, 0.150) },
       uHorizonRef: { value: new THREE.Vector3(0.20, 0.31, 0.44) },
       // MUST track terrain.js's uHorizonLift (engine.js sets it to 2.2). See
       // the "horizon haze" block in main() — this is the seam fix.
@@ -1284,6 +1301,11 @@ export class Sky {
       if (a.amount != null) ar.amount = a.amount;
       if (a.elevLo != null) ar.elevLo = a.elevLo;
       if (a.elevHi != null) ar.elevHi = a.elevHi;
+      if (a.duskHi != null) ar.duskHi = a.duskHi;
+      if (a.duskLo != null) ar.duskLo = a.duskLo;
+      setHex(ar.duskKey, a.duskKeyHex); setHex(ar.duskSky, a.duskSkyHex); setHex(ar.duskGnd, a.duskGroundHex);
+      if (a.duskKeyScale != null) ar.duskKeyScale = a.duskKeyScale;
+      if (a.duskFillScale != null) ar.duskFillScale = a.duskFillScale;
       setHex(ar.key, a.keyHex); setHex(ar.sky, a.skyHex); setHex(ar.gnd, a.groundHex);
       setHex(ar.amb, a.ambientHex); setHex(ar.envUp, a.envUpHex);
       setHex(ar.envHor, a.envHorizonHex); setHex(ar.envGnd, a.envGroundHex);
@@ -1365,8 +1387,18 @@ export class Sky {
     this._moonDir.set(cm * Math.sin(maz), Math.sin(mel), cm * Math.cos(maz)).normalize();
 
     // The key light the scene should actually be lit by.
-    if (this._sunDir.y > 0.0) this._keyDir.copy(this._sunDir);
-    else if (this._moonDir.y > 0.02) this._keyDir.copy(this._moonDir);
+    if (this._sunDir.y > 0.0) {
+      // Light wave-2 r1: the KEY's elevation is softly floored (0..40 deg ->
+      // 20..40 deg; above 40 unchanged). At a true 7 deg sun every wall in a
+      // dense iso city sat in a neighbour's shadow, so golden hour rendered
+      // as a flat, fill-only frame. The warm colour and the dimming (see the
+      // dusk palette in _computeLighting) carry the time of day; the key
+      // keeps lighting faces and throws long-but-bounded shadows. The dome
+      // still draws the true sun (sunDir is untouched).
+      const kel = el >= 0.6981 ? el : 0.3491 + el * 0.5;
+      const ck = Math.cos(kel);
+      this._keyDir.set(ck * Math.sin(az), Math.sin(kel), ck * Math.cos(az)).normalize();
+    } else if (this._moonDir.y > 0.02) this._keyDir.copy(this._moonDir);
     else this._keyDir.copy(this._sunDir).negate();
     this._out.isMoon = this._sunDir.y <= 0.0;
 
@@ -1534,7 +1566,7 @@ export class Sky {
     // A sun sitting on the horizon still lights the city warmly, so the key
     // light must not reach zero until it is properly below.
     const dayI = Math.pow(clamp((elev + 0.075) / 0.30, 0, 1), 0.70);
-    const moonI = 0.16 * this._nightAmt;
+    const moonI = 0.135 * this._nightAmt;   // night r1: 0.16 -> 0.135 (lit panes and lamp pools pop; masses still read)
     const oc = this._overcast;
     const intensity = (1.25 * dayI * (1 - oc * 0.72)) + moonI * (1 - oc * 0.5);
 
@@ -1542,7 +1574,8 @@ export class Sky {
       // Blend toward cool moonlight as the sun sets.
       const k = this._nightAmt;
       this._sunColor.setRGB(
-        lerp(rgb[0], 0.62, k), lerp(rgb[1], 0.72, k), lerp(rgb[2], 1.00, k)
+        // night r1: lavender moon (0.62/0.72/1.00 was ice blue)
+        lerp(rgb[0], 0.70, k), lerp(rgb[1], 0.70, k), lerp(rgb[2], 1.00, k)
       );
     } else {
       this._sunColor.setRGB(rgb[0], rgb[1], rgb[2]);
@@ -1605,8 +1638,8 @@ export class Sky {
     // Cheerful bounce light: sunlit turf by day, deep blue at night.
     const bounceDay = 1 - n;
     this._groundColor.setRGB(
-      lerp(0.055, 0.30, bounceDay) * (1 - oc * 0.25) + 0.02,
-      lerp(0.070, 0.36, bounceDay) * (1 - oc * 0.20) + 0.03,
+      lerp(0.066, 0.30, bounceDay) * (1 - oc * 0.25) + 0.02,   // night r1: 0.055 -> 0.066 (violet bounce)
+      lerp(0.060, 0.36, bounceDay) * (1 - oc * 0.20) + 0.03,   // night r1: 0.070 -> 0.060
       lerp(0.150, 0.20, bounceDay) * (1 - oc * 0.10) + 0.03
     );
 
@@ -1618,8 +1651,8 @@ export class Sky {
 
     const o = this._out;
     o.intensity = intensity;
-    o.hemiIntensity = lerp(0.62, 0.30, n) * lerp(1, 1.25, oc);
-    o.ambientIntensity = lerp(0.16, 0.22, n);
+    o.hemiIntensity = lerp(0.62, 0.25, n) * lerp(1, 1.25, oc);   // night r1: 0.30 -> 0.25
+    o.ambientIntensity = lerp(0.16, 0.185, n);   // night r1: 0.22 -> 0.185
     o.envIntensity = lerp(1.0, 0.45, n) * lerp(1, 0.85, oc);
     o.nightAmount = n;
     o.sunHeight = elev;
@@ -1636,14 +1669,27 @@ export class Sky {
       * (1 - n) * (1 - oc * 0.85);
     this._artAmt = artAmt;
     o.artAmount = artAmt;
-    this._keyColor.copy(art.key);
+    // Dusk palette (light wave-2 r1). Warm light ONLY on the key; the fill
+    // swings cool and dims, so a white tower at golden hour reads golden on
+    // its lit side, cool lavender on its shade side and is still white —
+    // instead of one salmon wash. Luminance of the key/fill hues is
+    // normalised so the swing is chroma; the level change is duskKey/FillScale.
+    const dusk = 1 - smoothstep01((elevDeg - art.duskLo) / Math.max(1e-3, art.duskHi - art.duskLo));
+    this._duskAmt = dusk;
+    o.duskAmount = dusk;
+    this._lerpHue(art.key, art.duskKey, dusk, this._keyColor);
     // Overcast still flattens the authored key toward grey, like the physical one.
-    o.keyIntensity = art.keyI * (1 - oc * 0.72);
-    this._fillSky.copy(art.sky);
-    this._fillGround.copy(art.gnd);
+    // Below duskLo the golden key fades out by the time the sun touches the
+    // horizon, where the physical/moon solution takes over (artAmount).
+    const setK = smoothstep01(elevDeg / Math.max(1e-3, art.duskLo));
+    o.keyIntensity = art.keyI * (1 - oc * 0.72) * (1 + (art.duskKeyScale - 1) * dusk) * setK;
+    this._lerpHue(art.sky, art.duskSky, dusk, this._fillSky);
+    this._lerpHue(art.gnd, art.duskGnd, dusk, this._fillGround);
     this._fillAmbient.copy(art.amb);
-    o.fillHemiIntensity = art.hemiI;
-    o.fillAmbientIntensity = art.ambI;
+    const fillK = (1 + (art.duskFillScale - 1) * dusk) * (0.7 + 0.3 * setK);
+    this._duskFillK = fillK;
+    o.fillHemiIntensity = art.hemiI * fillK;
+    o.fillAmbientIntensity = art.ambI * fillK;
     return o;
   }
 
@@ -1688,6 +1734,19 @@ export class Sky {
       src.b + (dst.b * k - src.b) * w
     );
     return out;
+  }
+
+  /**
+   * Lerp `a` toward `b`'s HUE at `a`'s luminance, by `w` (linear colours).
+   * Used by the dusk palette so the swing is chroma only; levels are set by
+   * the separate dusk scales.
+   */
+  _lerpHue(a, b, w, out) {
+    if (!(w > 0)) return out.copy(a);
+    const la = 0.2126 * a.r + 0.7152 * a.g + 0.0722 * a.b;
+    const lb = 0.2126 * b.r + 0.7152 * b.g + 0.0722 * b.b;
+    const k = la / Math.max(lb, 1e-5);
+    return out.setRGB(a.r + (b.r * k - a.r) * w, a.g + (b.g * k - a.g) * w, a.b + (b.b * k - a.b) * w);
   }
 
   _tmpColorGrey(v) {
@@ -1747,14 +1806,19 @@ export class Sky {
     // physical dome, so the studio sky is the same brightness at any hour it
     // is active; `uEnvArt` fades it out toward dusk/night.
     {
-      const ar = this._art, L = ar.envLevel;
+      const ar = this._art, dk = this._duskAmt || 0;
+      // Dusk: the studio env dims and cools with the fill; its key-side lobe
+      // takes the golden key (light wave-2 r1).
+      const L = ar.envLevel * (this._duskFillK != null ? this._duskFillK : 1);
+      const up = this._lerpHue(ar.envUp, ar.duskSky, dk, this._envUpTmp || (this._envUpTmp = new THREE.Color()));
       u.uEnvArt.value = this._artAmt;
       u.uEnvUpPow.value = ar.envUpPow;
-      u.uEnvUp.value.set(ar.envUp.r * L, ar.envUp.g * L, ar.envUp.b * L);
+      u.uEnvUp.value.set(up.r * L, up.g * L, up.b * L);
       u.uEnvHor.value.set(ar.envHor.r * L, ar.envHor.g * L, ar.envHor.b * L);
       u.uEnvGnd.value.set(ar.envGnd.r * L, ar.envGnd.g * L, ar.envGnd.b * L);
-      const ks = ar.envSun * L;
-      u.uEnvSun.value.set(ar.key.r * ks, ar.key.g * ks, ar.key.b * ks);
+      const ks = ar.envSun * ar.envLevel * (this._out.keyIntensity != null ? this._out.keyIntensity / Math.max(1e-3, ar.keyI) : 1);
+      const kc = this._keyColor;
+      u.uEnvSun.value.set(kc.r * ks, kc.g * ks, kc.b * ks);
     }
     // City sky glow: warm sodium by default, cooled a touch by overcast.
     u.uCityGlow.value.set(this._cityDir.x, this._cityDir.y,

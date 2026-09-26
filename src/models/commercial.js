@@ -284,6 +284,57 @@ function boldText(f, cu, y, s, c, out) {
   }
   return w;
 }
+// w2r1 SLIM BOLD FASCIA LETTERING. The consensus across critics: one slim,
+// bold, legible sign — letters 1/4-1/3 of a storey (UP = 16, so 5 rows) on a
+// contrasting panel (ref05 SUPERMARKET / Mac Auto, ref02 SHOP). The r11 7-row
+// bold board (plus a 10-row band) read as a billboard; the r10 3×5 letters with
+// 1-voxel strokes read as mush. This font is 5 rows tall with 2-voxel vertical
+// stems and 1-voxel bars (the ref02 pixel-font look), so strokes survive the
+// AO / edge pass and the counters stay open.
+const F5B = {
+  A: ['.###.', '##.##', '#####', '##.##', '##.##'], B: ['####.', '##.##', '####.', '##.##', '####.'],
+  C: ['.####', '##...', '##...', '##...', '.####'], D: ['####.', '##.##', '##.##', '##.##', '####.'],
+  E: ['#####', '##...', '####.', '##...', '#####'], F: ['#####', '##...', '####.', '##...', '##...'],
+  G: ['.####', '##...', '##.##', '##.##', '.####'], H: ['##.##', '##.##', '#####', '##.##', '##.##'],
+  I: ['##', '##', '##', '##', '##'], J: ['...##', '...##', '...##', '##.##', '.###.'],
+  K: ['##..#', '##.#.', '###..', '##.#.', '##..#'], L: ['##...', '##...', '##...', '##...', '#####'],
+  M: ['##...##', '###.###', '##.#.##', '##...##', '##...##'], N: ['##..##', '###.##', '##.###', '##..##', '##..##'],
+  O: ['.###.', '##.##', '##.##', '##.##', '.###.'], P: ['####.', '##.##', '####.', '##...', '##...'],
+  Q: ['.###.', '##.##', '##.##', '##.#.', '.##.#'], R: ['####.', '##.##', '####.', '##.#.', '##.##'],
+  S: ['.####', '##...', '.###.', '...##', '####.'], T: ['######', '..##..', '..##..', '..##..', '..##..'],
+  U: ['##.##', '##.##', '##.##', '##.##', '.###.'], V: ['##.##', '##.##', '##.##', '.###.', '..#..'],
+  W: ['##...##', '##...##', '##.#.##', '###.###', '##...##'], X: ['##.##', '.###.', '..#..', '.###.', '##.##'],
+  Y: ['##..##', '##..##', '.####.', '..##..', '..##..'], Z: ['#####', '...##', '.###.', '##...', '#####'],
+  ' ': ['...', '...', '...', '...', '...'], '&': ['.##..', '#..#.', '.##.#', '#..#.', '.##.#'],
+};
+function stemW(s) { let w = -1; for (const ch of String(s).toUpperCase()) w += (F5B[ch] || F5B[' '])[0].length + 1; return w; }
+function stemText(f, cu, y, s, c, out) {
+  s = String(s).toUpperCase();
+  const w = stemW(s);
+  let u = cu - f.rd * Math.floor((w - 1) / 2);
+  for (const ch of s) {
+    const rows = F5B[ch] || F5B[' '], gw = rows[0].length;
+    for (let r = 0; r < 5; r++) for (let i = 0; i < gw; i++) if (rows[r][i] === '#') f.set(u + f.rd * i, y + 4 - r, out, c);
+    u += f.rd * (gw + 1);
+  }
+  return w;
+}
+// Name panel, 9 rows (y0..y0+8): a 1-voxel border ring, 1 row / 2 columns of
+// padding, the 5-row letters FLUSH in the face (no relief, so nothing eats the
+// strokes). One voxel thick at `out`, so it stands 1 proud of the fascia band
+// and gets a crisp AO outline like a real sign board.
+const panelW = (s) => stemW(s) + 6;
+function namePanel(f, cu, y0, s, o) {
+  s = String(s).toUpperCase();
+  const w = stemW(s), out = o.out != null ? o.out : 2;
+  const ua = cu - f.rd * (Math.floor((w - 1) / 2) + 3), ub = ua + f.rd * (w + 5);
+  f.box(ua, y0, out, ub, y0 + 8, out, o.bd);
+  f.box(ua + f.rd, y0 + 1, out, ub - f.rd, y0 + 7, out, o.bg);
+  stemText(f, cu, y0 + 2, s, o.fg, out);
+  if (o.lamps) for (const u of [ua + f.rd * 4, ub - f.rd * 4]) { f.set(u, y0 + 9, out, C.comFrame); f.set(u, y0 + 9, out + 1, C.comFrame); f.set(u, y0 + 8, out + 2, C.lamp); }
+  return w + 6;
+}
+
 // 11-row board (y0..y0+10): a 1-voxel frame, 1 row / 3 columns of margin,
 // the bold letters flush in the face; 2 voxels thick so it stands proud of the
 // fascia and throws a crisp shadow line.
@@ -789,6 +840,68 @@ function roofScape(g, rng, x0, z0, x1, z1, y, plan, o = {}) {
   gear.block = blocks.concat(drawn);
   roofGear(g, x0, z0, x1, z1, y, gear, (rng() * 4) | 0);
 }
+// ---------------------------------------------------------------------------
+// w2r1 CLEAN ROOF. Consensus (r7, r8, r10 critics + coordinator): ref02 has a
+// smooth light deck with 3-4 DELIBERATE props (a 2×2 solar array, an AC unit,
+// a vent, a hatch) and breathing room; our r9 cell grid filled every roof edge
+// to edge. Now each shop lists 3-4 props with an anchor on the deck; each one
+// is placed at its anchor (or the nearest free spot, 3 voxels clear of the
+// others) and the rest of the deck stays clean.
+// ---------------------------------------------------------------------------
+const RPROP = {
+  solar: [20, 16, (g, x, y, z) => solar(g, x, y, z, 20, 16, 2, 2)],
+  solar2: [20, 8, (g, x, y, z) => solar(g, x, y, z, 20, 8, 2, 1)],
+  ac: [7, 6, acUnit], acBig: [13, 7, acBig], hatch: [7, 7, hatch], tank: [9, 9, tank],
+  vent: [4, 4, (g, x, y, z) => vent(g, x + 1, y, z + 1, 5)],
+  vents: [9, 4, (g, x, y, z) => { vent(g, x + 1, y, z + 1, 6); vent(g, x + 6, y, z + 1, 4); }],
+  stair: [12, 10, (g, x, y, z) => stairHouse(g, x + 1, y, z + 1)],
+  sky: [12, 9, (g, x, y, z) => skylight(g, x, y, z, 12, 9)],
+  garden: [16, 11, (g, x, y, z, r) => ROOFMOD.garden(g, r, x, z, x + 15, z + 10, y, {})],
+  gardenL: [22, 13, (g, x, y, z, r) => ROOFMOD.garden(g, r, x, z, x + 21, z + 12, y, {})],
+  planter: [12, 5, roofPlanter],
+};
+function roofProps(g, rng, x0, z0, x1, z1, y, list, block = []) {
+  const W = x1 - x0 + 1, D = z1 - z0 + 1;
+  if (W < 8 || D < 6) return;
+  const occ = new Uint8Array(W * D);
+  const mark = (x, z, w, d, pad = 0) => {
+    for (let i = Math.max(x0, x - pad); i <= Math.min(x1, x + w - 1 + pad); i++)
+      for (let k = Math.max(z0, z - pad); k <= Math.min(z1, z + d - 1 + pad); k++) occ[(k - z0) * W + (i - x0)] = 1;
+  };
+  for (const [bx0, bz0, bx1, bz1] of block) mark(bx0, bz0, bx1 - bx0 + 1, bz1 - bz0 + 1, 1);
+  const free = (x, z, w, d) => {
+    if (x < x0 + 2 || z < z0 + 2 || x + w - 1 > x1 - 2 || z + d - 1 > z1 - 2) return false;
+    for (let i = x; i < x + w; i++) for (let k = z; k < z + d; k++) if (occ[(k - z0) * W + (i - x0)]) return false;
+    return true;
+  };
+  const m = 3;
+  for (const it of list) {
+    const [kind, an] = Array.isArray(it) ? it : [it, 'c'];
+    const spec = RPROP[kind]; if (!spec) continue;
+    const [w, d, draw] = spec;
+    const xl = x0 + m, xr = x1 - m - w + 1, xc = (x0 + x1 - w + 1) >> 1;
+    const zf = z0 + m, zb = z1 - m - d + 1, zc = (z0 + z1 - d + 1) >> 1;
+    const ax = an.includes('l') ? xl : an.includes('r') ? xr : xc;
+    const az = an[0] === 'f' ? zf : an[0] === 'b' ? zb : zc;
+    let best = null;
+    for (let rad = 0; rad <= 24 && !best; rad++) {
+      for (let dx = -rad; dx <= rad && !best; dx++) {
+        const rz = rad - Math.abs(dx);
+        for (const dz of rz ? [-rz, rz] : [0]) if (free(ax + dx, az + dz, w, d)) { best = [ax + dx, az + dz]; break; }
+      }
+    }
+    if (!best) continue;
+    draw(g, best[0], y, best[1], rng);
+    mark(best[0], best[1], w, d, 3);
+  }
+}
+// default kits (3-4 props) for shops without their own list (zoned C growth)
+const ROOFKITS = [
+  [['solar', 'cl'], ['ac', 'br'], ['vent', 'bc'], ['hatch', 'fr']],
+  [['garden', 'fl'], ['acBig', 'br'], ['vents', 'fr']],
+  [['solar', 'cr'], ['stair', 'bl'], ['ac', 'fl']],
+  [['gardenL', 'cl'], ['ac', 'br'], ['hatch', 'fr']],
+];
 // light rim band inside the parapet (ref02) on the deck row y
 const ROOFPLANS = [
   ['garden', 'hvac', 'solar', 'stair', 'patio', 'garden'],
@@ -1152,7 +1265,9 @@ function levels(t = 0) {
   // r11: the fascia is 10 rows (B0..B1) so the 11-row BOLD board (boldBoard,
   // 7-row letters with 2-voxel stems) fits on it, STR..B1; the r10 critic
   // found the 3×5 1-voxel letters "mushy and hard to read at this scale".
-  return { GY0: 6, GY1, AWT: GY1 + 3, STR: GY1 + 4, B0: GY1 + 5, B1: GY1 + 14, TOP: GY1 + 15 };
+  // w2r1: SLIM fascia again — an 8-row band (B0..B1) carrying the 9-row name
+  // panel (namePanel, 5-row letters) STR..B1; the white cornice is TOP.
+  return { GY0: 6, GY1, AWT: GY1 + 3, STR: GY1 + 4, B0: GY1 + 5, B1: GY1 + 12, TOP: GY1 + 13 };
 }
 // r7 default body: the FULL lot width (party walls, so a row of shops reads as
 // one continuous street frontage like ref05's market block) and 36 deep, so
@@ -1192,11 +1307,15 @@ function shop(rng, S) {
   const awn = S.awn;
   // r8 awnings: solid brand colour (default), wide 4-voxel stripes (S.awnStripe),
   // or one solid colour per bay cycling through S.awn (S.awnCycle)
-  const ao = { stripe: S.awnStripe ? 4 : 0, lip: S.awnLip };
+  // w2r1: consensus "a few clean SOLID awnings" — stripes only on request
+  // (S.awnStripe === 'force'); otherwise one solid colour with a light lip
+  const ao = { stripe: S.awnStripe === 'force' ? 6 : 0, lip: S.awnLip != null ? S.awnLip : (S.awnStripe && awn && awn[1] != null ? awn[1] : null) };
   let awnI = 0;
   const awnCols = () => (S.awnCycle ? [awn[awnI++ % awn.length]] : awn);
   const runBays = (f, a0, a1, withAwn = true, out) => {
-    for (const [a, b] of splitBays(a0, a1, S.bayW || 9, S.pierW || 3)) {
+    // w2r1: BIG glass bays (one per side of the door on a 1×1 front, mullions
+    // every ~5) — "mostly-glass shopfronts with mullions", fewer awnings
+    for (const [a, b] of splitBays(a0, a1, S.bayW || 16, S.pierW || 3)) {
       bay(f, a, b, L.GY0, L.GY1, bo);
       const skip = S.noAwn && b + 1 >= S.noAwn[0] && a - 1 <= S.noAwn[1];
       if (awn && withAwn && !skip) awning(f, a - 1, b + 1, L.AWT, S.awnD || 4, awnCols(), ao);
@@ -1220,7 +1339,9 @@ function shop(rng, S) {
   const frontBays = [], backBays = [];
   storefront(F, du, x0 + 3, x1 - 3, frontBays);
   const logo = S.logo ? LOGO[S.logo] : null, lbg = S.logoBg != null ? S.logoBg : C.signWhite, lbd = S.logoBd != null ? S.logoBd : stripe;
-  const blades = logo && floors > 1 && S.blade !== false;
+  // w2r1: no blade signs by default (one sign per face; the blade competed
+  // with the fascia name and hid the facade behind it)
+  const blades = logo && floors > 1 && S.blade === true;
   // r10: the name is a SMALL board (signBoard, 7 rows, about a third of the
   // frontage) on the slim fascia, over the door; no band logo tiles (the
   // logo lives on the blade sign / gable). Default: a white board with the
@@ -1232,20 +1353,20 @@ function shop(rng, S) {
   let sFg = S.signFg != null ? S.signFg : C.signWhite;
   if (Math.abs(lum(sFg) - lum(sBg)) < 0.3) sFg = lum(sBg) > 0.5 ? C.comFrame : C.signWhite;
   let sBd = S.signBd != null ? S.signBd : stripe;
-  if (sBd === sFg || sBd === sBg || sBd === band) sBd = sFg === C.comFrame || sBg === C.comFrame ? (band === C.gold ? C.yellow : C.gold) : C.comFrame;
+  if (S.signBd == null && (sBd === sFg || sBd === sBg || sBd === band)) sBd = sFg === C.comFrame || sBg === C.comFrame ? (band === C.gold ? C.yellow : C.gold) : C.comFrame;
   const sign = { bg: sBg, fg: sFg, bd: sBd, lamps: S.signLamps };
   const nameOn = (f, u0, u1, str = S.name, at = null) => {
     if (!str) return;
-    // r11: the BOLD board when it fits, else the small 3×5 board (centred
-    // on the fascia's lettering rows)
-    const bold = S.boldSign !== false && boldBoardW(str) + 4 <= u1 - u0 + 1;
-    const bw = bold ? boldBoardW(str) : boardW(str);
+    // w2r1: the slim 9-row name panel (5-row stem-bold letters) on the
+    // 8-row fascia; the small 3×5 board only when a word will not fit
+    const slim = panelW(str) + 4 <= u1 - u0 + 1;
+    const bw = slim ? panelW(str) : boardW(str);
     if (bw + 4 > u1 - u0 + 1) return;
     let cu = at != null ? at : (u0 + u1 + (f.rd < 0 ? 1 : 0)) >> 1;
     const h = (bw >> 1) + 2;
     cu = Math.max(Math.min(u0, u1) + h, Math.min(Math.max(u0, u1) - h, cu));
-    if (bold) boldBoard(f, cu, L.STR, str, sign);
-    else signBoard(f, cu, L.STR + 2, str, { ...sign, thick: 1 });
+    if (slim) namePanel(f, cu, L.STR, str, sign);
+    else signBoard(f, cu, L.STR + 1, str, { ...sign, thick: 1 });
   };
   const doorCu = (d) => (d == null ? null : d + 4);
   nameOn(F, x0 + 1, x1 - 1, S.name, S.signAt != null ? S.signAt : doorCu(du));
@@ -1428,8 +1549,9 @@ function shop(rng, S) {
     rblock.push([tx0 - 1, tz0 - 1, tx1 + 1, tz1 + 1]);
   }
   const cr = S.roofRect || [rx0 + 2, rz0 + 2, rx1 - 2, rz1 - 2];
-  roofScape(g, rng, cr[0], cr[1], cr[2], cr[3], ry, S.roofPlan || pk(rng, ROOFPLANS),
+  if (S.roofPlan && !S.roofKit) roofScape(g, rng, cr[0], cr[1], cr[2], cr[3], ry, S.roofPlan,
     { block: rblock, terrace: S.roofTerraceO, extra: S.roofExtra, bed: S.bed, cell: S.roofCell, cellD: S.roofCellD });
+  else roofProps(g, rng, cr[0], cr[1], cr[2], cr[3], ry, S.roofKit || pk(rng, ROOFKITS), rblock);
   if (floors > 1 && uz0 > z0 + 6) {
     const to = S.terrace || {};
     if (to.kind === 'garden') {
@@ -1445,7 +1567,7 @@ function shop(rng, S) {
   }
   if (S.after) S.after(ctx);
   if (S.crowd !== 0) {
-    const n = S.crowd || 4;
+    const n = S.crowd != null ? S.crowd : 2;     // w2r1: fewer loiterers (breathing room)
     crowd(g, rng, 2, 1, 60, z0 - 2, n);
     if (S.mirror !== false) crowd(mirrorZ(g), rng, 2, 1, 60, 62 - z1 - 2, n);
   }
@@ -1479,21 +1601,24 @@ export function commercial(level, rng) {
   const floors = level === 1 ? 2 : level === 2 ? 3 : 4;
   const logo = pk(rng, ['star', 'cart', 'flower', 'ball', 'book', 'cup', 'bag', 'shop']);
   const kind = pk(rng, ['cafe', 'market', 'park', 'plaza']);
+  // w2r1: one or two distinct props per side with clear paving between
   const slots = {
-    cafe: [['table', 'table'], ['table', 'planter']],
-    market: [['stall', 'crates'], ['stall', 'planter']],
-    park: [['car'], ['bikes', 'bench']],
-    plaza: [['planter', 'bench', 'lamp'], ['bikes', 'shrub', 'bins']],
+    cafe: [['table'], ['bistro', 'planter']],
+    market: [['stall'], ['crates']],
+    park: [['car'], ['bench']],
+    plaza: [['planter'], ['bikes', 'shrub']],
   }[kind];
+  const darkSign = rng() < 0.5;
   return shop(rng, {
     floors, wall, stripe: accent, band: accent, awn: rng() < 0.85 ? [accent, C.signWhite] : null, awnStripe: rng() < 0.5,
-    name, logo, logoBd: accent, upper: pk(rng, [C.brick, C.cream, C.resTerracotta, C.resSage, C.pBlue, C.signWhite, C.resButter]),
+    name, logo, logoBd: accent, signBg: darkSign ? C.black : C.comFrame, signFg: C.signWhite, signBd: darkSign ? accent : C.signWhite,
+    upper: pk(rng, [C.brick, C.cream, C.resTerracotta, C.resSage, C.pBlue, C.signWhite, C.resButter]),
     upStyle: pk(rng, ['grid', 'shutter', 'pair', 'balc', 'tall']), shutter: pk(rng, [C.roofGreen, C.navy, C.crimson]), boxes: rng() < 0.6,
     upTrim: pk(rng, [C.signWhite, C.cream]),
     // r10: vary the upper floors + roofline between neighbours
-    gable: pk(rng, [null, null, 'step', 'pediment', 'flat']), oriel: rng() < 0.3 ? 8 : 0, balcRun: rng() < 0.3 ? [floors - 1] : null, dentil: rng() < 0.5,
+    gable: pk(rng, [null, null, 'step', 'pediment']), oriel: rng() < 0.3 ? 8 : 0, balcRun: rng() < 0.3 ? [floors - 1] : null, dentil: rng() < 0.5,
     goods: rng() < 0.7 ? [accent, C.signWhite, pk(rng, [C.yellow, C.pink, C.lime])] : null,
-    lot: (c) => apron(c, { display: kind === 'market' ? 'crates' : kind === 'cafe' ? 'bistro' : 'planter', cols: [accent, C.signWhite], chair: accent, stall: accent, left: slots[0], right: slots[1] }),
+    lot: (c) => apron(c, { display: kind === 'market' ? 'crates' : 'none', dispBays: [0], cols: [accent, C.signWhite], chair: accent, stall: accent, left: slots[0], right: slots[1] }),
   });
 }
 
@@ -1529,7 +1654,7 @@ function bBakery(rng) {
     signBg: C.black, signFg: C.signWhite, signBd: C.comDough, signLamps: true,
     upper, upTrim: C.cream, upFrame: C.signWhite, upStyles: ['sash', 'sash'], boxes: false, reveal: C.cream,
     lintel: C.cream, dentil: true, goods: [C.comDough, C.comChoco, C.comIcing, C.comDough], upAC: false,
-    roofPlan: ['garden', null, null, 'hvac', null, 'solar'], roofExtra: ['vent', 'hatch'],
+    roofKit: [['solar', 'cl'], ['ac', 'br'], ['vent', 'bc'], ['hatch', 'fr']],
     crowd: 2,
     lot: (c) => apron(c, { display: 'none', cols: [C.red, C.cream], chair: C.wood, top: C.signWhite, seat: C.wood,
       left: ['bistro'], right: ['bench', 'planter'], flowers: [C.pink, C.signWhite], walk: C.lotPave }),
@@ -1560,10 +1685,10 @@ function bIceCream(rng) {
     floors: 2, wall, trim: C.signWhite, stripe: accent, band: C.comChoco, frame: C.signWhite, kick: accent, base: accent,
     awn: [accent, C.signWhite], awnStripe: true, name: 'SCOOPS', logo: 'cone', logoBg: C.signWhite, logoBd: accent, doorC: C.signWhite, mat: accent,
     upper: pk(rng, [C.signWhite, C.pYellow, C.mint]), upTrim: accent, upFrame: C.signWhite, upStyle: 'grid', boxes: false, balcRun: [1], rail: C.signWhite, goods: [C.pink, C.mint, C.comCone, C.pYellow],
-    roofBlock: [[43, 22, 55, 40]], roofPlan: ['patio', 'garden', 'pad', 'hvac', 'patio', 'pad'],
-    roofTerraceO: { cols: [accent, C.signWhite], chair: accent, top: C.pYellow, deck: C.pPink, line: C.blossom, parasol: 'alt' },
-    lot: (c) => apron(c, { display: 'bistro', cols: [accent, C.signWhite], chair: C.signWhite, top: C.pYellow, walk: C.pPink,
-      cartBody: C.signWhite, cartA: accent, cartGoods: C.comCone, left: ['table', 'table'], right: ['cart', 'planter'] }),
+    signBg: accent, signFg: C.signWhite, signBd: C.comChoco,
+    roofBlock: [[43, 22, 55, 40]], roofKit: [['garden', 'cl'], ['ac', 'bl'], ['vent', 'fc']],
+    lot: (c) => apron(c, { display: 'none', cols: [accent, C.signWhite], chair: C.signWhite, top: C.pYellow, walk: C.pPink,
+      cartBody: C.signWhite, cartA: accent, cartGoods: C.comCone, left: ['table'], right: ['cart'] }),
     after: (c) => coneSculpture(c.g, 49, c.ry, 31, s1, s2),
   });
 }
@@ -1574,12 +1699,12 @@ function bIceCream(rng) {
 function bPizza(rng) {
   const wall = pk(rng, [C.offwhite, C.cream, C.resButter]);
   return shop(rng, {
-    floors: 2, wall, stripe: C.roofGreen, band: C.red, trim: C.signWhite, frame: C.roofGreen, kick: C.brick, base: C.brick,
+    floors: 2, wall, stripe: C.signWhite, band: C.roofGreen, trim: C.signWhite, frame: C.roofGreen, kick: C.brick, base: C.brick,
+    signBg: C.red, signFg: C.signWhite, signBd: C.signWhite,
     awn: [C.roofGreen], awnLip: C.signWhite, name: 'PIZZA', logo: 'pizza', logoBg: C.signWhite, logoBd: C.roofGreen, door: 'L', doorOff: 30, doorC: C.roofGreen, mat: C.red,
     upper: pk(rng, [C.brick, C.resTerracotta, C.cream]), upTrim: C.signWhite, upFrame: C.signWhite, upStyle: 'pair', boxes: false, gable: 'pediment', dentil: true,
-    roofTerraceO: { cols: [C.red, C.signWhite], chair: C.roofGreen, deck: C.plank, line: C.wood },
-    roofPlan: ['patio', 'patio', 'garden', 'patio', 'hvac', 'pad'],
-    lot: (c) => apron(c, { display: 'bistro', cols: [C.red, C.signWhite], chair: C.roofGreen, top: C.signWhite, left: ['car', 'lamp'], right: ['table', 'planter'] }),
+    roofBlock: [[48, 34, 56, 42]], roofKit: [['gardenL', 'cl'], ['ac', 'bl'], ['vents', 'fr']],
+    lot: (c) => apron(c, { display: 'none', cols: [C.red, C.signWhite], chair: C.roofGreen, top: C.signWhite, left: ['car'], right: ['table', 'planter'] }),
     after: (c) => {
       const { g, ry } = c;
       const zm = 38;
@@ -1608,13 +1733,13 @@ function bBurger(rng) {
   return shop(rng, {
     floors: 2, up: [1, 29, 61, 49], wall: C.signWhite, trim: C.signWhite, pier: band, stripe: C.yellow, band, frame: C.signWhite,
     kick: band, base: band, upper: C.signWhite, upTrim: band, upStyle: 'ribbon', upAC: false, mirror: false, blade: false,
-    logo: 'burger', logoBg: C.signWhite, logoBd: C.yellow, name: 'DRIVE IN', door: 'L', doorOff: 24, doorC: band, mat: band, canopy: band,
+    logo: 'burger', logoBg: C.signWhite, logoBd: C.yellow, name: null, door: 'L', doorOff: 24, doorC: band, mat: band, canopy: band,
     sides: ['shop', 'shop'], sideTiles: true,
-    terrace: { deck: C.sand, line: C.sandDark, cols: [band, C.signWhite], chair: band, top: C.signWhite, parasol: 'alt' },
-    roofBlock: [[12, 38, 50, 47]], roofRect: [4, 31, 58, 37], roofPlan: ['garden', 'hvac', 'garden'],
+    terrace: { deck: C.sand, line: C.sandDark, cols: [band, C.signWhite], chair: band, top: C.signWhite, parasol: false },
+    roofBlock: [[5, 38, 57, 47]], roofRect: [4, 31, 58, 37], roofKit: [['ac', 'cl'], ['vents', 'cr']],
     lot: (c) => {
       const { g, rng: r } = c;
-      apron(c, { display: 'bistro', cols: [band, C.signWhite], chair: band, top: C.signWhite, left: ['car'], right: ['car', 'bins'] });
+      apron(c, { display: 'none', cols: [band, C.signWhite], chair: band, top: C.signWhite, left: ['car'], right: ['car'] });
       // back apron: the drive-thru lane (asphalt, yellow edge, arrows), a car
       // at the pick-up window, the lit menu board, a hedge strip on the kerb
       paint(g, 1, 50, 61, 61, C.lotAsphalt); paint(g, 1, 50, 61, 50, C.yellow);
@@ -1626,18 +1751,21 @@ function bBurger(rng) {
       Bk.box(38, 8, 1, 46, 8, 3, C.yellow); Bk.box(37, 22, 1, 47, 22, 5, band); Bk.box(37, 21, 5, 47, 21, 5, C.yellow);
       person(g, r, 40, 51);
     },
-    after: ({ g, topY }) => {
-      // r10: ref05 Mac Auto — a compact red box with SMALL lettering and the
-      // big icon standing on it (the r9 57-wide BURGER board swamped the roof)
-      const sy = topY + 3, sz = 40, bc = 31, hw = 17;
-      g.box(bc - hw, topY + 1, sz, bc + hw, sy + 8, sz + 4, band);
-      g.box(bc - hw - 1, sy + 9, sz - 1, bc + hw + 1, sy + 9, sz + 5, C.signWhite);
+    after: ({ g, topY, F, lv }) => {
+      // r10: ref05 Mac Auto — a compact red box with the name and the big
+      // icon standing on it. w2r1: the box carries the ONE name (slim 5-row
+      // stem letters); the fascia is a plain red band with burger logo tiles
+      // at the corners, like Mac Auto's 'M' tiles (DRIVE IN + BURGERS was two
+      // names on one building).
+      const sy = topY + 3, sz = 40, bc = 31, hw = 24;
+      g.box(bc - hw, topY + 1, sz, bc + hw, sy + 10, sz + 4, band);
+      g.box(bc - hw - 1, sy + 11, sz - 1, bc + hw + 1, sy + 11, sz + 5, C.signWhite);
       g.box(bc - hw, sy - 1, sz - 1, bc + hw, sy - 1, sz + 5, C.yellow);
       const so = { bg: band, fg: C.signWhite, bd: C.yellow, out: 0 };
-      signBoard(facade(g, 'front', sz), bc, sy + 1, 'BURGERS', so);
-      signBoard(facade(g, 'back', sz + 4), bc, sy + 1, 'BURGERS', so);
-      burgerSculpture(g, bc, sy + 10, sz + 2, 7);
-      acUnit(g, 4, topY + 1, 41); acUnit(g, 52, topY + 1, 41);
+      namePanel(facade(g, 'front', sz), bc, sy + 1, 'BURGERS', so);
+      namePanel(facade(g, 'back', sz + 4), bc, sy + 1, 'BURGERS', so);
+      burgerSculpture(g, bc, sy + 12, sz + 2, 7);
+      for (const u of [8, 54]) logoTile(F, u, lv.STR, LOGO.burger, C.signWhite, C.yellow, 2);
     },
   });
 }
@@ -1649,12 +1777,12 @@ function bCafe(rng) {
   const wall = pk(rng, [C.mint, C.resSage, C.cream]);
   const accent = pk(rng, [C.teal, C.roofGreen, C.navy]);
   return shop(rng, {
-    floors: 3, wall, stripe: accent, band: C.comChoco, nameFg: C.signWhite, frame: C.comChoco, kick: C.comChoco, base: C.comChoco,
+    floors: 3, wall, stripe: C.cream, band: accent, nameFg: C.signWhite, frame: C.comFrame, kick: C.comFrame, base: C.comFrame,
+    signBg: C.comFrame, signFg: C.signWhite, signBd: C.cream,
     awn: [accent], awnLip: C.cream, name: 'CAFE', logo: 'cup', logoBg: C.cream, logoBd: accent, doorC: accent, mat: accent,
-    upper: pk(rng, [C.cream, C.signWhite, C.resButter]), upTrim: accent, upStyles: ['sash', 'grid'], upFrame: C.comChoco, boxes: true, flowers: [C.pink, C.signWhite], lintel: accent, oriel: 9, goods: [C.comDough, C.comIcing, C.comChoco],
-    roofTerraceO: { cols: [accent, C.cream], chair: accent, top: C.signWhite, deck: C.plank, line: C.wood },
-    roofPlan: ['garden', 'patio', 'patio', 'hvac', 'stair', 'solar'],
-    lot: (c) => apron(c, { display: 'bistro', cols: [accent, C.cream], chair: accent, left: ['table', 'table'], right: ['table', 'bikes'] }),
+    upper: pk(rng, [C.cream, C.signWhite, C.resButter]), upTrim: C.signWhite, upStyles: ['sash', 'grid'], upFrame: accent, boxes: true, flowers: [C.pink, C.signWhite], lintel: C.signWhite, oriel: 9, goods: [C.comDough, C.comIcing, C.comChoco],
+    roofKit: [['gardenL', 'cl'], ['stair', 'br'], ['ac', 'fr']],
+    lot: (c) => apron(c, { display: 'none', cols: [accent, C.cream], chair: accent, left: ['table'], right: ['bistro', 'bikes'] }),
   });
 }
 
@@ -1676,12 +1804,11 @@ function abcBlocks(g, x, y, z) {
 function bToyStore(rng) {
   const wall = pk(rng, [C.pYellow, C.pBlue, C.signWhite]);
   return shop(rng, {
-    tall: 4, floors: 2, wall, stripe: C.red, band: C.blue, nameFg: C.yellow, signFg: C.yellow, trim: C.signWhite, frame: C.blue, kick: C.red, base: C.red, pier: C.red,
+    tall: 4, floors: 2, wall, stripe: C.red, band: C.blue, nameFg: C.yellow, signBg: C.red, signFg: C.signWhite, signBd: C.yellow, trim: C.signWhite, frame: C.blue, kick: C.red, base: C.red, pier: C.red,
     awn: [C.red, C.yellow, C.blue], awnCycle: true, name: 'TOYS', logo: 'blocks', logoBg: C.signWhite, logoBd: C.red, doorC: C.red, mat: C.yellow,
-    upper: pk(rng, [C.pBlue, C.signWhite, C.pYellow]), upTrim: C.red, upFrame: C.signWhite, upStyle: 'tall', winAwn: [C.red, C.yellow], goods: [C.red, C.yellow, C.blue, C.roofGreen],
-    roofBlock: [[22, 25, 40, 36]], roofPlan: ['garden', 'pad', 'hvac', 'solar', 'pad', 'garden'],
-    roofTerraceO: { deck: C.pYellow, line: C.yellow },
-    lot: (c) => apron(c, { display: 'toys', left: ['balloons', 'bench'], right: ['ride', 'bikes'], flowers: [C.red, C.yellow, C.blue] }),
+    upper: pk(rng, [C.pBlue, C.signWhite, C.pYellow]), upTrim: C.red, upFrame: C.signWhite, upStyle: 'tall', goods: [C.red, C.yellow, C.blue, C.roofGreen],
+    roofBlock: [[20, 24, 42, 37]], roofKit: [['ac', 'bl'], ['solar2', 'br'], ['vent', 'fr']],
+    lot: (c) => apron(c, { display: 'none', left: ['balloons'], right: ['ride', 'bench'], flowers: [C.red, C.yellow, C.blue] }),
     after: (c) => abcBlocks(c.g, 22, c.ry, 26),
   });
 }
@@ -1692,11 +1819,11 @@ function bPetShop(rng) {
   const wall = pk(rng, [C.pBlue, C.mint, C.cream]);
   return shop(rng, {
     floors: 2, wall, stripe: C.comDough, band: C.roofBrown, nameFg: C.signWhite, frame: C.roofBrown, kick: C.roofBrown, base: C.roofBrown,
+    signBg: C.orange, signFg: C.signWhite, signBd: C.cream,
     awn: [C.comDough], awnLip: C.roofBrown, name: 'PETS', logo: 'paw', logoBg: C.cream, logoBd: C.comDough, door: 'R', doorOff: 8, doorC: C.roofBrown, mat: C.comDough,
-    upper: pk(rng, [C.resTerracotta, C.cream, C.resSage]), upTrim: C.cream, upFrame: C.signWhite, upStyle: 'shutter', shutter: C.roofBrown, boxes: false, gable: 'flat', goods: [C.comDough, C.roofBrown, C.red],
-    roofPlan: ['garden', 'patio', 'hvac', 'solar', 'stair', 'garden'],
-    roofTerraceO: { cols: [C.comDough, C.cream], chair: C.roofBrown, deck: C.sand, line: C.sandDark },
-    lot: (c) => apron(c, { display: 'planter', flowers: [C.yellow, C.pink], left: ['dogpen', 'bench'], right: ['bikes'] }),
+    upper: pk(rng, [C.resTerracotta, C.cream, C.resSage]), upTrim: C.cream, upFrame: C.signWhite, upStyle: 'shutter', shutter: C.roofBrown, boxes: false, goods: [C.comDough, C.roofBrown, C.red],
+    roofKit: [['gardenL', 'cr'], ['ac', 'bl'], ['hatch', 'fl']],
+    lot: (c) => apron(c, { display: 'none', flowers: [C.yellow, C.pink], left: ['dogpen'], right: ['bench'] }),
   });
 }
 
@@ -1707,10 +1834,11 @@ function bBookShop(rng) {
   const wall = pk(rng, [C.navy, C.roofGreen, C.crimson]);
   return shop(rng, {
     floors: 4, wall, stripe: C.gold, band: wall, nameFg: C.signWhite, trim: C.cream, frame: C.gold, kick: C.woodDark, base: C.woodDark, pier: C.cream,
+    signBg: C.black, signFg: C.gold, signBd: C.gold,
     awn: [C.cream, wall], awnStripe: true, name: 'BOOKS', logo: 'book', logoBg: C.cream, logoBd: C.gold, doorC: C.gold, mat: C.red,
     upper: pk(rng, [C.cream, C.brick, C.resButter]), upTrim: C.signWhite, upFrame: wall, upStyles: ['shutter', 'grid', 'grid'], shutter: wall, boxes: true, flowers: [C.vegPetalR, C.signWhite], lintel: C.signWhite, oriel: 8, dentil: true, goods: [C.red, C.navy, C.gold, C.roofGreen],
-    roofPlan: ['garden', 'pergola', 'tank', 'hvac', 'stair', 'solar'],
-    lot: (c) => apron(c, { display: 'books', left: ['bench', 'shrub'], right: ['bikes', 'shrub'] }),
+    roofKit: [['tank', 'bl'], ['solar', 'cr'], ['stair', 'fl']],
+    lot: (c) => apron(c, { display: 'books', dispBays: [0], left: ['bench'], right: ['shrub'] }),
   });
 }
 
@@ -1722,11 +1850,12 @@ function bFlowerShop(rng) {
   const petal = pk(rng, [C.pink, C.vegPetalR, C.purple]);
   return shop(rng, {
     floors: 2, wall, stripe: C.pink, band: C.roofGreen, frame: C.roofGreen, kick: C.roofGreen, base: C.roofGreen,
+    signBg: C.pink, signFg: C.signWhite, signBd: C.roofGreen,
     awn: [C.pink], awnLip: C.signWhite, name: 'ROSES', logo: 'flower', logoBg: C.signWhite, logoBd: C.pink, door: 'L', doorOff: 8, doorC: C.roofGreen, mat: C.pink,
     upper: pk(rng, [C.pPink, C.signWhite, C.resSage]), upTrim: C.roofGreen, upFrame: C.signWhite, upStyle: 'balc', rail: C.roofGreen, boxes: true, flowers: [petal, C.yellow, C.signWhite], goods: [petal, C.yellow, C.vegBush],
-    roofBlock: [[22, 16, 60, 46]], roofPlan: ['garden', null, null, 'garden', null, null],
-    lot: (c) => apron(c, { display: 'flowers', flowers: [petal, C.yellow, C.vegPetalR, C.signWhite, C.purple], stall: C.pink,
-      left: [], right: ['stall', 'planter', 'board'] }),
+    roofBlock: [[22, 16, 60, 46]], roofKit: [['ac', 'bl'], ['vent', 'fl']],
+    lot: (c) => apron(c, { display: 'flowers', dispBays: [0], flowers: [petal, C.yellow, C.vegPetalR, C.signWhite, C.purple], stall: C.pink,
+      left: [], right: ['stall', 'board'] }),
     after: (c) => {
       const { g, ry } = c;
       const gx0 = 27, gx1 = 55, gz0 = 18, gz1 = 44, gy = ry + 12;
@@ -1751,9 +1880,10 @@ function bGrocery(rng) {
   return shop(rng, {
     tall: 6, wall, stripe: C.lime, band: C.roofGreen, trim: C.signWhite, frame: C.roofGreen, kick: C.roofGreen, base: C.stoneDark,
     awn: [C.roofGreen, C.signWhite], awnStripe: true, name: 'GROCERY', logo: 'cart', logoBg: C.signWhite, logoBd: C.lime, doorC: C.roofGreen, mat: C.lime, canopy: C.roofGreen,
-    sides: ['shop', 'shop'], sideName: 'FOOD', bayW: 7, pierW: 2, stall: C.roofGreen, gable: 'flat', goods: [C.red, C.orange, C.lime, C.yellow],
-    roofPlan: ['solar', 'sky', 'hvac', 'hvac', 'solar', 'garden'],
-    lot: (c) => apron(c, { display: 'crates', stall: C.roofGreen, left: ['car'], right: ['stall', 'crates'] }),
+    signBg: C.roofGreen, signFg: C.signWhite, signBd: C.lime,
+    sides: ['shop', 'shop'], bayW: 12, pierW: 2, stall: C.roofGreen, goods: [C.red, C.orange, C.lime, C.yellow],
+    roofKit: [['solar', 'cl'], ['acBig', 'br'], ['sky', 'fr'], ['vents', 'bc']],
+    lot: (c) => apron(c, { display: 'crates', dispBays: [0], stall: C.roofGreen, left: ['car'], right: ['stall'] }),
   });
 }
 
@@ -1855,8 +1985,8 @@ function bArcade(rng) {
     tall: 4, floors: 2, wall, trim: C.purple, frame: C.black, stripe: C.neon, band: C.black, nameFg: C.neon, pier: C.purple, kick: C.purple, base: C.black,
     awn: null, name: 'ARCADE', logo: 'joy', logoBg: C.signWhite, logoBd: C.neon, doorC: C.neon, mat: C.purple, canopy: C.purple,
     upper: wall, upTrim: C.purple, upFrame: C.neon, upStyle: 'ribbon', parapet: wall, coping: C.neon, quoins: false, signBg: C.black, signFg: C.neon, signBd: C.purple,
-    roofPlan: ['hvac', 'solar', 'stair', 'solar', 'hvac', 'garden'],
-    lot: (c) => apron(c, { display: 'none', walk: C.lotPaveDark, bin: C.purple, left: ['car'], right: ['bikes', 'people', 'bins'] }),
+    roofKit: [['acBig', 'bl'], ['solar', 'cr'], ['vents', 'fl']],
+    lot: (c) => apron(c, { display: 'none', walk: C.lotPaveDark, bin: C.purple, left: ['car'], right: ['bikes'] }),
     after: ({ F, B, x0, x1, lv }) => {
       for (const f of [F, B]) for (let u = x0 + 3; u <= x1 - 3; u += 3) f.set(u, lv.GY1 + 2, 1, C.lamp);
     },
@@ -1870,11 +2000,12 @@ function bCandyShop(rng) {
   const a = pk(rng, [C.red, C.blossomDark, C.teal]);
   return shop(rng, {
     floors: 2, wall, stripe: C.pink, band: a, frame: C.signWhite, kick: C.pink, base: a,
+    signBg: a, signFg: C.signWhite, signBd: C.pink,
     awn: [a, C.signWhite], awnStripe: true, name: 'CANDY', logo: 'lolly', logoBg: C.signWhite, logoBd: C.pink, doorC: a, mat: C.pink,
     upper: pk(rng, [C.signWhite, C.pYellow, C.pBlue]), upTrim: C.pink, upFrame: C.signWhite, upStyle: 'grid', winAwn: [a], boxes: false, gable: 'step', goods: [C.pink, C.red, C.mint, C.yellow],
-    roofPlan: ['patio', 'patio', 'garden', 'stair', 'hvac', 'garden'], roofTerraceO: { cols: [C.pink, C.signWhite], chair: a, deck: C.pPink, line: C.blossom },
+    roofKit: [['garden', 'cl'], ['ac', 'br'], ['vent', 'fr']],
     lot: (c) => apron(c, { display: 'bistro', cols: [C.pink, C.signWhite], chair: C.signWhite, walk: C.pPink, cartBody: C.signWhite, cartA: C.pink, cartGoods: C.blossom, lolly: a,
-      left: ['table', 'lolly'], right: ['cart', 'lolly'] }),
+      display: 'none', left: ['lolly'], right: ['cart'] }),
   });
 }
 
@@ -1887,8 +2018,8 @@ function bMusicStore(rng) {
     floors: 3, wall, stripe: a, band: C.black, nameFg: a, frame: C.black, kick: a, base: C.black, trim: C.signWhite,
     awn: [a], awnLip: C.black, name: 'MUSIC', logo: 'note', logoBg: C.signWhite, logoBd: a, doorC: C.black, mat: a,
     upper: pk(rng, [C.brick, C.cream, C.signWhite]), upTrim: C.signWhite, upFrame: C.comFrame, upStyles: ['ribbon', 'pair'], planters: true, flowers: [a, C.pink], boxes: false, balcRun: [2], signBg: C.comFrame, signFg: a, signBd: a === C.gold ? C.signWhite : C.gold, goods: [a, C.comFrame],
-    roofPlan: ['garden', 'patio', 'patio', 'solar', 'hvac', 'stair'], roofTerraceO: { cols: [a, C.black], chair: a, deck: C.plank, line: C.wood },
-    lot: (c) => apron(c, { display: 'bench', left: ['busker', 'people'], right: ['bikes', 'shrub'] }),
+    roofKit: [['solar', 'cl'], ['ac', 'br'], ['stair', 'fr']],
+    lot: (c) => apron(c, { display: 'none', left: ['busker'], right: ['bikes'] }),
   });
 }
 
@@ -1900,10 +2031,11 @@ function bSportsShop(rng) {
   const bnd = a === C.navy ? C.red : C.navy;
   return shop(rng, {
     floors: 2, wall, stripe: a, band: bnd, frame: bnd, kick: a, base: bnd,
+    signBg: bnd, signFg: C.signWhite, signBd: a,
     awn: [a, C.signWhite], awnStripe: true, name: 'SPORTS', logo: 'ball', logoBg: C.signWhite, logoBd: a, door: 'R', doorOff: 8, doorC: bnd, mat: a,
-    upper: pk(rng, [C.signWhite, C.cream, C.pBlue]), upTrim: bnd, upFrame: C.signWhite, upStyle: 'pair', gable: 'flat', goods: [C.orange, C.signWhite, C.blue],
-    roofPlan: ['court', 'hvac', 'solar', 'garden', 'stair', 'solar'],
-    lot: (c) => apron(c, { display: 'toys', left: ['hoop', 'bikes'], right: ['bins'] }),
+    upper: pk(rng, [C.signWhite, C.cream, C.pBlue]), upTrim: bnd, upFrame: C.signWhite, upStyle: 'pair', goods: [C.orange, C.signWhite, C.blue],
+    roofKit: [['solar', 'cl'], ['acBig', 'br'], ['hatch', 'fr']],
+    lot: (c) => apron(c, { display: 'none', left: ['hoop'], right: ['bikes'] }),
   });
 }
 
@@ -1916,12 +2048,12 @@ function bBarber(rng) {
   const du = BARBER.body[0] + BARBER.doorOff;
   return shop(rng, {
     body: BARBER.body, floors: 2, wall, stripe: C.red, band: C.navy, frame: C.navy, kick: C.red, base: C.navy,
+    signBg: C.navy, signFg: C.signWhite, signBd: C.red,
     awn: [C.red, C.signWhite, C.blue, C.signWhite], awnStripe: true, name: 'BARBER', logo: 'scissor', logoBg: C.signWhite, logoBd: C.red,
     door: 'L', doorOff: BARBER.doorOff, doorC: C.navy, mat: C.red, noAwn: [du - 9, du - 1],
     upper: pk(rng, [C.brick, C.cream, C.resSage]), upTrim: C.signWhite, upFrame: C.signWhite, upStyle: 'shutter', shutter: C.navy, boxes: false, gable: 'pediment', dentil: true,
-    roofPlan: ['garden', 'hvac', 'solar', 'stair', 'patio', 'garden'],
-    roofTerraceO: { cols: [C.red, C.signWhite], chair: C.navy, deck: C.sand, line: C.sandDark },
-    lot: (c) => apron(c, { display: 'bench', dispFrom: c.back ? 0 : du, left: [], right: ['bench', 'bikes', 'planter'] }),
+    roofKit: [['solar', 'cl'], ['ac', 'br'], ['vent', 'fr']],
+    lot: (c) => apron(c, { display: 'none', dispFrom: c.back ? 0 : du, left: [], right: ['bench', 'planter'] }),
     after: (c) => {
       const { g, z0 } = c;
       g.box(du - 5, 29, z0 - 1, du - 5, 29, z0 - 5, C.comFrame);        // bracket over the pole top
@@ -1945,10 +2077,10 @@ function bDiner(rng) {
   const accent = band === C.red ? C.yellow : C.signWhite;
   return shop(rng, {
     body: [13, 19, 49, 43], tall: 3, wall: C.signWhite, trim: C.signWhite, stripe: accent, band, frame: C.comFrame, pier: C.signWhite, kick: band, base: band,
-    awn: [band, C.signWhite], awnStripe: true, awnD: 3, bayW: 7, pierW: 2, name: 'SHAKES', sideName: 'EAT', logo: 'burger', logoBg: C.signWhite, logoBd: accent,
+    awn: [band, C.signWhite], awnStripe: true, awnD: 3, bayW: 12, pierW: 2, name: null, logo: 'star', logoBg: C.signWhite, logoBd: accent,
     door: 'R', doorOff: 6, doorC: band, mat: band, doorAwn: true, signBg: band, signFg: C.signWhite, signBd: accent === C.yellow ? C.yellow : C.comFrame, signLamps: true,
     goods: [C.comCheese, C.red, C.comDough], mirror: false, crowd: 0,
-    coping: band, roofBlock: [[17, 28, 45, 34]], roofRect: [15, 35, 47, 41], roofPlan: ['hvac', 'garden'],
+    coping: band, roofBlock: [[14, 28, 48, 34]], roofRect: [15, 35, 47, 41], roofKit: [['ac', 'cl'], ['vents', 'cr']],
     roofTerrace: [16, 21, 46, 26], roofTerraceO: { cols: [band, C.signWhite], chair: band, top: C.signWhite, deck: C.sand, line: C.sandDark, parasol: false, pots: false },
     lot: (c) => {
       const { g, rng: r, z0 } = c;
@@ -1960,18 +2092,20 @@ function bDiner(rng) {
       const { g, rng: r, ry, topY, z0, z1, x0, x1 } = c;
       // side terrace: tiles, tables with alternating parasols, planter edges
       // r10: the iso snap shows either flank, so BOTH get a parasol terrace
+      // w2r1: two plain red table sets per flank (Mac Auto's lot is calm:
+      // parking, a few red tables, clean paving), a planter at each end
       for (const [tx0, tx1, px] of [[1, 10, 11], [52, 61, 50]]) {
-        lotTerrace(g, r, tx0, 3, tx1, 59, { cols: [band, C.signWhite], chair: band, top: C.signWhite, par: 'alt', tile: C.lotPave, rim: C.lotRim, px: 13, pz: 11, r: 4, guests: 0.7 });
-        for (const z of [14, 36]) planter(g, px, z - 3, px + 1, z + 3, [C.pink, C.yellow, C.signWhite]);
+        paint(g, tx0, 20, tx1, 42, C.lotPave);
+        for (const z of [25, 37]) tableSet(g, (tx0 + tx1) >> 1, z, G, { par: false, top: C.signWhite, chair: band });
+        for (const z of [12, 50]) planter(g, tx0 + 1, z - 3, tx1 - 1, z + 3, [C.pink, C.yellow, C.signWhite]);
+        void px;
       }
       g.walls(x0 - 1, G + 2, z0 - 1, x1 + 1, G + 2, z1 + 1, accent);
       lamp(g, 11, 60, 26, 1); lamp(g, 51, 60, 26, -1);
-      // pole sign by the road corner: a post, a small lit DINER board, a star
-      g.box(11, G, 2, 12, G + 30, 3, C.comFrame);
-      const Pf = facade(g, 'front', 2), Pb = facade(g, 'back', 3);
-      signBoard(Pf, 12, G + 31, 'OPEN', { bg: band, fg: C.signWhite, bd: accent, out: 0, pad: 1 });
-      signBoard(Pb, 12, G + 31, 'OPEN', { bg: band, fg: C.signWhite, bd: accent, out: 0, pad: 1 });
-      star3d(g, 12, G + 39, 2, C.yellow, 1);
+      // (w2r1: the r10 OPEN pole sign is gone — one name per building)
+      // Mac Auto 'M' tiles: star logo tiles at the fascia corners
+      const lv = c.lv;
+      for (const [f, us] of [[c.F, [x0 + 7, x1 - 7]], [c.B, [x0 + 7, x1 - 7]]]) for (const u of us) logoTile(f, u, lv.STR, LOGO.burger, C.signWhite, accent, 2);
       // back: a drive-thru lane with arrows, the menu board, a car at the
       // window, a planter strip along the building
       const zb = z1 + 2;
@@ -1981,16 +2115,17 @@ function bDiner(rng) {
       pcar(g, 22, 51, CARV[(r() * CARV.length) | 0]);
       g.box(47, G, 60, 47, G + 8, 60, C.comFrame); g.box(44, G + 9, 60, 51, G + 17, 61, C.comFrame); g.box(45, G + 10, 60, 50, G + 16, 61, C.winCool); g.box(44, G + 9, 60, 51, G + 9, 61, C.comFrame);
       for (let y = G + 11; y <= G + 15; y += 2) g.box(46, y, 60, 49, y, 61, C.lamp);
-      for (const [x, z] of [[38, 3], [5, 44], [56, 26]]) person(g, r, x, z);
-      // roof: a compact red box with small lettering + the big 3D gold star
-      const sy = ry + 1, zs = 29, bx0 = 18, bx1 = 44, bc = 31;
-      g.box(bx0, ry, zs, bx1, sy + 8, zs + 4, band);
-      g.box(bx0 - 1, sy + 9, zs - 1, bx1 + 1, sy + 9, zs + 5, C.signWhite);
+      for (const [x, z] of [[38, 3], [56, 30]]) person(g, r, x, z);
+      // roof: the ONE name — a red box with the slim DINER panel + a big 3D
+      // gold star standing on it (Mac Auto's roof sign + 'M')
+      const sy = ry + 1, zs = 29, bx0 = 13, bx1 = 49, bc = 31;
+      g.box(bx0, ry, zs, bx1, sy + 10, zs + 4, band);
+      g.box(bx0 - 1, sy + 11, zs - 1, bx1 + 1, sy + 11, zs + 5, C.signWhite);
       g.box(bx0, sy - 1, zs - 1, bx1, sy - 1, zs + 5, accent);
       const so = { bg: band, fg: C.signWhite, bd: accent, out: 0 };
-      signBoard(facade(g, 'front', zs), bc, sy + 1, 'DINER', so);
-      signBoard(facade(g, 'back', zs + 4), bc, sy + 1, 'DINER', so);
-      star3d(g, bc, sy + 10, zs + 1, C.yellow, 2);
+      namePanel(facade(g, 'front', zs), bc, sy + 1, 'DINER', so);
+      namePanel(facade(g, 'back', zs + 4), bc, sy + 1, 'DINER', so);
+      star3d(g, bc, sy + 12, zs + 1, C.yellow, 2);
       void topY;
     },
   });

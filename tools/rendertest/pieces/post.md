@@ -497,3 +497,31 @@ Rejected: blackSlope 0.75 (lifts roads 34 -> 48), floor 0.36 / n 2.1 (pastel was
 **Next:** (1) If a critic calls it "pale/washed/flat faces" (iso-mid p50 162 is above ref05's 140), try floor 0.24 -> 0.2 first. Keep
 `above` on, because it is what fixes the crush. (2) If "soft at overview", raise crisp.fine at distHi (0.5 -> 0.7). Never lower distLo
 below 70. (3) If roads read grey, check `above.lo`: it must stay above the lot top (~0.9).
+
+## 2026-09-25 — wave 2, round 1 (builder)
+
+**Start state (same boot, iso-mid downscaled 1.93x to ref05's px/tile):** |Laplacian| 0.126 (ref05 0.188), 16-px local contrast 0.140
+(ref 0.182), sat 0.308 (ref 0.351). It read pastel and soft next to ref05. The crisp pass only reached ~9% at iso-mid (gate 70..150). White
+probe cube (faceratio.sh) right/top was 0.69, target 0.63, so the r12 floor 0.24 was over-lifting the shade side.
+
+**Changed (post.js, plus one engine.js line)**
+- crisp gate distLo/distHi 70/150 -> 50/85. Full at iso-mid, and exactly 0 at iso-close (36) and single-building shots (22-45). fine 0.5 -> 1.1,
+  mid 0.1 -> 0.45, limits 0.08/0.05 -> 0.12/0.08, coring 0.006/0.03 -> 0.01/0.035 (asphalt 5-px sd +0.3/255 only).
+- grade.floor 0.24 -> 0.18. The probe ratio measured 0.64 at 0.17, so the shade side is now on target (not a global darken).
+- saturation 0.95 -> 0.98, vibrance 0.05 -> 0.12. Vibrance lifts muted/pastel faces, not the already-hot reds/blues.
+- **Coherence #5 (dusk salmon) — new `grade.wb`:** a twilight white balance, a partial von Kries adaptation in scene-linear. The illuminant is
+  estimated from the lights (key x intensity x sunWeight 0.35 + hemi + ambient). engine.js calls `post.setLights(sun, hemi, ambient)` right after
+  constructing PostFX. The day reference is an EMA captured while nightEff < 0.05. Gains are (ref/cur)^k, normalised so a white surface keeps
+  its luminance, and clamped to [1/2, 2]. k = amount 0.35 x gate (in 0.2..0.36, out 0.5..0.66). Day and full night are bit-identical (gain 1).
+  No frame statistics are used, so there is no pumping on pans.
+
+**Measured.** Same-boot old -> new. iso-mid: lap 0.123 -> 0.173, lc 0.139 -> 0.171, sat 0.331 -> 0.342, p5/25/50/75/95 24/120/155/184/233 ->
+21/102/143/182/240 (ref05 22/68/140/192/243). iso: lap 0.169 -> 0.200, p50 156 -> 147. iso-close: lap and lc unchanged (crisp is 0 there), p50 148 -> 135
+(floor only). The umbrella/storefront crop is clean. Dusk nightEff 0.45, bright-pixel mean: (226,163,142) salmon -> (210,174,157) golden. White and
+blue towers now read as white and blue under a warm key. selfTest passes, zero console errors. fps was load-bound (load avg ~21): 18/9/29. Cost:
+the crisp blits already ran at iso-mid (k 0.09 > 0.001); they now also run at camDist 50-70. WB is CPU only. No perf/auto-quality code touched.
+Tools: scratchpad/jshoot.mjs (vshoot + per-variant JS, `{"name":{"p":{params},"js":"..."}}`), m2.py (matched-scale metrics), pair.py (900x600 ref pair).
+
+**Next:** (1) If a critic calls the overview "crunchy/haloed", drop crisp.mid 0.45 -> 0.3 first, then fine 1.1 -> 0.9. Never lower distLo below 50.
+(2) If dusk reads "grey/dull", lower wb.amount to 0.25. If it's still salmon, raise it to 0.45 (0.5+ greys the key). (3) Blue hour (nightEff ~0.55)
+is a violet wash. That's lighting's night look, so WB only fades through it. (4) If light changes fill, re-run faceratio.sh and re-tune floor to 0.63.

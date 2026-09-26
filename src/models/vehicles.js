@@ -53,6 +53,7 @@ const TAIL = C.red, BEACON_B = C.blue, IND = C.orange, WHITE = C.white;
 // glass colour per window"): every pane is ONE flat glass colour — the darker
 // top row and the white diagonal streaks alias to it, so no speckle survives.
 const GLASS = C.vehGlass, GLASS_DK = GLASS, GLASS_HI = GLASS;
+const SCREEN = C.skyBlue;        // w1: windscreen / rear / roof-screen glass (glass class; see skyGlass)
 
 const has = (g, x, y, z) => g.map.has(x + ',' + y + ',' + z);
 // paint a highlight only where there is glass (never on a pillar or panel)
@@ -224,8 +225,12 @@ function mirrors(g, W, y, z, body) { g.set(0, y, z, body); g.set(W - 1, y, z, bo
 // r14: with the shade-side flanks lit (see VOX_SMALL) the white majority read
 // as a street of white boxes; ref05's lots mix red / blue / white / yellow /
 // teal — one white slot fewer, one teal more.
-const CAR_COLS = () => [WHITE, WHITE, C.vehPearl, C.vehPearl, C.stone, C.vehCharcoal,
-  C.vehRed, C.vehRed, C.blue, C.blue, C.vehGreen, C.taxiYellow, C.orange, C.teal];
+// w1 (09-25 consensus "bright varied paint; no dark cars vanishing into
+// asphalt"): no charcoal / mid-grey bodies at all (on ref05's near-black roads
+// they read as holes), one silver, and the saturated paints of ref05's
+// supermarket lot (red, blue, teal, yellow, orange, green) take the rest.
+const CAR_COLS = () => [WHITE, WHITE, C.vehPearl, C.vehRed, C.vehRed, C.blue, C.blue,
+  C.teal, C.vehGreen, C.taxiYellow, C.orange];
 
 // ---------------------------------------------------------------------------
 // carModel(variant, parked) — 14 kinds (kind = variant mod 14), colours from
@@ -309,7 +314,7 @@ function vehicleGrid(variant, o = {}) {
   const col = () => (o.paint != null ? o.paint : pick(CAR_COLS()));
   const cpt = !!o.compact;
   const seed = ((Math.floor(vi / CAR_KINDS) % 6) + 6) % 6;   // r11: livery slot (fleet vans / trucks)
-  return flare(wrapCorners(vehicleKind(k, pick, col, rng, cpt, o, seed)));
+  return skyGlass(flare(wrapCorners(vehicleKind(k, pick, col, rng, cpt, o, seed))));
 }
 
 // r13 (the r12 critic: "no visible black wheels or wheel arches ... give each
@@ -317,6 +322,26 @@ function vehicleGrid(variant, o = {}) {
 // proud of the flank, so from the iso camera's high angle its black top shows
 // outside the body line at all four corners (a flush tyre hid under the
 // shoulder). The grid grows by one voxel a side; everything else shifts +1 X.
+// w1 (09-25): SCREENS ARE GLASS. The iso camera sees a car mostly from above,
+// and a near-black glass voxel's top face lifts to a flat lavender-grey (sky
+// spec on dark albedo), so the stepped windscreen read as grey venetian
+// blinds. Every glass voxel that shows a TOP, FRONT or REAR face (windscreen,
+// rear window, the screen rows on the roof) becomes the city's glass class
+// (C.skyBlue -> materials.js glass: clear blue + sky reflection + sheen, the
+// same panes the buildings wear; ref05's lot cars show exactly that light
+// reflecting screen from above). Side panes stay the dark navy band, so the
+// cabin still reads as a continuous glass band with a bright screen.
+function skyGlass(g) {
+  const out = [];
+  for (const [key, c] of g.map) {
+    if (c !== GLASS) continue;
+    const p = key.split(','), x = +p[0], y = +p[1], z = +p[2];
+    if (!g.map.has(x + ',' + (y + 1) + ',' + z) || !g.map.has(x + ',' + y + ',' + (z - 1)) ||
+        !g.map.has(x + ',' + y + ',' + (z + 1))) out.push(key);
+  }
+  for (const key of out) g.map.set(key, SCREEN);
+  return g;
+}
 function flare(g) {
   const W = g.sx, out = grid(W + 2, g.sy, g.sz, RV);
   for (const [key, c] of g.map) { const p = key.split(','); out.set(+p[0] + 1, +p[1], +p[2], c); }
@@ -601,9 +626,9 @@ function pickup(body, crate) {
 // at a glance"): the variant's colour slot picks a trade livery, so a shop's
 // kerb can hold ITS van (life.js FLEET): body, stripe, logo icon, roof sign.
 const VAN_LIV = () => [
-  [WHITE, C.vehRed, C.vehRed, null],                 // 0 courier
-  [WHITE, C.blossomDark, C.amber, null],             // 1 bakery: r13 white with a pink band (a pink body read as candy)
-  [C.vehRed, C.taxiYellow, C.vehRed, C.taxiYellow],  // 2 pizza: red, yellow band, roof sign
+  [WHITE, C.orange, C.navy, null],                  // 0 courier (w1: orange band — white + red read as an ambulance)
+  [C.cream, C.woodDark, C.blossomDark, null],        // 1 bakery (w1: cream + brown band; white + pink read as an ambulance)
+  [WHITE, C.vehGreen, C.vehRed, C.vehRed],          // 2 pizza (w1: white, green band, red roof sign — the red body read as a fire van)
   [C.yellow, C.vehRed, C.vehBlue, null],             // 3 post
   [C.vehGreen, WHITE, C.pink, null],                 // 4 florist: r14 green body, white band, a pink flower
   [C.blue, WHITE, C.blue, null],                     // 5 plumber: r14 blue body (4 of 6 liveries were white vans)
@@ -632,7 +657,7 @@ function panelVan(seed, paint) {
   g.box(3, 11, 8, W - 4, 11, 10, C.stone);
   for (const z of [14, 19, 24]) g.box(1, 11, z, W - 2, 11, z, DARK);   // roof bars (a light rail frame read as a painted outline)
   if (liv[3] != null && paint == null) {                    // pizza roof sign
-    g.box(3, 11, 9, 6, 11, 12, liv[3]); g.box(3, 11, 10, 6, 11, 11, C.vehRed);
+    g.box(3, 11, 9, 6, 11, 12, liv[3]); g.box(3, 11, 10, 6, 11, 11, C.taxiYellow);
   }
   g.box(1, 7, L - 1, 3, 8, L - 1, GLASS); g.box(6, 7, L - 1, 8, 8, L - 1, GLASS); // rear doors
   g.box(4, 2, L - 1, 5, 9, L - 1, C.stone);

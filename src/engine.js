@@ -446,6 +446,8 @@ export class Engine {
         sharpen: { amount: 0.12, beforeAA: true },
       },
     });
+    // Post's twilight white balance reads the key / sky / ambient lights.
+    if (this._post.setLights) this._post.setLights(this.sun, this.hemi, this.ambient);
     // Reused per-frame context handed to every render module (never retained).
     this._ctx = {
       time: 0, dt: 0, nightT: 0, nightEff: 0,
@@ -920,13 +922,69 @@ export class Engine {
     }
     this.scene.add(mesh);
     this._buildings.set(id, mesh);
+    mesh.userData.baseY = mesh.position.y;
+    this._growLot(mesh, mesh.scale.y);
     // main.js does not refreshTile() on 'placed'; let terrain raise the pad.
     if (this._terrain && this._terrain.noteTiles) this._terrain.noteTiles(x, z, etw, etd);
   }
 
   updateBuildingScale(id, yScale) {
     const mesh = this._buildings.get(id);
-    if (mesh) mesh.scale.y = Math.max(0.001, yScale);
+    if (!mesh) return;
+    mesh.scale.y = Math.max(0.001, yScale);
+    this._growLot(mesh, mesh.scale.y);
+  }
+
+  // res r1 (coherence #7): a catalog building brings its own 0.5-unit lot
+  // plinth (ART-DIRECTION "Lots"). The construction grow used to scale the
+  // whole mesh in Y, so the lot started as a sliver and rose with the house.
+  // While growing, the building scales about the plinth top instead, and a
+  // child mesh of just the plinth layers (counter-scaled) holds the lot flat
+  // at full height; the squashed copy of the plinth hides inside it.
+  _lotInfo(model) {
+    if (!model || !Array.isArray(model.blocks) || !model.blocks.length) return null;
+    const c = this._lotInfoCache || (this._lotInfoCache = new WeakMap());
+    if (c.has(model)) return c.get(model);
+    let info = null;
+    const res = modelRes(model), L = Math.round(0.5 * res) - 1;   // top plinth layer
+    const sx = model.sx | 0, sz = model.sz | 0;
+    if (res >= 2 && L >= 0 && sx > 0 && sz > 0 && (model.sy | 0) > L + 1) {
+      const top = new Uint8Array(sx * sz), low = [];
+      for (const b of model.blocks) {
+        if (!b || b[1] > L) continue;
+        low.push(b);
+        if (b[1] === L && b[0] >= 0 && b[0] < sx && b[2] >= 0 && b[2] < sz) top[b[2] * sx + b[0]] = 1;
+      }
+      let n = 0;
+      for (let i = 0; i < top.length; i++) n += top[i];
+      if (n >= 0.9 * sx * sz) {
+        info = { h: (L + 1) / res, model: { sx, sy: L + 1, sz, res: model.res, blocks: low } };
+      }
+    }
+    c.set(model, info);
+    return info;
+  }
+
+  _growLot(mesh, s) {
+    const base = mesh.userData.baseY != null ? mesh.userData.baseY : mesh.position.y;
+    let lot = mesh.userData.growLot;
+    const info = s < 0.999 || s > 1.001 ? this._lotInfo(mesh.userData.voxModel) : null;
+    if (!info) {
+      if (lot) { mesh.remove(lot); mesh.userData.growLot = null; }
+      mesh.position.y = base;
+      return;
+    }
+    if (!lot) {
+      lot = this._viewMesh(info.model);
+      lot.castShadow = true;
+      lot.receiveShadow = true;
+      mesh.add(lot);
+      mesh.userData.growLot = lot;
+    }
+    const pivot = info.h - 0.01;           // just under the lot top: no z-fight
+    mesh.position.y = base + pivot * (1 - s);
+    lot.scale.y = 1 / s;
+    lot.position.y = -pivot * (1 - s) / s;  // world y of the lot = base + y
   }
 
   removeBuilding(id) {
@@ -1196,6 +1254,8 @@ export class Engine {
     this._ghostMesh.position.set((x + etw / 2) * TILE, LOT_Y + 0.02, (z + etd / 2) * TILE);
     this._ghostMesh.rotation.y = (rot || 0) * Math.PI / 2;
     this._ghostMesh.visible = true;
+    // surface: depth pre-pass so only the front-most ghost surface is tinted
+    if (this._matLib && this._matLib.prepGhost) this._matLib.prepGhost(this._ghostMesh);
   }
 
   // ---------------------------------------------------------------------------
@@ -1895,7 +1955,12 @@ export class Engine {
     if (skyOut && skyOut.keyDir) ctx.sunDir.copy(skyOut.keyDir);
     if (skyOut && skyOut.skylightWarmth != null && this._lighting.setParams) {
       // One source of truth for the low-sun warm ramp, shared by sky and lights.
-      this._lighting.setParams({ skylightWarmth: skyOut.skylightWarmth * 0.62 });
+      // Light wave-2 r1: while sky.js's authored rig is active (now through
+      // golden hour) the fill hue is authored (cool at dusk); lighting.js's
+      // warm re-grade of hemi/ambient/IBL on top of it was the salmon wash
+      // on every shade face (coherence #5). Keep only a trace of it there.
+      const artA = skyOut.artAmount || 0;
+      this._lighting.setParams({ skylightWarmth: skyOut.skylightWarmth * 0.62 * (1 - 0.85 * artA) });
     }
     this._lighting.setSunDirection(ctx.sunDir);
     this._lighting.update(d, ctx);

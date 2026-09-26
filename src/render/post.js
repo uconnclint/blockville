@@ -153,9 +153,11 @@ function defaultParams() {
       // at all, so daytime bloom is pure haze: it softened every lit window and
       // white roof into a halo. Strength is scaled by smoothstep(nightStart, nightFull, ctx.nightEff),
       // and at 0 the whole mip chain is skipped (saves ~0.4 ms by day).
-      threshold: 0.9,
+      // night r1: 0.9 / 0.30 -> 0.8 / 0.38 — lit panes (HDR ~0.9-1.2) and
+      // lamp heads now get a gentle halo, neon a clear one; still no haze.
+      threshold: 0.8,
       softness: 0.6,      // soft-knee width as a fraction of threshold
-      strength: 0.30,
+      strength: 0.38,
       radius: 0.85,       // upsample tent spread
       clamp: 2.4,         // max pre-blur highlight magnitude (hue-preserving)
       nightOnly: true,
@@ -194,7 +196,7 @@ function defaultParams() {
       // top, left face and white trim had all been squeezed onto ~0.93.
       exposure: 1.0,
       shoulder: 0.90,
-      saturation: 0.95,   // r12: 0.96 -> 0.95 (critic r11: roofs and the saturated blues/reds read noisy vs ref05's calm palette). r8: 1.0 -> 0.96 (critic r7: greens/pinks a touch hot vs ref05's pastels). r5: 1.05 -> 1.0 (critic r4: over-saturated, lime/cyan noise)
+      saturation: 0.98,   // w2r1: 0.95 -> 0.98 (+ vibrance 0.12: the overview read pastel; frame sat 0.308 vs ref05 0.351 — vibrance lifts the muted faces, not the already-hot reds/blues). r12: 0.96 -> 0.95 (critic r11: roofs and the saturated blues/reds read noisy vs ref05's calm palette). r8: 1.0 -> 0.96 (critic r7: greens/pinks a touch hot vs ref05's pastels). r5: 1.05 -> 1.0 (critic r4: over-saturated, lime/cyan noise)
       contrast: 1.02,     // r12: 1.03 -> 1.02 only — a global cut lifts the roads (0.98 took asphalt 32 -> 43/255, same frame); the crush is fixed locally by grade.above + floor. r8: 1.08 -> 1.03 (1.08 pushed display 0.09 -> 0.057 and every shade face down with it). r5: 1.14 -> 1.08 — SSAO on buildings now carries the separation; 1.14 on top crushed p5 to 0.03
                           // luminance-only (ratio safe); value separation. r4: 1.08 -> 1.14 (critic: overview flatter than ref05)
       lift: 0.0,          // lift washes near-black asphalt to grey
@@ -212,7 +214,7 @@ function defaultParams() {
                           // 0 since round 3: it lifted exactly the shaded faces
                           // the critic wanted darker.
       shadowSat: 0.2,     // r12: 0.32 -> 0.2 (saturated darks = the "dense" read; the floor now keeps shade faces light AND hued). r11: 0.22 -> 0.32 (critic r10: shade faces "flat, slightly greyed blue-grey"; ref05's dark faces are clean and saturated). r10: 0.1 -> 0.22 (critic r9: shaded right faces greyish/desaturated; the floor now lifts them, so chroma no longer reads navy). extra chroma over the shaded band. r8: 0.3 -> 0.1 (it pushed shade faces to navy/brown)
-      vibrance: 0.05,     // r8: 0.15 -> 0.05. saturation weighted toward muted colours (r5: 0.30 -> 0.15)
+      vibrance: 0.12,     // w2r1: 0.05 -> 0.12. r8: 0.15 -> 0.05. saturation weighted toward muted colours (r5: 0.30 -> 0.15)
       greenLift: 0.10,    // luminance gain on yellow-green (grass, canopies)
       // Hue-preserving highlight shoulder in DISPLAY space, applied after the
       // grade's saturation/contrast so they cannot push a channel into a hard
@@ -274,12 +276,28 @@ function defaultParams() {
       // r12 (critic r11: "raise the shadow and ambient floor so shaded faces stay
       // mid-tone; ref05 keeps its shade sides light and colourful"): 0.24 -> 0.36,
       // kernel 2.5 -> 2.1 (peak y 0.32: the deep shade band, awning undersides).
-      floor: { amount: 0.24, neutral: 0.0, shape: 2.5, green: 0.15 },
+      // w2r1: 0.24 -> 0.18. White probe cube (tools/rendertest/faceratio.sh) right/top
+      // was 0.69 at 0.24 vs the ref04 target 0.63; 0.17 measured 0.64. The shade side
+      // is now ON target, which is what gives iso-mid its three-tone read back.
+      floor: { amount: 0.18, neutral: 0.0, shape: 2.5, green: 0.15 },
       // r12 above-ground key (world Y lo..hi): pixels above the ground layer are
       // exempt from the asphalt ops and take the floor lift even when neutral.
       above: { enabled: true, amount: 1.0, lo: 1.0, hi: 1.3 },   // roads y 0, sidewalks ~0.3, lot tops ~0.9
       coolSat: 0.22,      // r12: 0.15 -> 0.22 (critic r11: "the mass of blue windows"). saturation cut on cyan..blue (critic: cyan-dominated)
       coolHue: 195,
+      // wave-2 r1 (coherence #5: "dusk grades the whole city salmon/peach,
+      // white and blue buildings included — the strongest tint in the game").
+      // Twilight white balance: a partial von Kries adaptation in scene-linear
+      // toward the DAYTIME illuminant. The illuminant is estimated from the
+      // scene lights (engine hands them over via setLights): key colour x
+      // intensity x sunWeight + hemi sky + ambient; its chroma is compared to
+      // the day reference (captured live whenever nightEff < 0.05) and the
+      // frame is multiplied by (ref / cur)^k, luma-normalised, each channel
+      // clamped to [1/maxGain, maxGain]. k = amount x a twilight gate
+      // (smoothstep lo0..lo1 in, hi0..hi1 out) so day and full night are
+      // bit-identical. Deterministic (no frame statistics): no pumping when the
+      // camera pans over the lake. Dusk keeps a golden key — only the wash goes.
+      wb: { amount: 0.35, sunWeight: 0.35, lo0: 0.2, lo1: 0.36, hi0: 0.5, hi1: 0.66, maxGain: 2.0 },
     },
     // Anti-aliasing. `ssaa` is the MAX internal render scale (ordered-grid
     // supersampling, resolved with a separable Mitchell-Netravali filter);
@@ -328,9 +346,17 @@ function defaultParams() {
     // ~5%) and full only from distHi (overview), and gentler there: fine 0.9 ->
     // 0.5, the wide mid band (which drew the dark rims round bright props) 0.35
     // -> 0.1.
-    crisp: { enabled: true, fine: 0.5, mid: 0.1, sigmaFine: 1.0, sigmaMid: 4.0,
-      coreLo: 0.006, coreHi: 0.03, limitFine: 0.08, limitMid: 0.05, close: 0.55, closeLo: 5, closeHi: 12,
-      distLo: 70, distHi: 150 },
+    // w2r1 (brief: "ref05's crisp, airy read at overview; zoom-gated local contrast
+    // allowed; iso-close / one-* stay clean"): the gate moves to distLo 50 / distHi 85
+    // so iso-mid (85, the shot that matches ref05's scale) gets the full pass and
+    // iso-close (36) and single-building shots (22-45) still get exactly 0. Stronger
+    // there (fine 0.5 -> 1.1, mid 0.1 -> 0.45, limits 0.08/0.05 -> 0.12/0.08) and cored
+    // a little higher (0.006/0.03 -> 0.01/0.035) so asphalt grain is not lifted.
+    // Measured iso-mid downscaled to ref05 px/tile: |Laplacian| 0.126 -> 0.169 (ref05
+    // 0.188), 16-px local contrast 0.140 -> 0.164 (ref 0.182); no rims on the A/B.
+    crisp: { enabled: true, fine: 1.1, mid: 0.45, sigmaFine: 1.0, sigmaMid: 4.0,
+      coreLo: 0.01, coreHi: 0.035, limitFine: 0.12, limitMid: 0.08, close: 0.55, closeLo: 5, closeHi: 12,
+      distLo: 50, distHi: 85 },
     // Round 4: output-resolution luma unsharp mask (see OUTPUT_FRAG), halo-
     // clamped to each pixel's 3x3 range so flat faces and lawns are untouched.
     usm: { enabled: false, fine: 0.6, edge: 0.5, radius: 2.5, overshoot: 0.15, coreLo: 0.05, coreHi: 0.14, noSS: 0.4, farLo: 2.0, farHi: 4.5 },
@@ -1050,6 +1076,7 @@ uniform float uGain;
 uniform float uVignette;
 uniform float uPunch;
 uniform float uWarm;
+uniform vec3  uWB;        // wave-2: twilight white-balance gains (scene-linear)
 uniform float uTonemap;   // 0 = Khronos PBR Neutral, 1 = ACES (hue-blended)
 uniform float uKnee;      // display-space highlight shoulder start
 uniform float uShadowLift; // luminance bump over the shaded band (asphalt-safe)
@@ -1066,6 +1093,7 @@ uniform vec2  uCurveDip;   // (depth, start) of the upper-mid dip
 uniform vec2  uCoolSat;    // (saturation cut on cyan..blue hues, hue-band centre deg)
 uniform float uDeepDark;   // round 6: neutral dark (asphalt) value deepen + de-tint
 uniform vec2  uAsphalt;    // round 7: (amount, target display luma) neutral-dark flatten
+uniform float uNightK;     // night r1: 0 day .. 1 night (fades the daylight asphalt ops)
 uniform float uFloorGreen; // r9: floor amount (r8 kernel) for lawn/foliage hues
 uniform vec4  uFloor;      // round 8: (peak lift, neutral share, kernel exponent n, 1/peak of y(1-y)^n) shaded-face floor
 uniform vec3  uAtmo;      // (strength, startDist, endDist) — aerial perspective
@@ -1146,6 +1174,10 @@ vec3 pbrNeutral(vec3 color, float aboveK) {
   // takes the gentle plateau even when it is neutral: a white awning underside
   // or a shaded grey facade is not asphalt (critic r11: "awning undersides and
   // contact shadows crush to near-black"). Roads/ground keep Khronos 0.04.
+  // night r1: at night the chroma switch is gated by brightness too — a
+  // near-black pixel's saturation is noise, and flipping plateaus on it
+  // sparkled the dim fringe of every lamp pool.
+  csat *= mix(1.0, smoothstep(0.02, 0.09, cmx), uNightK);
   float bo = max(mix(0.04, uBlackOffset, max(smoothstep(0.3, 0.6, csat), aboveK)), 1e-4);
   float offset = bo;
   if (x < 2.0 * bo) {
@@ -1226,6 +1258,7 @@ void main() {
   if (uBloom > 0.0) {
     c += texture2D(tBloom, vUv).rgb * uBloom;
   }
+  c *= uWB;   // wave-2: twilight white balance (1,1,1 by day and night)
 
   // ---- debug taps -------------------------------------------------------
   if (uDebug == 1) { float ao = texture2D(tAO, vUv).r; gl_FragColor = vec4(srgbEncode(vec3(ao)), 1.0); return; }
@@ -1453,7 +1486,7 @@ void main() {
     float mx = max(max(d.r, d.g), d.b);
     float sat = (mx - min(min(d.r, d.g), d.b)) / max(mx, 1e-4);
     float k = uDeepDark * (1.0 - smoothstep(0.10, 0.24, sat))
-            * smoothstep(0.0, 0.04, y) * (1.0 - smoothstep(0.18, 0.32, y)) * (1.0 - aboveK);
+            * smoothstep(0.0, 0.04, y) * (1.0 - smoothstep(0.18, 0.32, y)) * (1.0 - aboveK) * (1.0 - uNightK);
     d = vec3(y) + (d - vec3(y)) * (1.0 - 1.5 * k);
     d *= 1.0 - k;
   }
@@ -1471,7 +1504,7 @@ void main() {
     float mx = max(max(d.r, d.g), d.b);
     float sat = (mx - min(min(d.r, d.g), d.b)) / max(mx, 1e-4);
     float w = uAsphalt.x * (1.0 - smoothstep(0.16, 0.34, sat))
-            * smoothstep(0.015, 0.05, y) * (1.0 - smoothstep(0.10, 0.20, y)) * (1.0 - aboveK);
+            * smoothstep(0.015, 0.05, y) * (1.0 - smoothstep(0.10, 0.20, y)) * (1.0 - aboveK) * (1.0 - uNightK);
     float y2 = y - w * (y - uAsphalt.y);
     d *= y2 / y;
   }
@@ -2208,9 +2241,9 @@ export class PostFX {
       tLit: U(null), tBloom: U(null), tDof: U(null), tAO: U(null), tDepth: U(null),
       uBloom: U(0.55), uDof: U(1.0), uExposure: U(1.15), uSaturation: U(1.2),
       uContrast: U(1.1), uLift: U(0), uGamma: U(1), uGain: U(1), uVignette: U(0.34),
-      uPunch: U(0.45), uWarm: U(0.075), uTonemap: U(0), uKnee: U(0.9),
+      uPunch: U(0.45), uWarm: U(0.075), uWB: U(new THREE.Vector3(1, 1, 1)), uTonemap: U(0), uKnee: U(0.9),
       uShadowLift: U(0), uShadowSat: U(0), uVibrance: U(0), uGreenLift: U(0),
-      uShoulder: U(0.76), uBlackSlope: U(0), uBlackOffset: U(0.04), uCurve: U(new THREE.Vector3(1, 0.05, 0.3)), uCurveSat: U(0), uCurveGreen: U(0), uCurveDip: U(new THREE.Vector2(0, 0.3)), uCoolSat: U(new THREE.Vector2(0, 195)), uDeepDark: U(0), uAsphalt: U(new THREE.Vector2(0, 0.086)), uFloor: U(new THREE.Vector4(0, 0.35, 2, 6.75)), uAtmo: U(new THREE.Vector3(0.1, 200, 900)),
+      uShoulder: U(0.76), uBlackSlope: U(0), uBlackOffset: U(0.04), uCurve: U(new THREE.Vector3(1, 0.05, 0.3)), uCurveSat: U(0), uCurveGreen: U(0), uCurveDip: U(new THREE.Vector2(0, 0.3)), uCoolSat: U(new THREE.Vector2(0, 195)), uDeepDark: U(0), uAsphalt: U(new THREE.Vector2(0, 0.086)), uNightK: U(0), uFloor: U(new THREE.Vector4(0, 0.35, 2, 6.75)), uAtmo: U(new THREE.Vector3(0.1, 200, 900)),
       uAspect2: U(1.6), uDebug: U(0),
       uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0),
       uOrthoBox: U(new THREE.Vector4(-1, 1, -1, 1)), uWorldRowY: U(new THREE.Vector4(0, 1, 0, 0)),
@@ -2402,6 +2435,45 @@ export class PostFX {
   }
 
   getQuality() { return this._quality; }
+
+  // wave-2: the scene's key / sky / ambient lights, for the twilight white
+  // balance (grade.wb). Optional — without them the balance stays identity.
+  setLights(sun, hemi, ambient) { this._lights = { sun, hemi, ambient }; }
+
+  // Twilight white balance gains into `out` (Vector3). See grade.wb.
+  _updateWB(out, W, ctx) {
+    out.set(1, 1, 1);
+    const L = this._lights;
+    if (!W || !L || !L.sun || !(W.amount > 0)) return;
+    const ill = (dst) => {
+      const s = L.sun, h = L.hemi, a = L.ambient, sw = W.sunWeight ?? 0.35;
+      dst[0] = s.color.r * s.intensity * sw; dst[1] = s.color.g * s.intensity * sw; dst[2] = s.color.b * s.intensity * sw;
+      if (h) { dst[0] += h.color.r * h.intensity; dst[1] += h.color.g * h.intensity; dst[2] += h.color.b * h.intensity; }
+      if (a) { dst[0] += a.color.r * a.intensity; dst[1] += a.color.g * a.intensity; dst[2] += a.color.b * a.intensity; }
+      const y = 0.2126 * dst[0] + 0.7152 * dst[1] + 0.0722 * dst[2];
+      if (!(y > 1e-5)) return false;
+      dst[0] /= y; dst[1] /= y; dst[2] /= y;
+      return true;
+    };
+    const ne = (ctx && typeof ctx.nightEff === 'number') ? ctx.nightEff : 0;
+    const cur = this._wbCur || (this._wbCur = [1, 1, 1]);
+    if (!ill(cur)) return;
+    // Day reference: the live daytime illuminant chroma (a slow EMA so a
+    // weather flicker cannot jolt it). Default = the authored noon rig
+    // (key #fffaf2 x3.3 x0.35 + hemi #e4ecf6 x1.48), for games loaded at dusk.
+    const ref = this._wbRef || (this._wbRef = [0.985, 1.0, 1.02]);
+    if (ne < 0.05) for (let i = 0; i < 3; i++) ref[i] += (cur[i] - ref[i]) * 0.05;
+    const S = THREE.MathUtils.smoothstep;
+    const k = clamp(W.amount, 0, 1) * S(ne, W.lo0 ?? 0.2, W.lo1 ?? 0.36) * (1 - S(ne, W.hi0 ?? 0.5, W.hi1 ?? 0.66));
+    if (k <= 1e-4) return;
+    const mg = Math.max(1, W.maxGain ?? 2);
+    const g = [0, 0, 0];
+    for (let i = 0; i < 3; i++) g[i] = clamp(Math.pow(ref[i] / Math.max(cur[i], 1e-4), k), 1 / mg, mg);
+    // Normalise so a white surface under the CURRENT illuminant keeps its
+    // luminance (cur is luma-normalised): only the cast changes, not exposure.
+    const gy = 0.2126 * g[0] * cur[0] + 0.7152 * g[1] * cur[1] + 0.0722 * g[2] * cur[2];
+    out.set(g[0] / gy, g[1] / gy, g[2] / gy);
+  }
 
   setParams(p) {
     if (!p) return;
@@ -2665,6 +2737,7 @@ export class PostFX {
       u.uVignette.value = G.vignette;
       u.uPunch.value = G.punch;
       u.uWarm.value = G.warm;
+      this._updateWB(u.uWB.value, G.wb, ctx);
       u.uTonemap.value = G.tonemap === 'aces' ? 1 : 0;
       u.uKnee.value = G.knee > 0 ? G.knee : 0.9;
       u.uShadowLift.value = G.shadowLift || 0;
@@ -2683,6 +2756,15 @@ export class PostFX {
       u.uDeepDark.value = clamp(G.deepDark || 0, 0, 0.5);
       const As = G.asphalt || {};
       u.uAsphalt.value.set(clamp(As.amount || 0, 0, 0.9), As.target != null ? As.target : 0.086);
+      // night r1: the asphalt ops are DAYLIGHT road grading. At night a faint
+      // warm lamp pool on near-black asphalt sits exactly on their chroma and
+      // luma gates, so per-pixel road noise flipped pixels in and out of the
+      // "pull neutral darks up to 0.08" band: a grey/orange sparkle ring round
+      // every lamp. Fade them (and the black-plateau chroma switch) out at night.
+      {
+        const neK = (ctx && typeof ctx.nightEff === 'number') ? ctx.nightEff : 0;
+        u.uNightK.value = THREE.MathUtils.smoothstep(neK, 0.35, 0.7);
+      }
       // r9 overview factor: 1 while a building voxel (0.25 u) is under
       // overview.lo CSS px (the default 'iso' overview), 0 from overview.hi up
       // (iso-mid and every closer zoom keep the round-8 look unchanged).

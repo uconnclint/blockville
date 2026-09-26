@@ -619,3 +619,46 @@ The r13 critic picked the reference. Biggest gap: our vehicles read as "smooth, 
 - Shade faces of small props elsewhere (benches, bins, lot people stamped by other pieces into building voxels) probably suffer the same building-scale AO. Pieces that own them could pass `voxOpts` too.
 - Soft edges are post AA (post.js), not the models.
 - Tools: `scratchpad/recv.py` (POST receiver on :8399) plus an in-page `__cap()` gave full-res captures from the Browser pane without a 4-minute shoot.mjs run.
+
+## 2026-09-25 — wave 2, round 1 (builder)
+
+Brief consensus: distinct readable types, dark wheels, continuous glass band, bright varied paint, no
+dark cars vanishing into asphalt, emergency vehicles RARE and in context, centred in lanes/bays.
+Coherence list: only item 9 is tagged life ("no action unless the art direction wants bigger movers") —
+size left alone (the r2/r4/r6/r8 consensus).
+
+**Found first.** Baseline iso-close (`scratchpad/rounds/life/r1-base`): the windscreens still read as
+lavender-grey "venetian blinds" from above (the dark vehGlass top faces lift to sky-spec grey, and the
+2-row raked steps alternate grey tops with dark fronts); two white vans with red / pink bands (courier,
+bakery) and the red pizza van read as ambulances / a fire van; three police cars + an ambulance + a fire
+engine on one shopping street (CAR_MIX 5 % police, 3 % ambulance, 2 % fire + SITE_P 0.35).
+New fast harness: `scratchpad/life/lshoot.mjs --sheet scratchpad/life/sheet.js --shots close,close2,far`
+boots WITHOUT the demo city (BVDEMO.reseed(), clears trees, paints two roads, lays every kind + a colour
+sweep + people + a parked row; `--pre "window.__patch=[[from,to],...]"` tests vehicles.js edits via a
+blob-URL import without touching the live file). ~6 s a shot vs ~2.5 min for shoot.mjs.
+
+**Changed**
+- `vehicles.js`: `skyGlass()` pass on every vehicle grid: glass voxels showing a top / front / rear face
+  (windscreen, rear window, roof screen rows) become `SCREEN = C.skyBlue` = the materials.js glass class
+  (clear blue + sky reflection + sheen, the buildings' panes); side panes stay the dark navy band. Reads
+  as ref05's bright reflecting screens from above; no more grey blinds. Night: screens do not glow.
+- `CAR_COLS`: no charcoal / stone bodies; white ×2, silver, red ×2, blue ×2, teal, green, yellow, orange.
+- Van liveries: courier white + ORANGE band, bakery CREAM + brown band, pizza WHITE + green band with a
+  red/yellow roof sign (none reads as an ambulance / fire van any more).
+- `life.js`: CAR_MIX fire 0 / ambulance 0 / police 1.2 % / ice-cream + school bus 0.4 %, the share goes
+  to sedans / city cars / vans / box trucks; emergency kinds only come from their site streets
+  (SITE_KINDS) and kerbs (FLEET); `EMERG_CAP = 3` driving at once; SITE_P 0.35 → 0.25; ambulances no
+  longer park at swimming-pool / stadium (no hospital in the catalog), bank keeps one police car.
+
+**Measured**
+- life + models self-tests ok (node: maxJump 1, 0 overlaps); check.sh ok; 0 console errors in
+  iso-mid / iso-close / iso-water (r1-builder). fps in those runs 27 / 29 / 21 at dpr 2 on a shared
+  machine (baseline run 5 / 5 / 2 under heavier load) — no geometry added (same voxel counts).
+- Visually: iso-close street traffic is a mix of red / blue / white / teal / yellow cars with bright
+  screens and black wheels; one fire engine only near the fire station; vans read as trades.
+
+**Next**
+- Instanced movers (perf idea 3) needs `instanceMatrix` in materials.js VERT_BODY (it uses modelMatrix
+  for vVoxWorld / normals) — owner of materials.js; then life can put each variant in one InstancedMesh.
+- Blue bodies + blue glass-class screens are low contrast; a lighter/whiter screen class would fix it.
+- Van roof bars (dark) read a bit heavy from above; the farm tractor (another piece) dwarfs the traffic.

@@ -13,7 +13,7 @@ the repo — copyrighted, review use only):
 | `ref06.png` | trees, rocks, flowers, bushes | vegetation |
 | `ref01.png` | the free pack: a small town on light-grey roads | simpler city composition |
 | `ref02.png` | a shop close-up | building detail, awnings, AC units, props |
-| `ref07.jpg`, `ref08.png`, `ref09.jpg`, `ref10-15.png` | building sheets / thumbnails | building variety and detail |
+| `ref08.png`, `ref10-15.png` | building sheets / thumbnails (`ref07.jpg`, `ref09.jpg` are road-tile sheets) | building variety and detail |
 
 Crop the reference to the region that matches the piece you are judging (e.g. a
 single building from ref05, or the lower-left roads).

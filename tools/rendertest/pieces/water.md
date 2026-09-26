@@ -556,3 +556,53 @@ uTerr.w out; if "too regular / concentric", raise the jitter amplitude or the
 patch occupancy (0.42/0.30 in the shader). Wall seams could go if a critic
 calls the tile grid busy again. uWallShade/uShadeColor/uNearRamp/uDepth(main)
 are now unused in main() — safe to delete next round.
+
+## 2026-09-25 — wave 2, round 1 (builder)
+
+Brief: converge on ref05's pool (#00a0d8..#10d0f0 bright azure, darker
+saturated inner wall, broad smooth depth gradient, sparse LARGE tile patches,
+a few glints). Past-gap consensus: r7/r9 too dark, r8/r10 too pale, r11/r13
+random blotches / no depth, r12 flat, r14 terraces -> converge on the middle.
+
+**Found:** the live grade now LIFTS and saturates blue hard for water-key
+pixels — baseline lake read #06bbfa (B pinned at 0xfa) although authored
+#02a9e6; any authored B >= 0xa0 lands at ~0xfa. Flat-lake calibration (sun
+fixed, `setSky({..., slabs:0, dashes:0})`), authored -> screen:
+#08b0dc->#08caf9, #06a0c0->#08cdf2, #0598b8->#07c9f0, #03a8c8->#07d0f4,
+#0cc0d0->#0cdfee, #0380a8->#06b8ef, #045c90->#0698ee, #024c80->#0587e2,
+#0240a0->#0465fc. Author with B well below 0xd0 now.
+
+**Changed (src/render/water.js only):**
+- Body: stepped terraces (uTerr) gone. Smooth continuous ramp shallow
+  #04a8c8 -> mid #0590b4 -> deep #035c90 from the Euclidean shore distance
+  averaged over a 5-tap +-10 u cross, uDepth (2, 30). No 4 u block on the
+  ramp (its staircase read as diamond contour rings).
+- Patches: two drifting layers of big rectangles, sizes/offsets snapped to
+  4 u, >= 8 u (1-3 tiles), cells 26x18 / 18x28, occupancy .55/.42, mostly
+  DARK (pLight .55 -> .18 with depth; never dark within ~5 u of a wall).
+  Dark -> uCoreColor #02487c at .70 (2 overlaps -> uAbyssColor), light ->
+  uEdgeColor #1cc8dc at .42. Calmed on the map-edge coastal strip, faded at
+  far zoom (pxw .8-1.6) and 75% at night (were black squares on the moonlit
+  lake).
+- Rim band 2.4 -> 1.6 u (#0cc0d4 @ .85). Glints: streak density .30 -> .18,
+  sparkle odds .16 -> .10. Float ripple SQUARE removed (collar only).
+- Walls: WALL_GLOW .65 -> .25 (was clipping to one flat #0994f8), wall
+  #034f8a / alt #045591 / seam #033f74 / grout #022c58, WALL_TONE px .86 ->
+  screen #185fa6 top .. #134377 at the waterline (ref #0a5491 .. #044376).
+- Sea #0470a0.
+**Measured (iso-water lake crop, 3200 wide):** p10/30/50/70/90 ours
+#069de5/#07bcf0/#0bc8ee/#0eccf4/#0cd8f4, luma range 38 (base: #07a0fb/
+#06a8fb/#06bbfa/#06bcfb/#0ac9fa, range 25); ref05 pool #018fdb/#04acdd/
+#08c1ed/#10cef0/#13dcf6, range 54. Zero console errors (iso-water, iso-wide,
+iso-night); selfTest pass. FPS 10-31 — machine load avg 12-17 from other
+builders' Chromes; shader cost ~equal to r14 (+4 fetches for the ramp, the
+jitter/terrace code gone).
+**Coherence [water/ground] bridge notch:** checked — the "sand-rimmed pool"
+beside the bridge is a real 1-tile lake inlet next to the bridged tile (sim
+only bridges WATER tiles), so the basin is right to wall it; not changed.
+The pale-yellow gradient "glow" at deck corners is terrain.js's sand vertex
+blend smearing onto the neighbouring grass tile (round-2 note) — ground's.
+**Next:** if a critic says "dark patches too strong/navy", drop the .70 dark
+mix to ~.55 before touching occupancy. If post.js changes its grade, redo the
+flat-lake calibration first (colours are grade-dependent). Glint streaks are
+still slightly glyph-like; ref05's are soft chevrons.

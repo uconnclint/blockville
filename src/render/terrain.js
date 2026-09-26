@@ -440,6 +440,17 @@ const lotFam = (d) => LOT_FAMILY[d] != null ? LOT_FAMILY[d] : d;
 const MTN_VS = 4.0;
 const MTN_PEAK_K = 1.3;      // r8: summit up to 2.3x its linear height ...
 const MTN_PEAK_MAX = 96;     // ... but never above this many world units
+const MTN_SUB = 2.0;         // wave-2: half-tile cells snap to 2-unit terraces
+const MTN_APRON = 10;        // wave-2: tiles of off-map apron a border range steps down over
+// Mountain stone strata (sRGB). Two bands per zone alternate every MTN_SUB
+// units up a riser. Values are pre-lighting albedos: under this scene's sun a
+// 0x6e6a64 top lands ~#aaa6a0 on screen (ref06 rock tops ~0.8x grass value).
+const STONE_HEX = {
+  earth: [0x756857, 0x6f6352],   // warm earthy stone at the foot (ties to the lime field)
+  warm:  [0x686460, 0x63605b],   // warm grey mid-slopes
+  cool:  [0x62666f, 0x5d616a],   // cool blue-grey under the snow
+  turf:  [0x6f8c3c, 0x6f8c3c],   // grass lip down a terrace riser
+};
 
 const LK_FOOT = 1, LK_VACANT = 2, LK_PARCEL = 3;   // PARCEL: a raised outskirts lot (parcelPlan)
 const LK_GREEN = 4;          // a GREEN outskirts lot: park / pitch / orchard drawn flush on the field
@@ -450,6 +461,8 @@ const GREEN_Y = 0.03;        // ground level for a green lot's paths and props
 function lin(hex) { return new THREE.Color().setHex(hex, THREE.SRGBColorSpace); }
 const LOT_RGB = {};
 for (const k in LOT_PAL) { const c = lin(LOT_PAL[k]); LOT_RGB[k] = [c.r, c.g, c.b, 1]; }
+const STONE = {};
+for (const k in STONE_HEX) STONE[k] = STONE_HEX[k].map((hx) => { const c = lin(hx); return [c.r, c.g, c.b, 1]; });
 
 /**
  * City-block mask (pure; shared with props.js). 1 on every EMPTY grass tile of
@@ -966,6 +979,8 @@ uniform float uGrassShadeK;
 uniform vec3 uWorn, uPebble, uSeaFar;
 uniform vec3 uSand, uSandWet, uDirt;
 uniform vec3 uRockA, uRockB, uRockC, uScree, uSnow;
+uniform vec3 uRockFill;
+uniform float uNightLotK;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 varying vec4 vTerr;
@@ -974,6 +989,7 @@ varying vec4 vPaint;
 
 vec3 thAlbedo;
 float thGrassW = 0.0;   // r10: how much of this fragment is up-facing field grass
+float thRockWall = 0.0; // wave-2: rock riser weight (uRockFill)
 float thRough;
 float thAO;
 vec3 thNrm;
@@ -1100,6 +1116,8 @@ void thTerrain() {
   // settles on the top of a plinth, never on its side.
   float paint = clamp( vPaint.a, 0.0, 1.0 );
   alb = mix( alb, mix( vPaint.rgb, uSnow, uSnowCover * 0.85 * step( 0.5, wn.y ) ), paint );
+  // wave-2: painted rock tops are the brightest face (ref06 three-tone)
+  alb *= 1.0 + 0.22 * wR * paint * clamp( wn.y, 0.0, 1.0 ) * ( 1.0 - snowAmt );
 
   // ---- off-map open sea ------------------------------------------------------
   float sea = clamp( vMask.y - 1.0, 0.0, 1.0 );
@@ -1132,8 +1150,12 @@ void thTerrain() {
   {
     vec3 vn = ( viewMatrix * vec4( wn, 0.0 ) ).xyz;
     float vert = 1.0 - clamp( abs( wn.y ), 0.0, 1.0 );
-    float faceK = mix( 0.88, 0.70, smoothstep( -0.25, 0.25, vn.x ) );
+    float thRight = smoothstep( -0.25, 0.25, vn.x );
+    float faceK = mix( 0.88, 0.70, thRight );
+    // wave-2: rock risers take ref06's stronger split (left ~0.80, right ~0.64).
+    faceK = mix( faceK, mix( 0.80, 0.64, thRight ), wR * ( 1.0 - snowAmt ) );
     alb *= mix( 1.0, faceK, vert );
+    thRockWall = wR * ( 1.0 - snowAmt ) * mix( 0.35, thRight, vert );
   }
 
   // ---- sky bounce (tiny; the scene's hemisphere fill already does most) ----
@@ -1146,6 +1168,10 @@ void thTerrain() {
   alb *= mix( 1.0, ao, 0.10 );
   float lum = dot( alb, vec3( 0.2126, 0.7152, 0.0722 ) );
   vec3 nAlb = mix( vec3( lum ), alb, uNightChroma ) * uNightTint;
+  // wave-2 (coherence #6): painted lot tops/rims read ~1.5x brighter than the
+  // building models' own lotPlinths at night (rim #9c9cc0 vs #6c6ca8); the
+  // models' night path is darker, so painted terrain dims to match.
+  nAlb *= mix( 1.0, uNightLotK, paint );
   alb = mix( alb, nAlb, uNight );
   alb *= uTint;
   thAlbedo = clamp( alb, 0.0, 1.6 );
@@ -1304,7 +1330,7 @@ export class Terrain {
       // Moon/sky indirect floor so night ground is blue-grey, not literally 0.
       // Measured night meadow: (0, 2.2, 17) sat 1.00 -> (26, 31, 42) sat 0.38
       // hue 223, i.e. a readable moonlit surface at ~30% of the day luminance.
-      uNightSky: { value: new THREE.Vector3(0.162, 0.166, 0.191) },   // coherence 09-25: x0.85 (terrain lots read brighter than building lots at night)
+      uNightSky: { value: new THREE.Vector3(0.110, 0.105, 0.150) },   // night r1 (coherence #6): 0.162/0.166/0.191 -> violet and ~0.65x; terrain parks/vacant lots matched the building lots' night value
       uGrassDeep: { value: lin(PAL.grassDeep) },
       uGrassMid: { value: lin(PAL.grassMid) },
       uGrassLit: { value: lin(PAL.grassLit) },
@@ -1314,7 +1340,7 @@ export class Terrain {
       // shadow is multiplied by this (a lift pushed toward green), and x of
       // uGrassAoUndo is how much of lighting.js's world AO is taken back off
       // open lawn (it pooled as dirty dark halos round every tree).
-      uGrassShade: { value: new THREE.Vector3(1.04, 1.12, 0.96) },
+      uGrassShade: { value: new THREE.Vector3(1.02, 1.10, 0.84) },   // wave-2: less blue so big cast shadows (mountain) read as green shade, not a pale haze band
       uGrassAoUndo: { value: 0.65 },
       // Share of the sun's cast shadow handed back on open lawn (0 = full
       // shadow, 1 = none). Applied to the shadow term itself (thCsmApply), so
@@ -1333,6 +1359,12 @@ export class Terrain {
       uRockC: { value: lin(PAL.rockC) },
       uScree: { value: lin(PAL.scree) },
       uSnow: { value: lin(PAL.snow) },
+      // wave-2: sky fill on rock RISERS (x albedo). The mountain's shade side
+      // measured near-black (#1c1f24) beside colourful building shade faces;
+      // this lifts it into a readable cool stone tone (ART-DIRECTION: "the
+      // dark side is still colourful, never muddy or black").
+      uRockFill: { value: new THREE.Vector3(0.40, 0.41, 0.47) },
+      uNightLotK: { value: 0.66 },
     };
     this._sharedNight = !!shared.uNight;
     // uTint may arrive as a Vector3-valued uniform from engine.js (uSeason).
@@ -1398,7 +1430,7 @@ export class Terrain {
       roughness: 1.0,
       metalness: 0.0,
       side: THREE.FrontSide,
-      dithering: true,
+      dithering: false,   // night r1: the scene target is half-float (no banding), and three's +/-0.5/255 dither sat under the tonemap's black plateau, then sparkled as grain wherever a lamp pool lifted the asphalt out of it
     });
     mat.envMapIntensity = (typeof this._envIntensity === 'number') ? this._envIntensity : 0.6;
     mat.name = 'terrain';
@@ -1480,7 +1512,8 @@ export class Terrain {
         // problem that only exists after dark. smoothstep reaches exactly 1.0
         // by 0.92, which is where the night grade is measured.
         '  float thNightFloor = smoothstep( 0.45, 0.92, uNight );\n' +
-        '  reflectedLight.indirectDiffuse += uNightSky * thNightFloor * diffuseColor.rgb * thAOa;'
+        '  reflectedLight.indirectDiffuse += uNightSky * thNightFloor * diffuseColor.rgb * thAOa;\n' +
+        '  reflectedLight.indirectDiffuse += diffuseColor.rgb * uRockFill * thRockWall * thAOa * ( 1.0 - 0.85 * uNight );'
       );
       // ---- aerial perspective at the horizon --------------------------------
       // three's <fog_fragment> converges distant geometry on scene.fog.color.
@@ -2593,74 +2626,164 @@ export class Terrain {
   // sub-blocks on the caps for an irregular silhouette, and whole-block snow
   // caps (top white + a white lip down the side) above the snow line.
   // -------------------------------------------------------------------------
+  // Wave-2 r1 (coherence: "mountains are flat grey blocks with near-black
+  // sides … no hue; reads as unfinished next to the lime field"). The range
+  // is now meshed on a HALF-TILE grid (4-unit cells): each cell samples its
+  // tile's height bilinearly a quarter of the way toward its neighbours and
+  // snaps to 2-unit steps, so every level change becomes two terraces and the
+  // silhouette reads as ref06's stepped rock instead of 8x8 grey towers. A
+  // hash adds the odd crag / notch. Colour is authored per face through
+  // aPaint (STONE strata: warm earthy stone at the foot, warm grey, then a
+  // cool blue-grey under the snow, alternating light/dark bands every step),
+  // foothill terraces and some ledges wear the field's own grass with a lip
+  // down the riser, the summit terraces are snow with a snow lip. The shade
+  // side is lifted by uRockFill in the shader so it stays colourful.
+  _rockSubH(state, sx, sz, memo) {
+    const key = sz * 4096 + sx;
+    if (memo.has(key)) return memo.get(key);
+    const tx = sx >> 1, tz = sz >> 1;
+    const h = this._mtnH(state, tx, tz);
+    let q;
+    if (h === null) {
+      // OFF-MAP APRON: sim ranges hug the map corners, so every range was cut
+      // by the border into a sheer cliff down to the skirt. Continue the
+      // range past the border instead, stepping down to the skirt lawn over
+      // ~6-10 tiles, so the mountain reads as a whole landform in iso-wide.
+      const M = N * 2;
+      const csx = sx < 0 ? 0 : sx >= M ? M - 1 : sx, csz = sz < 0 ? 0 : sz >= M ? M - 1 : sz;
+      const qe = this._rockSubH(state, csx, csz, memo);
+      if (!qe) q = 0;
+      else {
+        const d = Math.max(Math.abs(sx - csx), Math.abs(sz - csz));
+        const D = 12 + 8 * vnoiseW(sx * 0.13, sz * 0.13, 2203);
+        const st = MTN_SUB;
+        q = Math.round(qe * Math.max(0, 1 - d / D) * (1 - 0.35 * Math.min(1, d / D)) / st) * st;
+        const r = hash2(sx, sz, 6607);
+        if (q > st * 2) { if (r < 0.06) q += st; else if (r > 0.95) q -= st; }
+        if (q < st) q = 0;
+      }
+    }
+    else if (h <= 0) q = 0;
+    else {
+      const dx = (sx & 1) ? 1 : -1, dz = (sz & 1) ? 1 : -1;
+      const g = (x, z) => { const v = this._mtnH(state, x, z); return v === null ? h : v; };
+      const v = h * 0.5625 + (g(tx + dx, tz) + g(tx, tz + dz)) * 0.1875 + g(tx + dx, tz + dz) * 0.0625;
+      const st = MTN_SUB;
+      q = Math.round(v / st) * st;
+      const r = hash2(sx, sz, 6607);
+      if (q > st * 2) { if (r < 0.06) q += st; else if (r > 0.95) q -= st; }
+      q = Math.max(st, q);
+    }
+    memo.set(key, q);
+    return q;
+  }
+
+  _stone(y, hTop) {
+    // strata: band index every MTN_SUB units, zone by height fraction
+    const t = hTop > 0 ? y / hTop : 0;
+    const band = Math.floor(y / (MTN_SUB * 2) + 1e-4);
+    const z = t < 0.18 ? STONE.earth : t < 0.55 ? STONE.warm : STONE.cool;
+    return z[band & 1];
+  }
+
   _buildRock(state, x0t, z0t, x1t, z1t, cx, cz) {
     const B = new GeoBuf();
     const TR = [0, 0, 0, 1], TG = [1, 0, 0, 0];
-    const LIP = 1.4;                          // snow lip down the wall (r8: 0.7 read as a hairline on the tall summit cliffs)
-    for (let tz = z0t; tz < z1t; tz++) {
-      for (let tx = x0t; tx < x1t; tx++) {
-        const ti = tz * N + tx;
-        if (state.map[ti] !== T_MOUNTAIN) continue;
-        const hv = state.variant && state.variant[ti] > 0 ? state.variant[ti] : 4;
-        const h = this._mtnY(hv);              // levels -> world units (steepened, r8)
-        const wx0 = tx * TILE, wx1 = wx0 + TILE;
-        const wz0 = tz * TILE, wz1 = wz0 + TILE;
-        const tone = 0.30 + 0.40 * hash2(tx, tz, 1777);
-        // Snow line in LEVELS (sim peaks are 10..14): the top rings are white.
-        // Relative to the tallest peak on the map, so every range gets a cap.
-        const sl = Math.max(6, Math.min(this.snowLevel, this._mtnMax - 2));   // r8: top 3 levels (the steepened summit)
-        const snowy = hv >= sl + Math.round((hash2(tx, tz, 4441) - 0.5) * 1.4) ? 1 : 0;
-        // Foothills: the outermost ring wears a grass cap (a voxel grass block).
-        const grassy = hv <= 2 || (hv === 3 && hash2(tx, tz, 5153) < 0.45);
-        const nE = this._mtnH(state, tx + 1, tz), nW = this._mtnH(state, tx - 1, tz);
-        const nN = this._mtnH(state, tx, tz - 1), nS = this._mtnH(state, tx, tz + 1);
-        const base = (nh, ox, oz) => {
-          if (nh === null) return this.borderY;
-          if (nh > 0) return nh;
-          const i2 = (tz + oz) * N + (tx + ox);
-          if (this._cls[i2] === C_WATER) return this.seabed ? this._bedY(tx + ox, tz + oz) : WATER_Y;
-          return 0;
+    const LIP = 1.2, GLIP = 0.7;
+    const st = MTN_SUB;
+    const memo = new Map();
+    const H = (sx, sz) => this._rockSubH(state, sx, sz, memo);
+    const peak = Math.max(8, this._mtnY(Math.max(4, this._mtnMax || 9)));
+    const sl = Math.max(6, Math.min(this.snowLevel, this._mtnMax - 2));
+    const snowH = this._mtnY(sl) - st * 0.5;
+    const grassH = this._mtnY(2) + 0.1;
+    // Height where a neighbour cell's wall should stop (ground / bed / border).
+    const baseOf = (nsx, nsz, nh) => {
+      if (nh === null) return this.borderY;
+      if (nh > 0) return nh;
+      const ntx = nsx >> 1, ntz = nsz >> 1;
+      if (ntx < 0 || ntz < 0 || ntx >= N || ntz >= N) return Math.min(0, skirtLandY(nsx * 4 + 2, nsz * 4 + 2)) - 0.05;
+      if (this._cls[ntz * N + ntx] === C_WATER) return this.seabed ? this._bedY(ntx, ntz) : WATER_Y;
+      return 0;
+    };
+    const S = 4;   // world units per cell
+    // Border chunks also mesh the off-map apron (see _rockSubH).
+    const AP = MTN_APRON * 2;
+    const sx0 = x0t === 0 ? -AP : x0t * 2, sx1 = x1t === N ? N * 2 + AP : x1t * 2;
+    const sz0 = z0t === 0 ? -AP : z0t * 2, sz1 = z1t === N ? N * 2 + AP : z1t * 2;
+    for (let sz = sz0; sz < sz1; sz++) {
+      for (let sx = sx0; sx < sx1; sx++) {
+        // an off-map cell belongs to this chunk only along its own border span
+        if ((sx < 0 || sx >= N * 2) && (sz >= 0 && sz < N * 2) && (sz < z0t * 2 || sz >= z1t * 2)) continue;
+        if ((sz < 0 || sz >= N * 2) && (sx >= 0 && sx < N * 2) && (sx < x0t * 2 || sx >= x1t * 2)) continue;
+        const q = H(sx, sz);
+        if (!q) continue;
+        const wx0 = sx * S, wx1 = wx0 + S, wz0 = sz * S, wz1 = wz0 + S;
+        const tone = 0.30 + 0.40 * hash2(sx, sz, 1777);
+        const snowy = q >= snowH + (hash2(sx, sz, 4441) - 0.5) * st * 1.2 ? 1 : 0;
+        const hg = hash2(sx >> 1, sz >> 1, 5153);
+        // green lower slopes thinning out with height (tile-clustered ledges)
+        const tq = q / peak;
+        const grassy = !snowy && (q <= grassH || (q <= grassH + st * 1.5 && hg < 0.6) ||
+          hash2(sx >> 1, sz >> 1, 8123) < 0.62 * (1 - sstep(0.12, 0.50, tq)));
+        const capCol = this._stone(q - 0.01, peak);
+        // cap, with AO in corners that meet a taller cell
+        const cAO = (dx, dz) => {
+          const a = H(sx + dx, sz), b = H(sx, sz + dz), d = H(sx + dx, sz + dz);
+          let n = 0;
+          if (a !== null && a > q) n++;
+          if (b !== null && b > q) n++;
+          if (d !== null && d > q && n === 0) n = 0.6;
+          return 1 - Math.min(0.34, n * 0.2);
         };
-        let taller = 0;
-        for (const nh of [nE, nW, nN, nS]) if (nh !== null && nh > h) taller++;
-        const capAO = 1 - Math.min(0.30, taller * 0.10);
+        const m00 = cAO(-1, -1), m01 = cAO(-1, 1), m11 = cAO(1, 1), m10 = cAO(1, -1);
+        const capPaint = (snowy || grassy) ? null : capCol;
+        B.quad([[wx0, q, wz0], [wx0, q, wz1], [wx1, q, wz1], [wx1, q, wz0]], [0, 1, 0],
+          grassy ? TG : TR,
+          [[m00, 0, snowy, tone], [m01, 0, snowy, tone], [m11, 0, snowy, tone], [m10, 0, snowy, tone]], capPaint);
 
-        // cap
-        B.quad([[wx0, h, wz0], [wx0, h, wz1], [wx1, h, wz1], [wx1, h, wz0]], [0, 1, 0],
-          grassy ? TG : TR, [capAO, 0, snowy, tone]);
-
-        // walls (+X, -X, -Z, +Z)
+        // walls (+X, -X, -Z, +Z) down to each lower neighbour, cut into strata bands
         const walls = [
-          [base(nE, 1, 0), [wx1, wz1], [wx1, wz0], [1, 0, 0]],
-          [base(nW, -1, 0), [wx0, wz0], [wx0, wz1], [-1, 0, 0]],
-          [base(nN, 0, -1), [wx1, wz0], [wx0, wz0], [0, 0, -1]],
-          [base(nS, 0, 1), [wx0, wz1], [wx1, wz1], [0, 0, 1]],
+          [sx + 1, sz, [wx1, wz1], [wx1, wz0], [1, 0, 0]],
+          [sx - 1, sz, [wx0, wz0], [wx0, wz1], [-1, 0, 0]],
+          [sx, sz - 1, [wx1, wz0], [wx0, wz0], [0, 0, -1]],
+          [sx, sz + 1, [wx0, wz1], [wx1, wz1], [0, 0, 1]],
         ];
-        for (const [bY, a, b, n] of walls) {
-          if (bY >= h - 1e-4) continue;
-          const aoB = bY > 0.5 ? 0.86 : 0.70;   // contact AO at the foot
-          const split = snowy && (h - bY) > LIP + 0.2 ? h - LIP : h;
-          B.quad([[a[0], bY, a[1]], [b[0], bY, b[1]], [b[0], split, b[1]], [a[0], split, a[1]]], n, TR,
-            [[aoB, 0, 0, tone], [aoB, 0, 0, tone], [1, 0, 0, tone], [1, 0, 0, tone]]);
-          if (split < h) {
-            B.quad([[a[0], split, a[1]], [b[0], split, b[1]], [b[0], h, b[1]], [a[0], h, a[1]]], n, TR,
-              [1, 0, 1, tone]);
+        for (const [nsx, nsz, a, b, n] of walls) {
+          const nh = H(nsx, nsz);
+          const bY = baseOf(nsx, nsz, nh);
+          if (bY >= q - 1e-4) continue;
+          const onRock = nh !== null && nh > 0;
+          const lip = snowy ? LIP : grassy ? GLIP : 0;
+          const top = Math.max(bY, q - lip);
+          // strata bands from the foot to the lip
+          let y = bY;
+          while (y < top - 1e-4) {
+            const yb = Math.max(y, 0);
+            const next = Math.min(top, (Math.floor(yb / st + 1e-4) + 1) * st);
+            const ao0 = y === bY ? (onRock ? 0.84 : 0.80) : 1;
+            const col = this._stone(Math.max(0.01, (y + next) * 0.5), peak);
+            B.quad([[a[0], y, a[1]], [b[0], y, b[1]], [b[0], next, b[1]], [a[0], next, a[1]]], n, TR,
+              [[ao0, 0, 0, tone], [ao0, 0, 0, tone], [1, 0, 0, tone], [1, 0, 0, tone]], col);
+            y = next;
+          }
+          if (top < q) {
+            // snow lip (mask) or a painted turf lip, so the rock fill keeps
+            // the shade-side lip a clear green instead of a black outline
+            B.quad([[a[0], top, a[1]], [b[0], top, b[1]], [b[0], q, b[1]], [a[0], q, a[1]]], n,
+              TR, [1, 0, snowy, tone], snowy ? null : STONE.turf[0]);
           }
         }
 
-        // chunky sub-blocks on the cap (0-2 per column)
-        if (!grassy) {
-          const r = hash2(tx, tz, 991);
-          const nb = r < 0.50 ? 0 : (r < 0.88 ? 1 : 2);
-          for (let k = 0; k < nb; k++) {
-            const hs = (s) => hash2(tx * 7 + k, tz * 13 - k, s);
-            const sx = 3 + Math.floor(hs(11) * 2.5);      // 3..5 units
-            const sz = 3 + Math.floor(hs(12) * 2.5);
-            const sy = MTN_VS * (0.35 + Math.floor(hs(13) * 2) * 0.3);  // ~1.4 / 2.6 units
-            const ox = 0.5 + Math.floor(hs(14) * (TILE - sx - 1 + 0.999));
-            const oz = 0.5 + Math.floor(hs(15) * (TILE - sz - 1 + 0.999));
-            const t2 = clamp01(tone + (hs(16) - 0.5) * 0.5);
-            this._box(B, wx0 + ox, h, wz0 + oz, sx, sy, sz, TR, t2, snowy, LIP);
+        // the odd boulder on a bare rock ledge
+        if (!grassy && !snowy) {
+          const r = hash2(sx, sz, 991);
+          if (r < 0.08) {
+            const hs = (k) => hash2(sx * 7 + k, sz * 13 - k, 211);
+            const bx = 1.2 + Math.floor(hs(1) * 2) * 0.6, bz = 1.2 + Math.floor(hs(2) * 2) * 0.6;
+            const by = 0.8 + Math.floor(hs(3) * 2) * 0.6;
+            const ox = 0.3 + hs(4) * (S - bx - 0.6), oz = 0.3 + hs(5) * (S - bz - 0.6);
+            this._box(B, wx0 + ox, q, wz0 + oz, bx, by, bz, TR, tone, 0, LIP, this._stone(q + 1.0, peak));
           }
         }
       }
@@ -2678,9 +2801,9 @@ export class Terrain {
   }
 
   // An axis-aligned rock box standing on y0 (top + 4 walls, no bottom).
-  _box(B, x0, y0, z0, sx, sy, sz, T, tone, snowy, lip) {
+  _box(B, x0, y0, z0, sx, sy, sz, T, tone, snowy, lip, pc) {
     const x1 = x0 + sx, y1 = y0 + sy, z1 = z0 + sz;
-    B.quad([[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], T, [1, 0, snowy, tone]);
+    B.quad([[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]], [0, 1, 0], T, [1, 0, snowy, tone], snowy ? null : pc);
     const split = snowy && sy > lip + 0.2 ? y1 - lip * 0.8 : y1;
     const walls = [
       [[x1, z1], [x1, z0], [1, 0, 0]], [[x0, z0], [x0, z1], [-1, 0, 0]],
@@ -2688,7 +2811,7 @@ export class Terrain {
     ];
     for (const [a, b, n] of walls) {
       B.quad([[a[0], y0, a[1]], [b[0], y0, b[1]], [b[0], split, b[1]], [a[0], split, a[1]]], n, T,
-        [[0.72, 0, 0, tone], [0.72, 0, 0, tone], [1, 0, 0, tone], [1, 0, 0, tone]]);
+        [[0.72, 0, 0, tone], [0.72, 0, 0, tone], [1, 0, 0, tone], [1, 0, 0, tone]], pc);
       if (split < y1) B.quad([[a[0], split, a[1]], [b[0], split, b[1]], [b[0], y1, b[1]], [a[0], y1, a[1]]], n, T, [1, 0, 1, tone]);
     }
   }
