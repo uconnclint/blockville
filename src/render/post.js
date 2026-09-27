@@ -251,7 +251,7 @@ function defaultParams() {
         dipStart: 0.35,   // u = (y - dipStart)/(1 - dipStart); peak at y ~0.78
         sat: 0.7,         // r12: 1.1 -> 0.7. chroma returned to darkened pixels (no grey sides)
         green: 0.85,      // fraction of the curve lawn/foliage hues are spared
-        mid: { amount: 0.20, lo: 0.08, hi: 0.72 },   // coherence w4: chroma-keyed mid GAIN (see uMidLift). iso-mid p5/25/50/75 0.07/0.24/0.45/0.64 -> 0.07/0.26/0.50/0.68 alone; with the settled AO + warm shade gain the frame is 0.07/0.23/0.48/0.67 (ref05 0.09/0.27/0.55/0.75). White-cube faceratio unchanged 1:0.90:0.63 (neutrals exempt). 0 = off
+        mid: { amount: 0.12, lo: 0.08, hi: 0.62 },   // coordinator 12:55: 0.20/hi 0.72 pushed saturated warm walls to V 0.98 ("hot orange", res w5r5); softened   // coherence w4: chroma-keyed mid GAIN (see uMidLift). iso-mid p5/25/50/75 0.07/0.24/0.45/0.64 -> 0.07/0.26/0.50/0.68 alone; with the settled AO + warm shade gain the frame is 0.07/0.23/0.48/0.67 (ref05 0.09/0.27/0.55/0.75). White-cube faceratio unchanged 1:0.90:0.63 (neutrals exempt). 0 = off
       },
       deepDark: 0.2,      // r6: neutral darks (asphalt) down/de-tinted, see composite
                           // (r7: low ramp 0.05..0.12 -> 0..0.04 — a uniform ratio, no flat band)
@@ -282,7 +282,7 @@ function defaultParams() {
       // w2r1: 0.24 -> 0.18. White probe cube (tools/rendertest/faceratio.sh) right/top
       // was 0.69 at 0.24 vs the ref04 target 0.63; 0.17 measured 0.64. The shade side
       // is now ON target, which is what gives iso-mid its three-tone read back.
-      floor: { amount: 0.18, neutral: 0.0, shape: 2.5, green: 0.15, peakKey: 0.5 },   // peakKey: surface w4r4 (see uFloorPk)
+      floor: { amount: 0.18, neutral: 0.0, shape: 2.5, green: 0.15, peakKey: 0.5, ao: 1.0, aoPow: 0.7, aoZoom: [4, 12] },   // peakKey: surface w4r4 (see uFloorPk). ao/aoPow: surface w5r1 AO-aware floor (see uFloorAO; ao 0 = old floor; aoPow 0.4545 keeps the pre-floor crease ratio, 0.7 = w5r1 A4 pick between that and ref04's deep contact)
       // r12 above-ground key (world Y lo..hi): pixels above the ground layer are
       // exempt from the asphalt ops and take the floor lift even when neutral.
       above: { enabled: true, amount: 1.0, lo: 1.0, hi: 1.3 },   // roads y 0, sidewalks ~0.3, lot tops ~0.9
@@ -1139,6 +1139,7 @@ uniform float uDeepDark;   // round 6: neutral dark (asphalt) value deepen + de-
 uniform vec2  uAsphalt;    // round 7: (amount, target display luma) neutral-dark flatten
 uniform float uNightK;     // night r1: 0 day .. 1 night (fades the daylight asphalt ops)
 uniform float uFloorGreen; // r9: floor amount (r8 kernel) for lawn/foliage hues
+uniform vec2  uFloorAO;    // surface w5r1: AO-aware floor (share grade.floor.ao, display exponent grade.floor.aoPow; voxel AO ratio from scene alpha, see materials FRAG_OUT)
 uniform float uFloorPk;    // surface w4r4: floor kernel keyed on mix(luma, peak channel, x) (grade.floor.peakKey)
 uniform vec4  uFloor;      // round 8: (peak lift, neutral share, kernel exponent n, 1/peak of y(1-y)^n) shaded-face floor
 uniform vec3  uAtmo;      // (strength, startDist, endDist) — aerial perspective
@@ -1599,6 +1600,18 @@ void main() {
   // blue-grey, a brown one cream, instead of a brighter saturated navy.
   // Neutral darks (asphalt, display < ~0.16) are gated out so roads stay
   // near-black; coloured darks (a shaded blue tower) are not.
+  // surface w5r1 AO-AWARE FLOOR: voxel pixels carry their AO ratio in
+  // scene alpha (-0.45 (1 - ratio), materials FRAG_OUT). The floor below
+  // gives dark lumas the biggest gain, so it re-lifted every baked contact
+  // pool (roof deck at the parapet ~0.7 of open vs ref04 0.25-0.4). Lift
+  // the pixel as if it were its OPEN face (d / r), then re-apply r: the
+  // pool keeps its pre-floor depth, open faces are unchanged (r = 1).
+  float aoRd = 1.0;
+  // aoPow 1/2.2 keeps the pre-floor display ratio; larger shows the
+  // lit ratio more literally (ref04's path-traced contact reads ~0.2-0.4).
+  if (uFloorAO.x > 0.0 && lit0.a < -0.002 && lit0.a > -0.47)
+    aoRd = mix(1.0, pow(clamp(1.0 + lit0.a / 0.45, 0.03, 1.0), uFloorAO.y), uFloorAO.x);
+  d /= aoRd;
   if (uFloor.x > 0.0 || uFloorGreen > 0.0) {
     float y = max(luma(d), 1e-4);
     float mx = max(max(d.r, d.g), d.b);
@@ -1634,6 +1647,7 @@ void main() {
     float dy = y2 - y;
     d = d * (1.0 + dy / y * (1.0 - uFloor.y)) + vec3(dy * uFloor.y);
   }
+  d *= aoRd;
 
   float g = luma(d);
 
@@ -2427,7 +2441,7 @@ export class PostFX {
       uShadowLift: U(0), uShadowSat: U(0), uVibrance: U(0), uGreenLift: U(0),
       uShoulder: U(0.76), uBlackSlope: U(0), uBlackOffset: U(0.04), uCurve: U(new THREE.Vector3(1, 0.05, 0.3)), uCurveSat: U(0), uCurveGreen: U(0), uCurveDip: U(new THREE.Vector2(0, 0.3)), uMidLift: U(new THREE.Vector3(0, 0.2, 0.7)), uCoolSat: U(new THREE.Vector2(0, 195)), uDeepDark: U(0), uAsphalt: U(new THREE.Vector2(0, 0.086)), uNightK: U(0), uFloor: U(new THREE.Vector4(0, 0.35, 2, 6.75)), uAtmo: U(new THREE.Vector3(0.1, 200, 900)),
       uAspect2: U(1.6), uDebug: U(0),
-      uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0), uFloorPk: U(0),
+      uGround: U(new THREE.Vector4()), uAbove: U(new THREE.Vector4()), uGroundBand: U(new THREE.Vector4(0.45, 0.85, 0.3, 0.55)), uFloorGreen: U(0), uFloorPk: U(0), uFloorAO: U(new THREE.Vector2(0, 0.4545)),
       uOrthoBox: U(new THREE.Vector4(-1, 1, -1, 1)), uWorldRowY: U(new THREE.Vector4(0, 1, 0, 0)),
       uEdge: U(0), uEdgeThr: U(0.4), uEdgeR: U(2), uDTexel: U(new THREE.Vector2(1, 1)),
       uMoonRim: U(new THREE.Vector4(0, 2, 0.4, 0)), uMoonRimCol: U(new THREE.Vector3(0.55, 0.66, 0.82)), uNightGreen: U(new THREE.Vector3(0, 0, 1)), uNightToe: U(new THREE.Vector4(0, 0, 0, 0)), uNightCool: U(new THREE.Vector4(0, 0.35, 0.75, 0.9)), uNightCoolMul: U(new THREE.Vector3(1, 1, 1)), uNightCoolWarm: U(new THREE.Vector2(0.18, 0.40)),
@@ -2979,6 +2993,13 @@ export class PostFX {
           * dLerp(1, clamp(Dp.floor ?? 1, 0, 1));
         u.uFloorGreen.value = clamp(F.green != null ? F.green : (F.amount || 0), 0, 0.4);
         u.uFloorPk.value = clamp(F.peakKey || 0, 0, 1);
+        // surface w5r1: the AO-aware floor fades in with zoom (CSS px per
+        // 0.25 u voxel, F.aoZoom): at iso-mid (~3.6) the voxel creases are
+        // 1-2 px and deepening them only darkened the frame (p50 0.475 ->
+        // 0.439, A5); iso-close ~8.6, one-* ~14.
+        const aoZ = F.aoZoom || [4, 12];
+        const aoZk = THREE.MathUtils.smoothstep(voxCss, aoZ[0], Math.max(aoZ[0] + 0.01, aoZ[1]));
+        if (u.uFloorAO) u.uFloorAO.value.set(clamp(F.ao || 0, 0, 1) * aoZk, clamp(F.aoPow != null ? F.aoPow : 1 / 2.2, 0.2, 1.5));
         u.uFloor.value.set(fAmt, nu, n, 1 / (ym * Math.pow(1 - ym, n)));
       }
       const A = P.atmo || { strength: 0, start: 0.35, rangeScale: 3.5 };

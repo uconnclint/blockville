@@ -389,6 +389,7 @@ uniform vec4  uGlassSkyTop;    // w4r12: (amount, band lo, band hi, body) sky re
 uniform vec3  uPaneGrade;     // (head, sill, jamb) albedo factors across a glass pane (r7)
 uniform vec3  uWinFrame;      // legacy res-1 window frame colour (linear)
 uniform float uMetalMax;      // metalness ceiling for the conductor class
+uniform vec4  uAOAlpha;       // w5r1: (amount, toe lo, toe hi, toe scale on UP faces) of the AO darkness encoded into scene alpha (x 0 = off; see FRAG_OUT)
 uniform float uSsaoKeep;      // how much of post.js's screen-space AO voxel pixels keep (scene alpha)
 uniform float uDebugAO;       // 1 = output the voxel AO factor only (harness)
 uniform float uDarkFloor;     // albedo floor (linear) so near-black paint keeps a face tone
@@ -403,14 +404,16 @@ uniform vec3  uNightTop;      // night w4r3: up faces' floor ramp (from, to [u a
 uniform vec2  uNightTopLift;  // night w4r6: moonlit-top albedo lift (exponent < 1, amount)
 uniform vec2  uNightFace;     // night w4r6: vertical faces' key scale, shade-side fill scale
 uniform vec4  uShadeSide;     // x depth, y hue carry, z away ramp: key-away faces' fill (params.shadeSide)
-uniform vec3  uShadeGain;      // coherence w4: (gain, sat lo, sat hi) on key-away faces of SATURATED warm albedos (params.shadeGain)
+uniform vec4  uShadeGain;      // coherence w4: (gain, sat lo, sat hi, w5r4 hue power) on key-away faces of SATURATED warm albedos (params.shadeGain)
+uniform vec4  uWallFoot;       // w5r3: (wall foot darkness, reach above the plinth top in world units, falloff pow, plinth-side ground contact) on res>1 vertical faces (params.wallFoot; x=w=0 off)
 uniform vec4  uShadeWarm;     // rgb luma-normalised warm tint (linear), w amount: key-away faces' total indirect (params.shadeWarm, w4r4)
 uniform vec2  uGlassDiffuse;
 uniform float uGlassReflTint; // how much the glass body hue colours its sky/env reflection (surface w2 r1)  // (direct, indirect) diffuse scale on glass by day (surface w2 r1)
 uniform float uWallKey;        // direct-diffuse scale on vertical faces by day (params.wallKey)
 uniform vec2  uAOTop;          // (indirect, direct) AO exponents on UP-facing voxel faces (w4r7; 0 = use ao/aoDirect)
 uniform vec2  uAOWallCap;      // (max darkness, knee) on vertical voxel faces (wave-4 r1)
-uniform vec2  uAOToe;          // (from, to) baked-darkness toe cut on res>1 voxel faces (w4r8; 0,0 = off)
+uniform vec4  uAOToe;          // (from, to) baked-darkness toe cut on res>1 voxel faces (w4r8; 0,0 = off); w5r2 .zw = VERTICAL faces' own (from, to) (0,0 = same as xy)
+uniform vec2  uAODirToe;       // w5r5 (lo, hi): toe on the baked darkness used for the DIRECT (sun) AO term on res>1 VERTICAL faces only (0,0 = off)
 uniform vec2  uRimAO;          // (hue carry, AO exponent) on the day rim (w4r11; 0,0 = legacy)
 uniform vec4  uAOFloor;        // (wall, top, wall knee, top knee) soft floor on the FINAL AO light multipliers (w4r11; w4r13 top knee; 0 = off)
 uniform vec4  uAOHue;          // x hue carry into AO darkening, y extra depth (params.aoHue)
@@ -436,6 +439,7 @@ vec2  voxPlane = vec2(0.0);        // CONTINUOUS in-face lattice coord, in tiles
 float voxFaceSalt = 0.0;           // separates the six face directions
 float voxTilePx = 8.0;             // device pixels across one voxel tile
 float voxAOv = 1.0;                // bilinear voxel AO factor (see FRAG_COLOR)
+float voxAORatio = 1.0;            // w5r1: lit-with-AO / lit-without-AO (diffuse), written to scene alpha for post's AO-aware floor
 float voxSheenV = 0.0;             // glass reflection-streak mask (FRAG_COLOR -> FRAG_AO)
 float voxPaneUp = 0.5;             // height inside the glass pane, 0 sill .. 1 head (r7)
 float voxSkyTopV = 0.0;            // w4r12: sky-reflection band mask on the pane (FRAG_COLOR -> FRAG_AO)
@@ -619,7 +623,12 @@ const FRAG_COLOR = /* glsl */`
     // (d > to) untouched and zeroes the faint far-field. Building-scale (res>1).
     if (uAOToe.y > 0.0 && vVoxRes > 1.5) {
       float dt = 1.0 - voxAOv;
-      voxAOv = 1.0 - dt * smoothstep(uAOToe.x, uAOToe.y, dt);
+      // w5r2: walls take their own, lower toe (.zw) so a ledge / wall-foot
+      // ramp keeps its soft outer tail instead of switching on at a line
+      // (critic w5r1: 'AO too thin and hard-edged'); tops keep .xy (the
+      // deck / paving far-field mottling the toe was made for).
+      vec2 te = (uAOToe.w > 0.0 && abs(vVoxNormalO.y) < 0.5) ? uAOToe.zw : uAOToe.xy;
+      voxAOv = 1.0 - dt * smoothstep(te.x, te.y, dt);
     }
     if (uAOWallCap.x > 0.0) {
       float dk = 1.0 - voxAOv;
@@ -658,8 +667,15 @@ const FRAG_COLOR = /* glsl */`
     // plain glass is pulled most of the way to the pane tint, so a streak is
     // a soft lighter sheen on a calm pane.
     float hiG = smoothstep(0.30, 0.55, dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722))) * (1.0 - voxWin);
-    gAmt = mix(gAmt, voxGlass * uGlassTintAmt, hiG * uGlassHiSoft);
-    diffuseColor.rgb = mix(diffuseColor.rgb, uGlassTint * mix(vec3(1.0), diffuseColor.rgb, 0.18) * 1.1, gAmt);
+    gAmt = mix(gAmt, voxGlass * uGlassTintAmt, hiG * min(uGlassHiSoft, 1.0));
+    // w5r2 (critic w5r1: 'glass reflections come out as jagged white pixel
+    // streaks and look like noise'): uGlassHiSoft in (1, 2] also drops the
+    // streak voxel's own lighter colour (its hue carry and the untinted
+    // residual), so it becomes plain pane glass; the smooth shader glint and
+    // the sky band carry the reflection instead of a 1-voxel staircase.
+    float hiX = hiG * voxGlass * clamp(uGlassHiSoft - 1.0, 0.0, 1.0);
+    gAmt = mix(gAmt, 1.0, hiX);
+    diffuseColor.rgb = mix(diffuseColor.rgb, uGlassTint * mix(vec3(1.0), diffuseColor.rgb, 0.18 * (1.0 - hiX)) * mix(1.1, 1.0, hiX), gAmt);
   }
 
   // --- LEGACY res-1 WINDOWS: a clean painted frame + sill -------------------
@@ -833,6 +849,33 @@ const FRAG_COLOR = /* glsl */`
   // charcoal floor. No-op on anything brighter than the floor.
   diffuseColor.rgb = max(diffuseColor.rgb, vec3(0.92, 0.96, 1.06) * uDarkFloor);
 
+  // --- WALL FOOT (params.wallFoot, surface w5r3) ---------------------------
+  // ref04's walls darken smoothly toward the ground (lit face 142 -> 130,
+  // shade face 107 -> 95 over the lowest ~quarter of the wall: the ground
+  // hides part of the sky), and the lot base is grounded by a contact band
+  // where it meets the grass (critics w5r1 'the right face is one flat dull
+  // ochre with no fall-off', w5r2 'barely any contact AO where the plinth
+  // meets the ground'). The baked AO could not carry this: its pools are
+  // crease-shaped, and the wide, shallow ground term turned into smudges
+  // under the ao exponents (res w4r12). This is a LINEAR, perfectly smooth
+  // height ramp in model space (vVoxGrid.y: world units above the model's
+  // base; every res>1 building starts with a 0.5-unit lot plinth), so it has
+  // no shape to read as a blotch. Walls above the plinth top: darkness x at
+  // the foot, (1 - t)^z over y units. Plinth sides (below 0.5): w at the
+  // ground, gone by 0.4. Day only; glass takes half (a pane reflects sky).
+  // Applied to the ALBEDO, so every diffuse term (key, sky fill, bounce, rim)
+  // darkens together; a light-side multiplier was refilled by the later
+  // bounce / rim terms (a 0.9 test darkening showed as ~0.4).
+  if ((uWallFoot.x > 0.0 || uWallFoot.w > 0.0) && vVoxRes > 1.5) {
+    float vtF = 1.0 - smoothstep(0.35, 0.6, abs(vVoxNormalW.y));
+    float hF = vVoxGrid.y;
+    float tF = clamp((hF - 0.5) / max(uWallFoot.y, 0.05), 0.0, 1.0);
+    float dF = hF >= 0.5 ? uWallFoot.x * pow(1.0 - tF, max(uWallFoot.z, 0.1))
+                         : uWallFoot.w * (1.0 - smoothstep(0.0, 0.4, hF));
+    dF *= vtF * (1.0 - 0.5 * voxGlass) * (1.0 - uNight);
+    diffuseColor.rgb *= 1.0 - dF;
+  }
+
   // Weather tint (engine-owned uSeason). Off by default: strength 0.
   diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uSeason, uSeasonStrength);
 
@@ -966,7 +1009,21 @@ const FRAG_AO = /* glsl */`
   // a lit wall sits on the display shoulder (PBR Neutral + knee), where a
   // linear 0.8 AO dip came out as a few percent on screen, so the corner and
   // ledge gradients vanished on exactly the faces the critic looks at.
-  float aoDirect   = aoSD > 1.0 ? pow(voxAO, aoSD) : mix(1.0, voxAO, aoSD);
+  // w5r5 DIRECT-AO TOE (critics w4r14, w5r1-w5r4: lit and shade walls read
+  // the same flat, washed-out tone). Measured on one-bakery: the lit storefront
+  // band between the awnings and the storey ledge bakes 0.55 -> 0.79 (a
+  // sky-shadow + ray PLATEAU, not a crease), and pow(bake, aoDirect 4.4) took
+  // its SUNLIT face from luma 226 to 140, level with the shade face (138).
+  // A plateau under an overhang is an ambient effect; the sun on it is
+  // already handled by the cast shadows. So on walls the direct term only
+  // sees the crease part of the bake (darkness above lo..hi); the indirect
+  // term keeps the whole bake, so shadowed creases keep their depth.
+  float voxAOd = voxAO;
+  if (uAODirToe.y > 0.0 && vVoxRes > 1.5 && abs(vVoxNormalO.y) < 0.5) {
+    float dtD = 1.0 - voxAO;
+    voxAOd = 1.0 - dtD * smoothstep(uAODirToe.x, uAODirToe.y, dtD);
+  }
+  float aoDirect   = aoSD > 1.0 ? pow(voxAOd, aoSD) : mix(1.0, voxAOd, aoSD);
   // w4r11 FINAL-MULTIPLIER FLOOR (critics w4r8/w4r10: AO 'too faint and
   // tight', coordinator: cap the combined AO at ~0.65 of lit on walls). The
   // exponents above act on a baked value, so the old bake-space caps
@@ -994,6 +1051,13 @@ const FRAG_AO = /* glsl */`
     aoIndirect = 1.0 - dI;
     aoDirect   = 1.0 - dD;
   }
+  // w5r1: the share of this pixel's diffuse light the AO removed, for
+  // post.js's AO-AWARE shade floor (see FRAG_OUT: scene alpha).
+  {
+    float lI = dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722));
+    float lD = dot(reflectedLight.directDiffuse,  vec3(0.2126, 0.7152, 0.0722));
+    voxAORatio = clamp((lI * aoIndirect + lD * aoDirect) / max(lI + lD, 1e-5), 0.0, 1.0);
+  }
   reflectedLight.indirectDiffuse  *= aoIndirect;
   reflectedLight.directDiffuse    *= aoDirect;
   reflectedLight.directSpecular   *= mix(1.0, voxAO, min(uAODirect, 1.0) * 0.6);
@@ -1009,13 +1073,24 @@ const FRAG_AO = /* glsl */`
   // deepen it by y. Whites and greys have hue ~1, so they are untouched and
   // stay clean. Glass keeps its own look. Off at night (lamp pools).
   if (uAOHue.x > 0.0) {
-    float aoDk = (1.0 - voxAO) * (1.0 - voxGlass) * (1.0 - 0.6 * uNight);
+    // w5r2: .z keys the bleed on the RENDERED darkness (1 - voxAORatio) instead
+    // of the baked one. The ao exponents (3.8/4.4) take a baked 0.7 crease to
+    // ~0.3 of the light, but the bleed saw only 0.3 darkening, so creases went
+    // darker under a bluish sky fill with almost no colour: grey-olive pools on
+    // tan, slate on white trim (critics w4r13-w5r1: 'give the flat colours
+    // depth and warmth'; ref04's pools are deeper, redder versions of the wall).
+    float aoDk = mix(1.0 - voxAO, 1.0 - voxAORatio, uAOHue.z) * (1.0 - voxGlass) * (1.0 - 0.6 * uNight);
     // Hue normalised by its PEAK channel (<= 1 everywhere): the bleed only
     // ever pulls the weaker channels down, never pushes the dominant one up.
     // (A luma-normalised hue raised a lit pink's R past the display clip, so
     // the AO turned into a hue shift with no darkening at all: r12-c.)
     float pkH = max(max(diffuseColor.r, diffuseColor.g), max(diffuseColor.b, 0.02));
     vec3 hueH = clamp(diffuseColor.rgb / pkH, vec3(0.0), vec3(1.0));
+    // .w: > 1 = a second bounce's worth of chroma (hue^w), still peak-kept.
+    // WARM albedos only (r above b): on a blue-grey roof deck it turned the
+    // pools bluer and colder (critic w5r1: 'the pale blue-grey roof looks
+    // washed out and cool'); cool colours keep the plain carry.
+    if (uAOHue.w > 1.0) hueH = pow(hueH, vec3(mix(1.0, uAOHue.w, smoothstep(0.02, 0.12, hueH.r - hueH.b))));
     vec3 bleed = mix(vec3(1.0), hueH, clamp(uAOHue.x * aoDk, 0.0, 1.0)) * (1.0 - uAOHue.y * aoDk);
     reflectedLight.indirectDiffuse *= bleed;
     reflectedLight.directDiffuse   *= bleed;
@@ -1291,6 +1366,16 @@ const FRAG_AO = /* glsl */`
       // warm hues only (hue ~0-55 deg: r >= g); lime foliage / lawn keep theirs
       float rgW = smoothstep(-0.04, 0.08, (diffuseColor.r - diffuseColor.g) / pkW);
       reflectedLight.indirectDiffuse *= mix(1.0, uShadeGain.x, sdW * wkW * stW * rgW);
+      // w5r4 (critics w5r1-w5r3, all three: 'the right-hand dark faces read
+      // flat and slightly grey next to ref04's warm, saturated shadow side'):
+      // .w raises the albedo's PEAK-normalised hue to a power on the same
+      // faces, so the weak channels drop and the dominant one keeps its
+      // value (a second bounce off the same wall). ref04 shade S 0.72 vs lit
+      // 0.65; ours was 0.51 vs 0.48.
+      if (uShadeGain.w > 0.0) {
+        vec3 hpW = clamp(diffuseColor.rgb / pkW, vec3(0.02), vec3(1.0));
+        reflectedLight.indirectDiffuse *= mix(vec3(1.0), pow(hpW, vec3(uShadeGain.w)), sdW * wkW * stW * rgW);
+      }
     }
   }
   #endif
@@ -1607,6 +1692,29 @@ const FRAG_OUT = /* glsl */`
   // 1.0); voxel pixels write uSsaoKeep there and post.js's lit pass scales its
   // AO by it. Terrain, roads and props keep full SSAO for cross-mesh contact.
   gl_FragColor.a = uSsaoKeep;
+  // w5r1 AO-AWARE FLOOR (coherence w4 open item: roof-deck contact pools
+  // rendered ~0.7 of open vs ref04's 0.25-0.4, because post's shade floor
+  // gives dark lumas the biggest gain and so re-lifts every baked pool).
+  // With ssaoKeep 0 the voxel alpha is 0 and post only ever reads it
+  // clamped to 0..1 or tests it against -0.5 / 0.2 / 0.625, so the band
+  // (-0.45, 0] is free: alpha = -0.45 (1 - ratio) carries the AO ratio, and
+  // post's floor lifts the pixel as if it were the OPEN face, then applies
+  // the ratio, so the pool keeps its baked depth. A byte target clamps it
+  // to 0 (= no AO info, the old floor).
+  // Only CREASES are handed over: the toe (lo..hi) is on the BAKED
+  // darkness, not the lit ratio. The bake's shallow broad / sky terms
+  // (baked ~0.8-0.9 across whole short faces) become a ~0.5 linear ratio
+  // under the ao exponents; the old floor hid that, and exposing it read
+  // as mid-face smudges (w5r1 A1/A2: tan band gradient, grey cap smear).
+  // Plateaus keep the old floor; true contact (baked < ~0.6) keeps its depth.
+  if (uAOAlpha.x > 0.0 && uSsaoKeep < 0.001) {
+    float aoE = (1.0 - voxAORatio) * (1.0 - emiAmt) * (1.0 - uNight);   // day only: night owns its own balance
+    // Up faces (roof decks, paving) may take a lower toe (w): ref04's deck
+    // pools are broad, and tops never showed the wall-band smudge.
+    float aoTs = mix(1.0, uAOAlpha.w, smoothstep(0.5, 0.9, vVoxNormalW.y));
+    aoE *= smoothstep(uAOAlpha.y * aoTs, uAOAlpha.z * aoTs, 1.0 - voxAOv);
+    gl_FragColor.a = -0.45 * clamp(uAOAlpha.x * aoE, 0.0, 1.0);
+  }
   if (uDebugAO > 0.5) gl_FragColor = vec4(vec3(voxAOv * 0.6), uSsaoKeep);
 }
 `;
@@ -1726,6 +1834,12 @@ function _nightShadeVec(v, out) {
   const a = Array.isArray(v) ? v : [0xfff1e0, 1];
   _nsTmp.setHex(a[0], THREE.SRGBColorSpace);
   return out.set(_nsTmp.r, _nsTmp.g, _nsTmp.b, a[1] != null ? a[1] : 1);
+}
+
+/** [x, y, z, w?] -> Vector4 (missing entries: y 0.15, z 0.4, w 0), w5r4. */
+function _v4(a, out) {
+  const v = Array.isArray(a) ? a : [];
+  return out.set(v[0] != null ? v[0] : 1, v[1] != null ? v[1] : 0.15, v[2] != null ? v[2] : 0.4, v[3] != null ? v[3] : 0);
 }
 
 /** shadeWarm [amount, sRGB hex] -> (luma-normalised linear tint, amount). */
@@ -1936,7 +2050,8 @@ const DEFAULT_PARAMS = {
   // 1.25 on the direct term ~0.62): the coordinator's ~0.65 midpoint.
   aoTop: [3.0, 4.8],   // coherence w4 (see ao).   // w4r13: [3.0,3.2] -> [2.4,3.6] (indirect softer, direct stronger): in cast shadow only the indirect term shows, so a high indirect exponent turned every pool that crossed a shadow edge into a hard-edged dark patch (A5 G1: forecourt p2 0.17); the lit contact pools carry the depth instead.   w4r12: [3.3,3.5] -> [3.0,3.2] (critics w4r9 + w4r11: 'smudgy dark blotches on the forecourt paving / roof deck'; the far-field pools on big tops).  w4r11: [3.0,3.2] -> [3.3,3.5] (see ao).  w4r7: [indirect, direct] AO exponents on up-facing faces (roof decks, lot paving, ledges), see FRAG uAOTop. Rendered deck-at-parapet / paving-at-wall-foot ratio vs no-AO: ~0.7 -> ~0.45. 0 = same as ao / aoDirect.
   aoFloor: [0.20, 0.06, 0.2, 0.3],     // coherence w4 (see ao).     // w4r14: wall 0.42 -> 0.30 (see ao).   w4r13: [wall, top, wall knee, TOP knee]; top 0.25 -> 0.12 with its own 0.3 knee (critic w4r12: 'flat evenly lit roof deck, no falloff toward the parapet'; the 0.25 floor + 0.2 knee pinned the parapet pool at a flat 0.78 plateau; now 0.71 at the contact ramping to 1.0).   w4r12: [0.3,0.15,0.15] -> [0.42,0.25,0.2] (critic w4r10/w4r11: corners went near-black maroon while open recesses stayed faint = 'uneven'; the deeper floor evens the band).  w4r11: [wall, top, knee] soft floor on the FINAL AO light multipliers (see FRAG); 0 = off.
-  aoToe: [0.06, 0.2], // w4r12: [0.01,0.08] -> [0.06,0.2] (open decks / paving / walls back to clean flat colour; forecourt was greyed by faint far tails).  w4r11: [0.03,0.2] -> [0.01,0.08]: the continuous atlas (voxel w4r10) removed the level terraces the toe was hiding, so the wide soft tails can show.  w4r8: [from, to] contact toe on baked darkness (see FRAG_COLOR); [0,0] = off. Zeroes the faint far tails (baked > ~0.95) that the exponents turned into roof-deck mottling.
+  aoDirToe: [0, 0],   // w5r5: (lo, hi) toe on the wall bake for the DIRECT term only (see FRAG uAODirToe); 0,0 = off
+  aoToe: [0.10, 0.30, 0.02, 0.12], // w5r3: tops [0.06,0.2] -> [0.10,0.30] (critic w5r2: 'a large, loose, blotchy grey AO smear drifting across the roof around the chimney and AC; ref04 keeps AO a tight soft gradient hugging each parapet and prop base'). The bakery deck bake has 0.93 plateaus and a 16-voxel 0.9 -> 0.5 ramp toward the chimney; the old toe let dt 0.07-0.25 through, which the top exponents (3.0/4.8) turned into a free-floating cloud. Now the far field goes to 1 while the contact (baked dt >= 0.3) is untouched: deck from the rear parapet (rendered / no-AO) 0.65 0.71 0.81 0.87 0.95 0.99 -> 0.65 0.68 0.78 0.94 1.0 (8 px steps), chimney pool 0.77/0.86/0.95 -> 0.72/0.93/0.99; deck p5 unchanged (0.37).  // w5r2: .zw = walls' own toe (critic w5r1: 'AO too thin and hard-edged'): a ledge / wall-foot ramp keeps its soft outer tail; tops keep [0.06,0.2] (the deck/paving far-field mottling).  // w4r12: [0.01,0.08] -> [0.06,0.2] (open decks / paving / walls back to clean flat colour; forecourt was greyed by faint far tails).  w4r11: [0.03,0.2] -> [0.01,0.08]: the continuous atlas (voxel w4r10) removed the level terraces the toe was hiding, so the wide soft tails can show.  w4r8: [from, to] contact toe on baked darkness (see FRAG_COLOR); [0,0] = off. Zeroes the faint far tails (baked > ~0.95) that the exponents turned into roof-deck mottling.
   aoWallCap: [0.70, 0.14],   // coherence w4 (see ao).   // w4r14: 0.57 -> 0.62 (see ao).   w4r7: 0.55 -> 0.57.  wave-4 r4: 0.50 -> 0.55 with the ray-only voxel AO (open panels stay 1.0, so the crease can go a little deeper).    // wave-4 r2: [0.34,0.12] -> [0.50,0.14] (critic w4r1: no soft AO under cornice/sills; the 0.66 cap rendered the crease at only 0.82 of no-AO in sRGB, the post floor lifts it further)
   aoDirect: 4.4,       // coherence w4 (see ao).       // w4r14 (see ao).   w4r11 (see ao).  w4r9 FROZEN (see ao).  w4r8: 2.2 -> 2.8 (see ao).  w4r7: 2.0 -> 2.2 (walls; tops take aoTop; 3.0 everywhere turned dense downtown towers brown).  wave-4 r5: 1.4 -> 2.0 with voxel aoBroad back on (critics w4r1-r4: AO too weak on the LIT faces; baked 0.7 showed as ~0.9 on screen).  wave-4 r3: 1.25 -> 1.4 (the ledge pools survive the lit face's display shoulder; walls keep the 0.48 baked floor, so no crush). r13: 1.5 -> 1.25 (critic r12: shopfront AO near-black; the voxel AO itself is gentler and floored now).
                        // how much AO also bites direct light (r8 0.8 -> 1.0: critic r7 'AO reads flat'). Raised from 0.38
@@ -2071,7 +2186,7 @@ const DEFAULT_PARAMS = {
   winFrame: 0xf2efe6,  // legacy frame/sill colour (sRGB) — painted white trim
   glassTint: 0x1f80d8, // w4r9: 0x1872b0 -> brighter azure (coordinator 02:30: glass is the next lever; critic w4r8 'small dark navy panes vs ref04 crisp bright blue'). one-bakery pane p50 (42,85,134) -> (39,93,159), p75 (65,101,158) -> (80,115,193).  was: wave-4 r1: 0x2272c8 -> slightly deeper, greener azure (lit panes measured (82,126,220) = pale electric blue; ref05 panes (28-42,84-104,104-132)). wave-2 r1: 0x4f8fe0 -> deeper azure (coordinator: panes ~#2a5aa8-#3a78c8; ref05 hospital/mall glass is a saturated azure with low R). // r8 0x3d74d0 -> lighter (panes measured navy 18,60,120). day glass albedo (sRGB): clear mid blue, ref04/ref05
   glassTintAmt: 0.95,  // wave-2 r1: 0.88 -> 0.95
-  glassSheen: 0.38,    // w4r12: 0.30 -> 0.38 (critic w4r11: 'no diagonal highlight').  wave-4 r2: 0.42 -> 0.30 + no thin second stripe + a soft head highlight (glassHiP) (critic w4r1: 'flat blue with drawn-on white streaks; the reference glass is a clean, slightly glossy blue'). wave-2 r1: 0.45 -> 0.42, band narrowed + cyan-tinted in the shader. r13: 0.60 -> 0.45 (critic r12: "streaky diagonal white slashes ... ref04 uses flat, calm blue panes"). r8: 0.40 -> 0.60 with the PANE-LOCAL soft glint (critic r7: 'no reflection highlight'). diagonal reflection stripe on glass (mostly specular since r2; 0.40 -> 0.55 r3: critic "flat blue, little reflection"; 0.55 -> 0.40 r6: critic "white diagonal stripes read as a cartoon hack")
+  glassSheen: 0.0,    // w5r3: 0.38 -> 0 (critics w5r1 'glass reflections come out as jagged white pixel streaks' + w5r2 'noisy white diagonal streak specks ... ref04's glass is a clean flat blue'; also w4r1-r3, r5/r6, r12 disliked the streaks). With the sheen off the panes keep glassSkyTop's soft head-to-sill sky gradient (the reflection read w4r11 asked for) and read calm, like ref02/ref04.  was: w4r12: 0.30 -> 0.38 (critic w4r11: 'no diagonal highlight').  wave-4 r2: 0.42 -> 0.30 + no thin second stripe + a soft head highlight (glassHiP) (critic w4r1: 'flat blue with drawn-on white streaks; the reference glass is a clean, slightly glossy blue'). wave-2 r1: 0.45 -> 0.42, band narrowed + cyan-tinted in the shader. r13: 0.60 -> 0.45 (critic r12: "streaky diagonal white slashes ... ref04 uses flat, calm blue panes"). r8: 0.40 -> 0.60 with the PANE-LOCAL soft glint (critic r7: 'no reflection highlight'). diagonal reflection stripe on glass (mostly specular since r2; 0.40 -> 0.55 r3: critic "flat blue, little reflection"; 0.55 -> 0.40 r6: critic "white diagonal stripes read as a cartoon hack")
   // r7: per-pane glass grade (head, sill, jamb) — needs voxel.js paneUV
   // (res > 1 walls). Replaces the painted streaks as the "this is glass" cue.
   // wave-4 r1: pane head highlight (see FRAG_COLOR pane grade). glassHi is
@@ -2080,11 +2195,12 @@ const DEFAULT_PARAMS = {
   // second glint stripe (was a fixed 0.40: the 'white slashes')].
   glassHi: 0x8fd0f0,
   glassHiP: [0.3, 0.68, 0.74, 0.0],   // w4r12: 0.55 -> 0.3 (glassSkyTop now carries the light upper pane as LIGHT on both faces; paint band + sky light paled lit panes).  w4r9: a CRISP light top row on every pane (band from 0.68-0.74 of the pane height; coordinator 02:30) instead of a soft ramp.  was [0.30,0.55,1.0,0]: wave-4 r5: 0.20 -> 0.30 (with paneGrade head 1.32).  // wave-4 r2: [0,.55,1,.40] -> a gentle head gloss (0.2; w4r1's 0.3-0.45 paled the panes) and no thin stripe (the 'drawn-on white streaks'). one-bakery glass p50 (49,96,146) -> (47,90,140), p97 (157,187,251) -> (150,181,251)
-  glassSkyTop: [0.6, 0.5, 0.62, 0],   // w4r12: (amount, band lo, band hi, body share) sky reflection on the upper part of each pane, added as light (see FRAG voxSkyTopV); 0 = off
-  glassHiSoft: 0.85,     // w4r6: see FRAG glass tint (light plain-glass streak voxels pulled toward the pane tint)
+  glassSkyTop: [0.36, 0.15, 0.95, 0],   // w5r2: [0.6,0.5,0.62] -> a soft head-to-sill gradient (critic w5r1: 'glass reflections come out as jagged white pixel streaks'): the crisp band, cut by bars and transoms into small light hooks, read as pixel noise at one-* zoom; amount lowered so the storefront glass mean stays ~(86,124,169) (coordinator 06:15: don't brighten).   w4r12: (amount, band lo, band hi, body share) sky reflection on the upper part of each pane, added as light (see FRAG voxSkyTopV); 0 = off
+  glassHiSoft: 2.0,     // w5r2: 0.85 -> 2 (values in (1,2] also drop the streak voxel's lighter colour: the authored 1-voxel dtGlassHi staircases become plain pane glass and the smooth gradient + shader glint carry the reflection).   w4r6: see FRAG glass tint (light plain-glass streak voxels pulled toward the pane tint)
   glassGlintFrac: 0.85,  // w4r12: 0.7 -> 0.85.  w4r9: 0.4 -> 0.7 (coordinator 00:10 + 02:30: most panes carry one soft sky streak).  was: wave-4 r4: share of panes with the "/" glint (1 = every pane, pre-w4r4). Critics w4r1-r3: 'busy shards / drawn-on streaks'.
   paneGrade: [1.0, 1.0, 0.0],   // w4r9: flat pane body (the smooth head-to-sill ramp + jamb darkening read as 'blurry navy'); the crisp head band (glassHiP) carries the sky read.  was [1.32,0.86,0.10]: wave-4 r5: head 1.16 -> 1.32 (critic w4r4: 'flat mid-blue, needs a stronger sky-reflection gradient'; coordinator 16:40: lighter head only, base unchanged).  // r10 (critic r9: 'one flat mid-blue, no sky gradient'): stronger head-light/sill-deep grade.   // r8: head a touch LIGHTER (sky) — the baked AO now shades the reveal head (r7 [0.74, 1.12, 0.14])
   metalMax: 0.35,      // conductor metalness ceiling (toy metal keeps its grey)
+  aoAlpha: [1.0, 0.2, 0.45, 1.0],   // w5r1: (amount, toe lo, toe hi) encode the voxel AO ratio into scene alpha for post's AO-aware floor (0 = off)
   ssaoKeep: 0.0,       // fraction of post.js SSAO voxel pixels keep (written to
                        // scene alpha; see FRAG_OUT). 0: voxel AO is exact, SSAO
                        // on voxel faces only added blotches + convex-edge halos.
@@ -2118,7 +2234,9 @@ const DEFAULT_PARAMS = {
   // so the dark side shifts warm at the same value (ref04 shade/lit per
   // channel R 0.81 G 0.71 B 0.68; ours was cool, R 0.66 B 0.70). 0 = off.
   // coherence w4: [gain, albedo-sat lo, hi] on the key-away indirect of saturated warm albedos (see FRAG uShadeGain); 1 = off.
-  shadeGain: [0.6, 0.15, 0.4],   // coherence w4 (surface w4r14 'bakery walls same tan both sides'; ref04 warm wall lit/shade luma 0.735, V 0.93, S +0.2): bakery tan lit/shade luma 0.81 -> ~0.73, V ratio 0.92 -> ~0.81, S 0.38 -> 0.57. White probe unchanged (sat-gated).
+  // w5r3: [wall-foot darkness, reach (world units above the 0.5 plinth top), falloff pow, plinth-side ground contact] (see FRAG WALL FOOT); [0,1,1,0] = off.
+  wallFoot: [0.18, 3.0, 1.5, 0],   // ref04 wall foot ~0.88 of the wall above it over the lowest ~quarter; the display chain compresses linear darkening ~2x (a 0.9 test showed as ~0.5), so 0.18 linear lands at ~0.90-0.92 on screen at the foot of one-bakery's ground storey, fading over ~3 units. Plinth-side contact .w is 0: the voxel plinth sits on terrain's LOT_Y footing, so the real grass line is below it (ground's).
+  shadeGain: [0.64, 0.15, 0.4, 0.7],   // w5r4: .w = 0.7 peak-normalised hue power, gain 0.6 -> 0.64 (critics w5r1-w5r3 ALL: 'shaded right faces flat, slightly grey / grey-beige next to ref04's rich burnt-orange dark side'): bakery right tan (171,138,83) S 0.51 -> ~(176,137,70) S ~0.61, V held (ref04 shade S 0.72 vs lit 0.65).   coherence w4 (surface w4r14 'bakery walls same tan both sides'; ref04 warm wall lit/shade luma 0.735, V 0.93, S +0.2): bakery tan lit/shade luma 0.81 -> ~0.73, V ratio 0.92 -> ~0.81, S 0.38 -> 0.57. White probe unchanged (sat-gated).
   shadeWarm: [0.7, 0xffd6a8],   // w4r4: probe (with post floor.peakKey 0.5) cream shade (158,148,113) -> (171,140,93): per-channel shade/lit R .74 G .67 B .59, ref04 .81/.71/.68
   // night w4r2: shade-side fill at night (sRGB hex, strength scale on bounce) — see FRAG
   nightShade: [0x7090e0, 1.15],    // w4r7: 0x4a8cff/1.3 -> 0x7090e0/1.15 (critics w4r5/r6: right faces darker but still their own colour, not one blue-grey). w4r5: 2.8 -> 1.3 (right faces a clear dark third tone; the stronger moon key carries the lift). w4r4: 1.25 -> 2.8 (right faces coloured deep blue, not near-black). w4r3: 0x5a78ff (violet-blue) -> blue-teal
@@ -2165,7 +2283,7 @@ const DEFAULT_PARAMS = {
   // of AO darkening (clamped to 1), extra neutral depth per unit of
   // darkening]. A 0.6 crease on a pink wall goes a deeper, redder pink
   // instead of a greyer one; whites and greys are untouched. See FRAG_AO.
-  aoHue: [0.6, 0.0],   // r13: 1.0 -> 0.6 (critic r12: 'muddy dark-red' creases)
+  aoHue: [1.0, 0.0, 1.0, 2.0],   // w5r2: [carry, depth, key on RENDERED darkness (0 = baked), hue power]: [0.6,0] -> [1,0,1,2] (critics w4r13/w4r14/w5r1: pools read grey/dull, ref04's are deeper, warmer versions of the wall; the bleed saw only the baked darkness while the ao exponents take a baked 0.7 to ~0.3 of the light). one-bakery AO-pool saturation (px < 0.85 of no-AO) 0.41 -> 0.47 (no-AO 0.40).   r13: 1.0 -> 0.6 (critic r12: 'muddy dark-red' creases)
   worldAOKeep: 0.0,    // share of lighting.js's height-volume world AO voxel
                        // faces keep (surface r4). Its 8-direction x 2-tap
                        // kernel against a 2048^2 height map is not smooth on a
@@ -2458,7 +2576,8 @@ export class MaterialLib {
       uAODirect: { value: p.aoDirect },
       uAOTop: { value: new THREE.Vector2(p.aoTop ? p.aoTop[0] : 0, p.aoTop ? p.aoTop[1] : 0) },
       uAOWallCap: { value: new THREE.Vector2(p.aoWallCap[0], p.aoWallCap[1]) },
-      uAOToe: { value: new THREE.Vector2(p.aoToe ? p.aoToe[0] : 0, p.aoToe ? p.aoToe[1] : 0) },
+      uAODirToe: { value: new THREE.Vector2(p.aoDirToe ? p.aoDirToe[0] : 0, p.aoDirToe ? p.aoDirToe[1] : 0) },
+      uAOToe: { value: new THREE.Vector4(p.aoToe ? p.aoToe[0] : 0, p.aoToe ? p.aoToe[1] : 0, p.aoToe && p.aoToe[2] != null ? p.aoToe[2] : 0, p.aoToe && p.aoToe[3] != null ? p.aoToe[3] : 0) },
       uRimAO: { value: new THREE.Vector2(p.rimAO ? p.rimAO[0] : 0, p.rimAO ? p.rimAO[1] : 0) },
       uAOFloor: { value: new THREE.Vector4(p.aoFloor ? p.aoFloor[0] : 0, p.aoFloor ? p.aoFloor[1] : 0, p.aoFloor ? p.aoFloor[2] : 0.15, p.aoFloor && p.aoFloor[3] != null ? p.aoFloor[3] : (p.aoFloor ? p.aoFloor[2] : 0.15)) },
       uSat: { value: p.saturation },
@@ -2538,6 +2657,7 @@ export class MaterialLib {
       uWinFrame: { value: new THREE.Color().setHex(p.winFrame, THREE.SRGBColorSpace) },
       uMetalMax: { value: p.metalMax },
       uSsaoKeep: { value: p.ssaoKeep },
+      uAOAlpha: { value: new THREE.Vector4(p.aoAlpha ? p.aoAlpha[0] : 0, p.aoAlpha ? p.aoAlpha[1] : 0, p.aoAlpha ? p.aoAlpha[2] : 0, p.aoAlpha && p.aoAlpha[3] != null ? p.aoAlpha[3] : 1) },
       uDebugAO: { value: 0 },
       uDarkFloor: { value: p.darkFloor },
       uSkyFillDown: { value: p.skyFillDown },
@@ -2552,11 +2672,12 @@ export class MaterialLib {
       uNightFace: { value: new THREE.Vector2().fromArray(p.nightFace || [1, 1]) },
       uShadeSide: { value: new THREE.Vector4(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], p.shadeSide[3] || 0) },
       uShadeWarm: { value: _shadeWarmVec(p.shadeWarm, new THREE.Vector4()) },
-      uShadeGain: { value: new THREE.Vector3().fromArray(p.shadeGain || [1, 0.15, 0.4]) },
+      uShadeGain: { value: _v4(p.shadeGain || [1, 0.15, 0.4, 0], new THREE.Vector4()) },
+      uWallFoot: { value: new THREE.Vector4().fromArray(p.wallFoot || [0, 1, 1, 0]) },
       uWallKey: { value: p.wallKey },
       uGlassDiffuse: { value: new THREE.Vector2(p.glassDiffuse[0], p.glassDiffuse[1]) },
       uGlassReflTint: { value: p.glassReflTint },
-      uAOHue: { value: new THREE.Vector4(p.aoHue[0], p.aoHue[1], 0, 0) },
+      uAOHue: { value: new THREE.Vector4(p.aoHue[0], p.aoHue[1], p.aoHue[2] || 0, p.aoHue[3] || 0) },
     };
 
     this.voxel = this._makeVoxelMaterial();
@@ -2825,7 +2946,8 @@ export class MaterialLib {
     U.uAOStrength.value = p.ao;
     U.uAODirect.value = p.aoDirect;
     if (U.uAOWallCap) U.uAOWallCap.value.set(p.aoWallCap[0], p.aoWallCap[1]);
-    if (U.uAOToe && p.aoToe) U.uAOToe.value.set(p.aoToe[0], p.aoToe[1]);
+    if (U.uAODirToe && p.aoDirToe) U.uAODirToe.value.set(p.aoDirToe[0], p.aoDirToe[1]);
+    if (U.uAOToe && p.aoToe) U.uAOToe.value.set(p.aoToe[0], p.aoToe[1], p.aoToe[2] != null ? p.aoToe[2] : 0, p.aoToe[3] != null ? p.aoToe[3] : 0);
     if (U.uRimAO && p.rimAO) U.uRimAO.value.set(p.rimAO[0], p.rimAO[1]);
     if (U.uAOFloor && p.aoFloor) { const kW = p.aoFloor[2] != null ? p.aoFloor[2] : 0.15; U.uAOFloor.value.set(p.aoFloor[0], p.aoFloor[1], kW, p.aoFloor[3] != null ? p.aoFloor[3] : kW); }
     if (U.uAOTop && p.aoTop) U.uAOTop.value.set(p.aoTop[0], p.aoTop[1]);
@@ -2900,6 +3022,7 @@ export class MaterialLib {
     U.uWinFrame.value.setHex(p.winFrame, THREE.SRGBColorSpace);
     U.uMetalMax.value = p.metalMax;
     U.uSsaoKeep.value = p.ssaoKeep;
+    if (U.uAOAlpha && p.aoAlpha) U.uAOAlpha.value.set(p.aoAlpha[0], p.aoAlpha[1], p.aoAlpha[2], p.aoAlpha[3] != null ? p.aoAlpha[3] : 1);
     U.uDebugAO.value = p.debugAO ? 1 : 0;
     U.uDarkFloor.value = p.darkFloor;
     U.uSkyFillDown.value = p.skyFillDown;
@@ -2914,11 +3037,12 @@ export class MaterialLib {
     if (p.nightFace) U.uNightFace.value.fromArray(p.nightFace);
     U.uShadeSide.value.set(p.shadeSide[0], p.shadeSide[1], p.shadeSide[2], p.shadeSide[3] || 0);
     if (U.uShadeWarm) _shadeWarmVec(p.shadeWarm, U.uShadeWarm.value);
-    if (U.uShadeGain && p.shadeGain) U.uShadeGain.value.fromArray(p.shadeGain);
+    if (U.uShadeGain && p.shadeGain) _v4(p.shadeGain, U.uShadeGain.value);
+    if (U.uWallFoot && p.wallFoot) U.uWallFoot.value.fromArray(p.wallFoot);
     U.uWallKey.value = p.wallKey;
     U.uGlassDiffuse.value.set(p.glassDiffuse[0], p.glassDiffuse[1]);
     U.uGlassReflTint.value = p.glassReflTint;
-    U.uAOHue.value.set(p.aoHue[0], p.aoHue[1], 0, 0);
+    U.uAOHue.value.set(p.aoHue[0], p.aoHue[1], p.aoHue[2] || 0, p.aoHue[3] || 0);
     this._applyEnvIntensity();
     this.setQuality(this._quality);   // re-derive the quality-gated values
   }

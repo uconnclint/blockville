@@ -914,3 +914,161 @@ w4r12's wall smudges are the shared wall AO (surface; my 04:20 ask overshot — 
 1. Never set `aoDist < 1` on homes again: it disables the whole building-scale AO stack.
 2. If the house is called "smeared" again, lower aoBroad to 0.5 first. Keep sky at 0.
 3. If it is called "weak" again, raise aoBroadGround or aoBroad before touching sky.
+
+## 2026-09-27 — wave 5, round 1 (builder)
+
+**Brief / consensus w4r12-w4r14 + coordinator:** simplify. w4r12 said the walls were blotchy and the quoins chunkier and busier than ref04's. w4r14 said the penthouse quoins were oversized and swamped the door and AC. The AO strength was settled globally (coherence), so I did not retune `RES_VOX`.
+
+**Root cause of the "blotchy wall" (geometry, not AO strength):** the window frames stood 0-4 voxels from each other and from the quoin arms. On the shade face the pools from neighbouring frame creases merged, so no stretch of wall read as one tone. ref04 keeps ~30% of the span between its quoins as plain wall; measured, its windows are 152 px of a 220 px span.
+
+**Changed** (residential.js only; core.js untouched, and the palette is still full at 200):
+1. **Small house, all 4 variants:**
+   - The glass is 6 wide (outer 12), down from 7. On the ref04 homage it is also 11 tall, with a clear band under the cornice. That leaves ~4-5 voxels of plain wall round every frame.
+   - The quoins are `refQ {ca 4, bh 5, per 6, alt [7,4]}` on every variant, down from [8,5]. v0/v2/v3 had `refQ {}`, whose 3-tall necks threw the old sawtooth sun-shadow stripes.
+   - The two-tone string course is gone from all variants, so each face has one wall tone.
+2. **Door face (all variants): ref04's layout.**
+   - ONE centred double door (dm 40, sw 2) with two lamps on clear wall (dm-12 / dm+11, G+16), and the 2 upper windows symmetric over it.
+   - The ground-floor window that squeezed the lamp against its frame is gone.
+   - The planters stand free at dm-14 / dm+12, 8 out from the wall, with the red mat restamped.
+   - v0/v2/v3 keep flower boxes under the upper front windows as their accent.
+3. **Rooftop room (v1):**
+   - It is 40×26 with walls 24 tall (was 36×22×21).
+   - Its quoins are small, evenly stepped blocks: `{ca 3, ba 5, bp 2, bh 4, per 5}`, no alternation.
+   - The cap stones are smaller (7-wide, 2 tall, plus a 3-wide top).
+   - The AC (rx0+8) and the door (6×14 at rx1-14) now have 3 voxels of wall on each side.
+4. **Wall colour A/B** through a temporary hook, now removed (`rounds/res/w5r1-wall.png`, variants b / wood / skin3 / comDough):
+   - wood and comDough rendered a vivid (250,145,49) that swallowed the burnt-orange frames.
+   - skin3 went salmon-red.
+   - I kept civPlaza (lit (250,179,104)) for frame contrast. It is paler than ref04's (204,132,74) because of the coherence mid lift, and there is no free palette slot for a deeper terracotta.
+
+**Measured.** All modules parse, all 48 home variants build in node, and there were 0 console errors on all 4 shots.
+- Tris: gal-homes-1 200k, gal-homes-2 340k, one-small-house 123k, one-apartment 148k.
+- FPS: 58 / 54 / 61 / 50.
+- The start state is `rounds/res/w5r1-cur` (tris 202k / 419k / 119k / 147k). The start file is `rounds/res/w5r1-start.js`. Iterations are in `w5r1-a..c`, and the final shots in `w5r1-builder`.
+
+**Next:**
+1. The shade face still shows a soft dark ring round each frame. That is the ray AO off the 1-proud frames with `RES_VOX` aoDist 1.0 (10 voxels at res 10). If a critic calls it smeared again, try aoRayFall 2 → 3 (the pools get tighter, the reach stays the same). Clear it with surface first, since AO is settled.
+2. The lit wall reads pale peach under the new mid gain. A deeper terracotta would need a palette slot freed (or a res key reused).
+3. Apartment / tall apartment: per-floor belts plus quoin joints read as horizontal ribbing on the shade face. Consider dropping every other belt if they are called busy.
+
+### Coordinator note (2026-09-27 09:45) — w5r1: rooftop room top
+A/B'd the post mid-gain on one-small-house: it barely changes the roof (scratchpad midab.png), so the "hot salmon plastic lid" is the model's colours: the penthouse roof slab is a flat pale salmon with a saturated orange rim band. Make it a MUTED terracotta/tan roof (lower saturation, a touch darker than the walls' lit tone), replace the solid orange parapet band with an open post-and-rail railing (thin posts every ~4 voxels, one top rail), and let the main roof deck read as clean cream. The house body itself reads well now — keep it.
+
+## 2026-09-27 — wave 5, round 2 (builder)
+
+**Critic (w5r1):** the reference won. The weak point was the roof: the penthouse top was an "over-bright salmon slab with a saturated orange rim band", and the main parapet a "solid trim slab". ref04 has a muted terracotta top, a cream deck and an open rail of bars on posts. Also: the gallery's pitched roofs were all the same red-orange, and the right faces leaned muddy brown.
+**Consensus w4r13-w5r1 + brief:** a calm, legible roof. That means a clear room, clean tops, no oversized quoins.
+
+**Changed** (residential.js + one res palette slot in core.js):
+1. **Small house v1 (the ref04 homage), roof rebuilt:**
+   - **Room.** It moved to the FAR corner (min-x, max-z), so the deck wraps both faces the camera sees, like ref04's L. It is 32×24 with walls 22 tall (was 40×26×24).
+   - **Room trim.** The cornice band is gone. ref04's raised 2-tall frame-tone bars now sit on its roof edges. The quoin posts rise into small stepped caps.
+   - **Room dressing.** The AC is on the front wall with a topiary under it. The door is on the right wall.
+   - **Room top.** It is `vegTrunk`, which renders a muted terracotta (253,174,108). civPlaza rendered (252,190,127), the "salmon" complaint. `wood` went hot orange, `skin3` and `resTerraTrim` went salmon (A/B shots in `w5r2-a*`, `w5r2-b*`).
+   - **New `openDeck`.** It has one 2×2 frame-tone bar at deck+5, slim 2×2 posts about every 14 voxels, and open air under the bar with the deck showing through. The flush curb is gone. The corner posts are arm 6, flush with the bar, with small caps.
+2. **Deck colour.** `resSlateDk` (9 uses, all residential → `C.roofGray`) became **`resDeck` 0xe8d0a2**, at the same palette index.
+   - `sand` rendered well when lit, but its shadow went olive (194,184,137).
+   - `peach` read pink.
+   - resDeck lit renders about (251,214,154), and its shadow stays warm.
+   - The apartment deck, boldCrown's default deck (was grey stone) and every `stairHouse` cap now use it, inside a 1-voxel trim rim. The apartment's own stair room top has the same rim. There are no more solid hot-orange lids.
+3. **Muddy right face.** The homage takes `S.shadeFrame = roofOrange` for the right-face window frames, its cornice/base line (only voxels that were frame-coloured, so the quoins stay untouched) and the room's right-wall door. `resTileOrangeDk` and `comTerra` went maroon-red there (`w5r2-d`).
+4. **Gallery roof variety.** Cottage v2 went tile → slate (door resTerraTrim), and cabin v1 went red → green (door resTerraTrim). gal-homes-1 is now tile / slate / orange / green / sage, not four warm reds.
+5. **`bigDoor`** takes `o.frame`.
+
+**Measured.** All modules parse, all 48 variants build in node, and all four shots had 0 console errors.
+- Tris: gal-homes-1 203k, gal-homes-2 421k, one-small-house 118k (was 122k), one-apartment 147k.
+- FPS: 53 / 50 / 61 / 40 (the 40 was under load).
+- Shots are in `rounds/res/w5r2-builder` (`check.png`). The ref04 pair is `w5r2-e/pair.png`, iterations are in `w5r2-a..f`, and the start file is `rounds/res/w5r2-start.js`.
+
+**Next:**
+1. The room casts a fair shadow across the right deck strip, a warm tan now. If it is called a smear, drop `rh` to 19-20.
+2. The rail's sun shadow draws a small sawtooth line along the deck edges (shadow-map aliasing, light's domain).
+3. The green cabin sits next to the sage big house. If they read as one "green pair", try `ROOF.brown` on the cabin.
+
+## 2026-09-27 — wave 5, round 3 (builder)
+
+**Critic (w5r2):** the reference won. The small house's shadowing was "hard-edged and stair-stepped": jagged dark bands behind the parapet rail and round the rooftop room's base on the deck, and blotchy quoin faces. ref04 has only soft graduated AO in the corners, and its big faces stay clean. Also: busy glass streaks, and quoins a bit coarse.
+**Consensus w4r11 / w4r12 / w5r2 + my w4r12 A/B:** the hard bands are the SUN's cast shadow of fine 1-2-voxel overhangs (quoin blocks, frame heads, sills, the rail, the room's quoins). The shadow-map texel is coarser than a res-10 voxel, so they cannot cast cleanly. AO strength is not the problem.
+
+**Changed:**
+1. **A/B (`rounds/res/w5r3-ns/ab.png`, `ab2.png`):** with the shadow strength at 0, the deck is clean cream with soft AO pools, the quoins are even, and the frames lose their dark sawtooth heads. That is ref04.
+2. **engine.js (surgical, 2 lines):** a new optional `model.caster`, a simplified voxel model that the sun-shadow pass renders in place of the model (`_viewMesh` and `_lodAssign` set `userData.casterGeometry` from it; the proxy is meshed with `ao:false`). Models without it are unchanged.
+3. **residential.js: `shadowCaster()` + `g.shadowBody(x0, z0, x1, z1, {cap, caps, y0, r})`.**
+   - Inside the house box, the ground footprint (columns touching the plinth top, plus what they enclose) is extruded to one voxel under its top surface, capped (flat roofs: `cap = top`, so the rail, room, AC, parapet and stair house cast nothing on the deck).
+   - It is then eroded 3 voxels, so proud trim, eaves, chimneys and dormers fall away and the proxy sits just inside the real faces. The proxy is a hollow shell.
+   - Lot props outside the box cast as before.
+   - The house still casts its full-size shadow onto the lot, the street and its neighbours.
+   - Applied to all 12 ids: small-house (all 4 variants, cap on the deck homage), apartment / townhouse / tall-apartment (cap top), condo (per-block caps), beach house (y0 = deck level, so the stilts cast as they are), mansion (centre + wings), big house (body + garage), and cottage / duplex / cabin / farmhouse (pitched, no cap).
+4. The pitched gallery roofs also lose the course-by-course shadow stripes and the big dormer and chimney wedges (`w5r3-b/ab-g1.png`).
+
+**Measured.** All modules parse, all 48 variants build in node (a caster costs 2-56 ms), and there were 0 console errors on all four shots.
+- Tris: gal-homes-1 202k, gal-homes-2 419k, one-small-house 120k, one-apartment 147k (unchanged: the proxy draws only in the shadow pass).
+- FPS: 57 / 56 / 61 / 43 (the 43 was under load).
+- The ref04 pair is `rounds/res/w5r3-builder/pair.png`, and the start file is `rounds/res/w5r3-start.js`.
+- The managed :8351 server was down for more than 20 minutes mid-round. I ran my shots on a private `tools/dev-server.py 8397` and killed it afterwards. I never touched :8351.
+
+**Next:**
+1. The shade face still shows soft dark rings round each frame (ray AO off the 1-proud frames). ref04's shade face is smoother. aoRayFall 2 → 3 in `RES_VOX` is the lever; clear it with surface first.
+2. If a critic says the houses no longer "sit" in the light (no self-shadow at all), give the proxy `r: 2` to bring back the shadow of the bigger overhangs (porches, deep eaves).
+3. The same `model.caster` would fix the w4r11 "dentil comb" style shadow noise in other categories (coherence note added).
+
+## 2026-09-27 — wave 5, round 4 (builder)
+
+**Brief / verdicts:** w5r3 did not boot (the server was down), so my w5r3 shadow proxy is still unjudged. The agreed gap (r7-r14, w5r1, w5r2) is SIMPLIFY. w5r2 also asked for calm flat glass instead of "busy horizontal light streaks" and called the quoins coarse.
+**Measured against ref04 (PIL, zoom crops `rounds/res/w5r4-qz.png`):**
+- ref04 quoin lit (217,193,152), shade (174,141,97), S ~0.30-0.44. Ours on `sand` were (249,216,140) and (195,142,56), a yellow/ochre at S 0.44-0.71.
+- ref04 glass is a flat navy (37-53, 65-85, 113-130). Ours was sky-band glass (82,150,241) with a pale streak voxel.
+
+**Changed** (residential.js only; core.js, engine and layout untouched):
+1. **Homage quoins.**
+   - The colour is `sand` → `resQuoin`, which renders a pale neutral cream close to ref04.
+   - The geometry is ref04's: a core post with EVEN blocks (`Q_EVEN {ca 4, ba 7, bh 5, per 8}`), which leaves a 3-voxel neck where the lit core shows. The long/short stagger and the 1-voxel joints are gone (those joints were only there to dodge the sun sawtooth, which the w5r3 proxy now removes).
+   - This applies to all 4 small-house ids. The room quoins take per 6 (2-voxel necks).
+2. **Glass.**
+   - `refWin` lost its winCool streak voxel.
+   - The homage's glass is `C.dtGlassDeep`. That is painted glass, so it renders flat navy (lit (49-67,108-144,177-211), shade (25-33,56-75,93-124)) like ref04, and it still lights at night (materials `nightGlassColors`).
+3. **Roof rail.** `openDeck` has no mid posts by default (`o.every`), and the bar is one voxel higher (ry = deck+6). ref04's rail floats post to post clear of the cornice with the deck showing under it; the mid posts had read as a comb of ticks.
+4. **AO.** `RES_VOX aoRayFall 2 → 3` tightens the pools round the frames on the shade face. The open wall stays at 116, the ground ramp is unchanged, and the pool next to one frame went 99 → 105.
+5. **Other ids.**
+   - `quoins()` (big house, duplex, mansion; relief p ≥ 2) now goes through the new `evenQuoins`.
+   - `rustic()` grooves are off unless forced (big house, townhouse, duplex): horizontal banding across a whole storey.
+   - `bigQuoins` (apartment, townhouse, tall apartment) is deliberately NOT changed. On the tall faces an A/B showed the even blocks doubled the edge lines into ribbing (`w5r4-e/ab4.png`).
+
+**Measured.** All modules parse, and there were 0 console errors on all four shots.
+- Tris: gal-homes-1 199k, gal-homes-2 426k, one-small-house 119k, one-apartment 149k.
+- FPS: 57 / 56 / 61 / 36*. The starred reading was taken under load.
+- Pair: `rounds/res/w5r4-builder/pair.png`. Iterations are in `w5r4-a..f`, and the start file is `rounds/res/w5r4-start.js`.
+- The managed :8351 was down at the start. I used an already-running 8362 copy (not mine) until its owner stopped it, and then :8351, which was back by then. I never started a server.
+
+**Next:**
+1. The homage wall still renders paler and peachier than ref04 (lit (250,179,104) vs (204,131,74)). That needs a free palette slot for a deeper terracotta.
+2. The door lamps have dark caps. ref04 uses a frame-orange bracket; try `bigLamp {arm: S.frame}` if a critic calls them heavy.
+3. If a critic calls the tall apartments ribbed, give `bigQuoins` taller courses (bh 8) rather than even blocks.
+
+### Coordinator note (2026-09-27 12:15) — w5r4
+Gallery spacing is frozen (critics have gone both ways; ignore that half). The model half is consistent with r7-r14 and w5r1: "every corner uses the same chunky alternating quoin blocks that read lumpy" — drop the stacked alternating quoins on most ids (keep them on at most 1-2 ids, flush and single-tone), use flat crisp walls with a regular window grid, and move the detail UP: rooftop gardens, AC units, awnings, balconies. Make sure eaves/roofs stay inside each lot so neighbours never overlap.
+
+## 2026-09-27 — wave 5, round 5 (builder)
+
+**Critic (w5r4):** the reference won. The homes read as one lumpy heap because "every corner carries the same chunky alternating tan quoin blocks" (gallery, one-small-house, one-apartment). The critic asked for thin corner pilasters and crisp flat walls, with the detail moved up. Spacing is frozen (coordinator 12:15), so I left it alone.
+**Consensus r7-r14 / w5r1 / w5r4 + coordinator:** simplify. Keep stacked quoins on at most 1-2 ids, and put no quoin stacks on the rooftop room (w4r8).
+
+**Changed** (residential.js only; core.js, engine and layout untouched):
+1. **New `cornerPier(g, x0,z0,x1,z1,y0,y1,c,{w,p,cap})`.** It draws one smooth L-shaped strip in a single tone up each corner, w wide and p proud, with a capital row one wider and prouder at the top. p 0 paints a flush strip in the wall plane. There are no courses and no joints, so each corner throws one clean AO crease.
+2. **`quoins()` and `bigQuoins()` now return a `cornerPier`** unless `quoins.stacked` is set (it is off). That covers the big house, duplex, mansion (its painted wing quoins become flush strips), apartment, townhouse and tall apartment.
+3. **Small house:**
+   - Only v1, the ref04 homage, keeps `refQ Q_EVEN` stacked quoins.
+   - v0, v2 and v3 take `ref04Block {pier: {w 5, p 1}}` and keep the bold cornice band (the cornice branch now accepts `o.pier`).
+   - The rooftop room's quoin stacks became smooth piers (w 4, no capital). Its corner caps shrank from 7-wide/5-tall + 3/2 to 5-wide/3-tall + 3/1. It now reads as a plain box with a door and an AC.
+4. **`bigLamp`:** the bracket and cap default to `S.frame` (ref04's burnt-orange bracket), not dark grey.
+
+**Measured.** All modules parse, all 48 variants build in node, and there were 0 console errors on all four shots.
+- Tris: gal-homes-1 196k (was 199k), gal-homes-2 416k, one-small-house 118k, one-apartment 146k (was 147k).
+- FPS: 56 / 27* / 61 / 61. The starred reading was taken under load; the same shot gave 54 in an earlier run this round.
+- Deck vs ref04 (PIL medians): ours (251,214,154), ref04 (215,188,145). The deck/wall luma ratio is 1.12 for ours and 1.3 for ref04. Our whole frame is brighter, so I left the albedo as it is.
+- Shots are in `rounds/res/w5r5-builder`. `w5r5-cur` is the start state, and `w5r5-a` / `w5r5-b` are the iterations. The start file is `rounds/res/w5r5-start.js`.
+
+**Next:**
+1. If a critic calls the corners too plain, give v0/v2/v3 a pier in the frame accent (green / terracotta / blue) instead of `S.quoin`. On v0, resQuoin on a cream wall is nearly invisible.
+2. Now that the apartment's side faces are clear, they could take a third window pair. It is tight: the sills at u+8 meet the w-5 pier, and the wall ACs sit at u 29.
+3. Set `quoins.stacked = true` to bring back the old stacked blocks for an A/B.

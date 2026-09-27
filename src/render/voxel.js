@@ -337,7 +337,7 @@ const DEFAULTS = {
   // w4r11 aoBlur (world units): masked in-plane triangle blur of the combined
   // AO darkness per face layer (building scale), so per-voxel notches under
   // dentil courses / notched lips read as one soft band. 0 = off.
-  aoBlur: 0.35,       // w4r12: 0.25 -> 0.35 (smoother, more even bands).  w4r11 (res 4: 1 lattice step, res 8: 2)
+  aoBlur: 0.6,        // w5r4: 0.35 -> 0.6 with aoTopHat walls 1.0 -> 1.6 (critics w5r1-w5r3 all: crease AO 'thin and hard-edged'; coordinator 10:20 authorised wider + softer, same depth): pools at red-panel corners and under sills/flower boxes spread wider and softer, crease depth unchanged (one-bakery rendered/no-AO p5 0.48 -> 0.47, share < 0.9 0.38 -> 0.41; rounds/surface/w5r4 ab6).   w4r12: 0.25 -> 0.35 (smoother, more even bands).  w4r11 (res 4: 1 lattice step, res 8: 2)
   // w4r14 PLATEAU LIFT (critics w4r11-w4r13 ALL: 'faces stay flat and evenly
   // lit' under cornices / sills / awnings / at the plinth; w4r13 also 'milky
   // haze over the forecourt paving'). Measured (rounds/surface/w4r14 A1): the
@@ -349,8 +349,8 @@ const DEFAULTS = {
   // crease/contact ramp within r of its edge at full depth and lifts the
   // plateau under it to aoPlateauKeep of its value. [wall r, top r] in world
   // units (0 = off), keep = share of the plateau that survives.
-  aoTopHat: [1.0, 1.5],   // w4r14 A/B (rounds/surface/w4r14 A3-A6): 0.5 kept only 1-2 voxel creases ('faint and tight' again); 1.0 keeps ledge ramps up to ~1 unit
-  aoPlateauKeep: [0.58, 0.35],   // coherence w4 AO SETTLEMENT (FROZEN; see materials ao): [0.65,0.4] -> [0.58,0.35].   // [wall, top] (a number = both). w4r14 (A7): walls 0.7 clean, 0.55 faint spot, 0.4 lit the centre of small recessed red panels into a round 'glow' spot; 0.2 worse; tops 0.4 cleans the forecourt/deck haze
+  aoTopHat: [1.6, 1.5],   // w5r4: walls 1.0 -> 1.6 (see aoBlur).   w4r14 A/B (rounds/surface/w4r14 A3-A6): 0.5 kept only 1-2 voxel creases ('faint and tight' again); 1.0 keeps ledge ramps up to ~1 unit
+  aoPlateauKeep: [0.35, 0.35],   // w5r3: walls 0.58 -> 0.35 (critics w4r14/w5r1/w5r2 in a row: 'left and right walls read the same tan', 'faces flat'). MEASURED (rounds/surface/w5r3 ab10/ab11): the INDIRECT exponent (ao 3.8) on the storefront facade's bake plateau (pz median 0.62: 3-unit rays over awnings, boxes, sills) dimmed the whole LIT face to 0.69 of no-AO, so lit tan (185,153,89) ~= shade tan (171,138,83). Keep 0.35: lit tan -> (206,173,105), crease p5 0.39 -> 0.46, open faces 1.0; the upper-storey red panels show no new glow spot at one-bakery.  // coherence w4 AO SETTLEMENT (FROZEN; see materials ao): [0.65,0.4] -> [0.58,0.35].   // [wall, top] (a number = both). w4r14 (A7): walls 0.7 clean, 0.55 faint spot, 0.4 lit the centre of small recessed red panels into a round 'glow' spot; 0.2 worse; tops 0.4 cleans the forecourt/deck haze
   aoSpread: 0.4,       // r12: 1.0 -> 0.4 (the sky shadow carries the wide bands now; see above)
   aoSpreadGain: 0.9,
   aoSpreadPow: 0,

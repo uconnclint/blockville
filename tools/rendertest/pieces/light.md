@@ -729,3 +729,6 @@ Next (only on a real critic gap)
 
 ### Coordinator note (2026-09-27 03:05) — FYI (piece is won)
 worldAO (lighting.js default true) is the source of the mottled roof/plinth blotches four surface/res critics named (A/B: scratchpad rounds/surface/worldAO-on-vs-off.png). The surface builder is authorised to switch it off / cut it to the tight contact line and will re-verify faceratio and iso-mid percentiles.
+
+### Surgical change by surface w5r4 (2026-09-27, per coordinator 04:45 note)
+engine.js `minPenumbra 0.03 -> 0.22` and lighting.js `shadowContrast 0.55 -> 0.4`. Critic surface w5r3 flagged "jagged, stair-stepped shadow blocks under the bench, tree and figures", and the 04:45 note flagged the serrated parapet shadow. At 0.55 the S-curve re-crisped any widened penumbra back into voxel steps. At iso-mid 0.22 u is below the 10 px pixel floor, so iso-mid is unchanged (A/B: scratchpad rounds/surface/w5r4 ab4/ab5). Revert both values together if needed. Note: the lighting.js `minPenumbra` default (0.08) is dead because engine.js overrides it.

@@ -365,7 +365,12 @@ export class Engine {
       // at a wall foot to ~3 texels for a long tower shadow. The old 0.30-unit
       // floor made a 0.75-unit AC unit's shadow almost all penumbra — the r3
       // critic's "smeared grey blotches".
-      minPenumbra: 0.03,
+      // surface w5r4 (critic w5r3 'jagged, aliased stair-stepped shadow blocks
+      // under the bench, tree and figures'; coordinator 04:45 serrated parapet
+      // shadow): 0.03 -> 0.22 with lighting shadowContrast 0.55 -> 0.4, so a
+      // 1-voxel (0.25 u) caster step gets a ~1-voxel soft edge at close zoom.
+      // At iso-mid 0.22 u is under the 10 px floor: unchanged (A/B w5r4 ab5).
+      minPenumbra: 0.22,
       // surface r8 (critic r7: "ragged, blotchy shadow boundaries, looks like
       // an oil-paint/denoise filter" on the bakery). A/B on one-bakery: the
       // ragged edges are the shadow-map texel staircase + tap noise at the
@@ -689,6 +694,11 @@ export class Engine {
     const mesh = new THREE.Mesh(this._getViewGeometry(model), this._voxMat);
     const full = this._getGeometry(model);
     if (mesh.geometry !== full) mesh.userData.casterGeometry = full;
+    // res w5r3: model.caster (optional) is a simplified voxel model the sun
+    // shadow pass renders instead (e.g. a house's body inset 1-3 voxels with
+    // its fine proud trim left out, so 1-voxel quoin / frame / rail overhangs
+    // stop throwing hard sawtooth shadows onto the house's own faces).
+    if (model.caster) mesh.userData.casterGeometry = this._getGeometry(model.caster, true);
     mesh.userData.voxModel = model;
     this._lodAssign(mesh);
     return mesh;
@@ -774,7 +784,7 @@ export class Engine {
     if (!view) { const na = !!mesh.userData.lodDyn; view = this._getViewGeometry(model, na); full = this._getGeometry(model, na); }
     if (mesh.geometry === view) return;
     mesh.geometry = view;
-    mesh.userData.casterGeometry = full !== view ? full : undefined;
+    mesh.userData.casterGeometry = model.caster ? this._getGeometry(model.caster, true) : full !== view ? full : undefined;
     // window-glow light positions always come from the full-detail model
     mesh.userData.glowGeometry = this._getGeometry(model, !!mesh.userData.lodDyn);
   }

@@ -588,3 +588,5 @@ tops are still greyer than ref05 (p75 165 vs 192). That is light/material; try k
 
 ### Coordinator note (2026-09-26 18:25) — post is DONE; light may adjust the curve
 Measured after your w4r2 win: p25 landed (0.27) but p50 fell 0.57→0.45 and p75 0.71→0.63 vs ref05 0.55/0.75. The light builder is authorised to reshape the curve so it bends only below ~0.3.
+
+- (2026-09-27, surface w5r1, surgical) Added `grade.floor.ao / aoPow / aoZoom` (uFloorAO) to the shade floor: voxel pixels encode their AO ratio in scene alpha (-0.45..0, materials FRAG_OUT); the floor lifts d / r and re-applies r^aoPow, so baked contact pools are no longer re-lifted. Faded in by voxCss 4..12 (iso-mid unchanged). `floor.ao: 0` restores the old floor exactly.

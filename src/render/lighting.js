@@ -1763,7 +1763,7 @@ export class LightingRig {
       shadowAmbient: 0.64,       // hemisphere + ambient + light probes
       shadowIbl: 0.88,           // diffuse sky IBL (envMap)
       shadowSpecular: 0.46,      // specular sky reflection (kept gentle: glass keeps life)
-      shadowContrast: 0.55,      // 0..1 S-curve on the penumbra ramp: shape, not haze
+      shadowContrast: 0.4,       // surface w5r4: 0.55 -> 0.4 with engine.js minPenumbra 0.03 -> 0.22 (critic w5r3: 'jagged, stair-stepped shadow blocks under the bench, tree and figures'; at 0.55 the S-curve re-crisped the widened penumbra into voxel steps; A/B rounds/surface/w5r4 ab4/ab5, iso-mid unchanged).  0..1 S-curve on the penumbra ramp: shape, not haze
       // Sky-visibility model (defect 1). `skyContactWorld` is the 2-folding
       // distance of the contact term in world units: at `gap` = this value the
       // fragment counts as half-enclosed. `skyOpenFloor` is how much sky an

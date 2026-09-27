@@ -644,3 +644,39 @@ w4r11 (filler aside — frozen): school, fire station and swim club facades read
 - School/swim-club facades are still called "soft". Try a heavier dark cornice line and fewer window hoods.
 - The fire station's roll-up doors could go white like ref05's.
 - The white ghost box shows up again above the carousel in gal-fun-2 (not ours).
+
+## 2026-09-26 — wave 5 round 1 (builder)
+**Critic gap (w4r14 lost; agrees with w4r13 on facades):** the school facade was "big flat cream and teal faces with widely spaced, repeated window modules", and the fire-station roof was "a grid of identical grey boxes". ref05 has fine vertical articulation and varied roof kit.
+**Changed:**
+- **Fire roof (civic.js):** the 2×5 condenser bank is gone. It is now sparse, varied kit on the sage deck: a long twin-fan condenser (louvre fins) on its own pad, a taller single-fan unit with a red badge, a round turbine vent on a curb, a low louvred exhaust hood, and two small crates with red lids in different sizes. The penthouse, skylight, solar pad, tank, duct and mast are kept.
+- **FIRE STATION sign:** it now sits on a proud plate (layer 2, with an ink frame), so the pier capitals no longer cut into the letters. In game it reads cleanly as FIRE STATION.
+- **School (civic.js):**
+  - `win` is now TALL (6 rows) and hoodless, because the string course above serves as the head. 3-wide windows get their centre mullion back.
+  - The end faces (the lens side) have a regular 4-voxel rhythm symmetric about the door: windows at 15/19/23 and 30/34/38. Slim giant-order FINE pilasters (2 fine wide, 2 proud, with base, capital and ink line) stand in every 2-voxel pier.
+  - The proud corner Ls are now trim stone on v0/v2 (brick stays on v1). Teal remains only as the accent on the flush quoins, the wing pilasters and the pavilion edges.
+  - Result: a cream and white hall with a vertical glass grid, close to ref05's.
+  - **Tried and dropped:** rusticated joint lines on the teal quoins. They read as stacked louvre plates and added noise.
+- **civText glyphs:** M and W are now 5 columns wide (advance = glyph width + 1; hiText centres on `civTextWidth`). MUSEUM and SWIM CLUB no longer read "H".
+- **Swim club roof (fun.js):** 7 AC units in 4 sizes (was 11 identical).
+**Measured:** 6 shots (gal-fun-1/2/3, gal-deco-1, one-stadium, one-school), 0 console errors. FPS under load: 26–61. gal-fun-1 has 287k tris; the scene total dropped for everyone since w4 (not ours).
+**Coherence [civic]:** the fun-lot calm-down was done in w4r14 and the fire brick in w4r14. Nothing else is open.
+**Next (only if a critic loses us the round):**
+- The school's long-face wing fronts still have 3-wide windows at a 6-voxel pitch. They could take the same fine-pilaster rhythm.
+- The swim-club SWIM CLUB plate is partly hidden behind its 2-deep pilasters at the lens angle.
+- ref05's fire apron is one deep green field with trucks. Ours are two shallow aprons.
+
+## 2026-09-26 — wave 5 round 2 (builder)
+**Critic gap (w5r1 lost; agrees with w4r11-w4r14 on facades):** the civic windows were "shallow, line-like grooves" where ref05 has deep-set glassy-blue panes with bright reflections; the fire station lacked ref05's bold engine doors on a dark apron; the obelisk was "too thin and plain beside ref05's stepped base with statues".
+**Root cause (measured in one-school at pixel zoom):** w4r12's `recess` put the glass a whole res-4 voxel back behind a 1-fine proud ring: 3 fine of reveal in front of a 4-fine pane, so at the iso angle the jamb and head hid ~3/4 of the glass. The slits were our own w4r12 change.
+**Changed:**
+- **`fineWin` recess (civic.js; school, fire station, swim club):** the wall voxel is still cleared, but the pane is now drawn in the FINE part at out -1 (flush with the wall face, 1 fine behind the proud ring), so ~3/4 of every pane shows. The pane is blue with its upper third a bright `dtGlassHi` sky band, a dark `dtGlassDark` head-shadow line on the top fine row, and the diagonal streak in `signWhite`. Glazing bars sit on the ring plane. School glass is `dtGlass` again (I tried `dtGlassDeep`, which read as navy holes on the shade face).
+- **Fire-station engine doors:** the slats and glass strip sat at fine -2, coplanar with the door face, and z-fought into a grey-blue. The white leaf is now flush in the wall between the 2-proud piers, with proud offwhite slat lines, a glazed strip, a head rail, and an arched glazed fanlight in a proud stone ring with a keystone (ref05's arched bays).
+- **civApron** 0x243a35 → 0x0b2a1c. The old value rendered a pale mint (112,164,141), while the ref05 apron is dark (≈20-80 luma). It now renders dark slate, so the engines and yellow bay lines stand out.
+- **Obelisk:** the shaft is 12 fine wide (was 10) and 64 tall (was 70), the midpoint of the w4r8 "lighthouse" and w4r11 "squat" verdicts. A carved band sits a third of the way up, and the pyramidion has 6 steps. **New:** four statue groups on the tier-2 corners round the pedestal foot, each a panelled block with a raised-arm figure and a kneeling figure (ref05).
+**Measured:** 6 shots, 0 console errors. FPS: gal-fun-1 42, gal-fun-2 23 (under load), gal-fun-3 51, gal-deco-1 61, one-stadium 61, one-school 61. gal-fun-1 has 297k tris (was 287k).
+**Self-judged:** in gal-fun-1 the school now reads as a crisp blue window grid in cream stone, much closer to ref05's hall. The swim club shows its glass. The fire apron is dark with the engines readable. The doors are brighter, but they still sit in the piers' shade.
+**Next (only if a critic loses us the round):**
+- The fire doors could go pure white with a pale forecourt (the ref05 look) if "grey doors" comes up.
+- The monument now has 8 statues (4 on tier 1, 4 on tier 2). If "busy" returns, drop the tier-1 ones.
+- The SWIM CLUB plate is still partly hidden behind the 2-deep pilasters.
+- The preview tool needs `&` before extra params (`pv.sh … "&cols=1"`); zoom > 1 with cols > 1 renders empty. The Browser pane works fine for quick looks.

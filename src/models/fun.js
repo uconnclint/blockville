@@ -253,7 +253,9 @@ function bSwimmingPool(rng, v) {
       }
     }
   }
-  for (const [ax, az] of [[10, 112], [18, 112], [46, 112], [54, 112], [10, 84], [54, 84], [84, 86], [92, 86], [100, 86], [84, 110], [92, 110]]) fineAC(g, ax, 2 * (RT + 1), az, 6, 5);   // (r9) fine roof gear
+  // (r9) fine roof gear; (w5r1) critic w4r14 on civic roofs: "varied rooftop
+  // equipment instead of a repeated box grid" — 7 units in 4 sizes, not 11 clones
+  for (const [ax, az, w, d] of [[10, 112, 6, 5], [18, 110, 9, 7], [50, 112, 6, 5], [10, 84, 7, 6], [84, 86, 10, 7], [99, 87, 6, 5], [88, 110, 6, 5]]) fineAC(g, ax, 2 * (RT + 1), az, w, d);
   { const Hr = hiGrid(g), RY = 2 * (RT + 1);                     // (w4r2) solar rows + a stair hatch on the new east roof
     for (let r = 0; r < 3; r++) { const z0 = 92 + r * 6; Hr.box(100, RY, z0, 117, RY, z0 + 4, C.signWhite); Hr.box(101, RY + 1, z0, 116, RY + 1, z0 + 3, C.civNavy); }
     Hr.box(106, RY, 86, 113, RY + 3, 90, C.offwhite); Hr.box(106, RY + 4, 86, 113, RY + 4, 90, C.metalDark); }

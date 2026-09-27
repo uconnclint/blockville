@@ -125,12 +125,12 @@ const _colors = {
   // (the grade + warm key push saturation up ~1.6x on walls and more on roofs,
   // so these are authored muted: they render as ref04's terracotta / cream)
   resTerracotta: 0xcf9e80, resTerraTrim: 0xb47755, resTileOrangeDk: 0xbb5f2b,
-  resSlate: 0x9aa3ad, resSlateDk: 0x78808e, resTileGreenDk: 0x4d7a5e,
+  resSlate: 0x9aa3ad, resDeck: 0xe8d0a2, resTileGreenDk: 0x4d7a5e,   // (w5r2) resDeck took resSlateDk's slot (its 9 uses -> roofGray): a warm cream roof deck between sand (shadow went olive) and peach (pink)
   resTile: 0xcc8c68, resTileDk: 0x8a5646, resQuoin: 0xeedfc4, resButter: 0xeedaa8, resSage: 0xb5c6a4,
   resRoofRed: 0xb86e60, resLawn: 0x95b368,   // coherence 09-25: was 0x9cc77e (rendered mint #b6f888 once the field went back to lime)
   // (w4r8) resTile was 0xbf8062, resRoofRed 0xa0605a: the w4r7 critic read the stepped roofs as 'heavy ... busy and a little dark'
   // [commercial]  shops & food (ref05 diner / supermarket, ref02 shop)
-  comRoof: 0x87919b, comFrame: 0x3b4047, comDough: 0xe2a458, comIcing: 0xff8cc6,
+  comRoof: 0x9c9a93,   /* coordinator 2026-09-27: was 0x87919b (cool) — lit tops read "icy blue-white" (surface w5r2); ref05 shop roofs are neutral-warm grey */ comFrame: 0x3b4047, comDough: 0xe2a458, comIcing: 0xff8cc6,
   comChoco: 0x6e3b22, comCone: 0xebb86a, comConeDk: 0xc48845, comPatty: 0x5c3420,
   comCheese: 0xffc93c, comLettuce: 0x86d23a, comTerra: 0xd9774e,
   // [downtown]  ref05 bank / hotel / hospital / apartment tower look (r8: dtPad + dtGlassDark lightened — critic r7: ONYX read near-black)
@@ -144,7 +144,7 @@ const _colors = {
   // (r10) critic r9: fire station "red and teal run together", city hall
   // "pale blue washes out" -> deeper brick, darker sage trim/deck, cream hall
   // walls with strong grey-teal pilasters and a dark teal slate (ref05)
-  civBrick: 0xb0603e, civCornice: 0x4f806a, civApron: 0x243a35, civPool: 0x2ea3ee,
+  civBrick: 0xb0603e, civCornice: 0x4f806a, civApron: 0x0b2a1c, civPool: 0x2ea3ee,
   civPoolLt: 0x86d4f7, civPlaza: 0xdbb27e, civMarble: 0xefece5, civRubber: 0xe4644c,
   civFireRoof: 0x3a4b3a,
   civHall: 0xb3cfbf, civHallDk: 0x5f8f8e, civConcourse: 0x4b535f, civConcourseLt: 0x6d7682,

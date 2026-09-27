@@ -311,17 +311,25 @@ function course(g, x0, z0, x1, z1, y, c, out = 1) { g.walls(x0 - out, y, z0 - ou
 // (w4r8) critic w4r7 read FIRE STATION as "FISE STATION": the core R's open
 // bowl + slanted leg read as S at gallery zoom. R gets a closed box bowl and
 // a stepped leg (a P with a kick) so it can't be taken for S.
-const GLYPHS = { S: '####..###..####', R: '###' + '#.#' + '###' + '##.' + '#.#' };
+// (w5r1) M and W are 5 columns wide: in 3 columns the M of SWIM CLUB and
+// MUSEUM read as "H" at gallery zoom (coherence note). Glyph width = length/5.
+const GLYPHS = {
+  S: '####..###..####', R: '###' + '#.#' + '###' + '##.' + '#.#',
+  M: '#...#' + '##.##' + '#.#.#' + '#...#' + '#...#',
+  W: '#...#' + '#...#' + '#.#.#' + '##.##' + '#...#',
+};
+const glyphW = (ch) => (GLYPHS[ch] ? GLYPHS[ch].length / 5 : 3);
+export function civTextWidth(text) { let w = 0; for (const ch of String(text).toUpperCase()) w += glyphW(ch) + 1; return Math.max(0, w - 1); }
 export function civText(f, u, y, text, c, out = 2) {
   c = signLit(c);   // [night] lit sign letters (same colour by day)
   let col = 0;
   for (const ch of String(text).toUpperCase()) {
-    const gl = GLYPHS[ch];
+    const gl = GLYPHS[ch], gw = glyphW(ch);
     if (gl) {
-      for (let r = 0; r < 5; r++) for (let i = 0; i < 3; i++)
-        if (gl[r * 3 + i] === '#') f.set(u + f.rd * (col + i), y + 4 - r, out, c);
+      for (let r = 0; r < 5; r++) for (let i = 0; i < gw; i++)
+        if (gl[r * gw + i] === '#') f.set(u + f.rd * (col + i), y + 4 - r, out, c);
     } else pixelText(f, u + f.rd * col, y, ch, c, out);
-    col += 4;
+    col += gw + 1;
   }
   return Math.max(0, col - 1);
 }
@@ -341,7 +349,7 @@ export function hiText(g, side, plane, uc, y4, text, c, out = 0) {
   const rd = { front: 1, back: -1, left: -1, right: 1 }[side];
   const p8 = (side === 'front' || side === 'left') ? 2 * (plane - out) - 1 : 2 * (plane + out) + 2;
   const y8 = Math.round(2 * y4);
-  const W8 = 4 * String(text).length - 1;
+  const W8 = civTextWidth(text);
   const s0 = rd > 0 ? Math.round(2 * uc - W8 / 2) : Math.round(2 * uc + W8 / 2) - 1;
   const F8 = { rd, set(u, yy, o, col) { if (alongX) H.set(u, yy, p8, col); else H.set(p8, yy, u, col); } };
   civText(F8, s0, y8, text, c, 0);
@@ -399,16 +407,31 @@ export function fineWin(g, side, plane, u0, y0, w, h, o = {}) {
   // recessed". o.recess: the glass sits one res-4 voxel INTO the wall (the
   // wall voxels in front are cleared), so every opening is a real 2-fine
   // reveal behind the proud frame ring; bars and glint move onto the glass.
-  const RZ = o.recess ? -1 : 0, EZ = o.recess ? -2 : 0;
+  // (w5r2) critic w5r1: "windows are shallow, line-like grooves … ref05 has
+  // deep-set glassy-blue windows with bright reflections". The full res-4
+  // recess plus the proud ring was 3 fine of reveal in front of a 4-6 fine
+  // pane, so at the iso angle the reveal's side and head hid ~3/4 of the
+  // glass (a slit). The glass now sits ONE fine back (in the fine part, in
+  // the outer half of the cleared wall voxel), so the reveal still shades
+  // the head and one jamb but most of the pane shows, and the fine bars sit
+  // in the reveal just in front of it.
+  const RZ = o.recess ? -1 : 0, EZ = o.recess ? 0 : 0, GZ = o.recess ? -1 : null;
   if (RZ) F.clear(u0, y0, 0, u1, y1, 0);
   F.box(u0, y0, RZ, u1, y1, RZ, glass);
   if (o.sky !== false && h >= 3 && glass !== C.dtGlassHi) F.box(u0, y1, RZ, u1, y1, RZ, C.civGlass);
   const a0 = 2 * u0, a1 = 2 * u1 + 1, b0 = 2 * y0, b1 = 2 * y1 + 1;
+  if (GZ != null) {
+    E.box(a0, b0, GZ, a1, b1, GZ, glass);
+    // the upper third of the pane catches the sky (ref05's glass is dark
+    // below, bright above, crossed by a pale streak)
+    if (o.sky !== false && h >= 3 && glass !== C.dtGlassHi) E.box(a0, b1 - Math.max(2, Math.round((b1 - b0) * 0.34)), GZ, a1, b1 - 1, GZ, o.skyC != null ? o.skyC : C.dtGlassHi);
+    E.box(a0, b1, GZ, a1, b1, GZ, C.dtGlassDark);                   // the head's shadow line on the pane
+  }
   if (o.glint !== false && h >= 3) {                                // the diagonal reflection streak
     const Wf = a1 - a0 + 1, Hf = b1 - b0 + 1, k = Math.round((Wf + Hf) * 0.42);
     for (let x = a0; x <= a1; x++) for (let yy = b0; yy <= b1 - 2; yy++) {
       const s = (x - a0) + (yy - b0);
-      if (s === k || s === k + 1 || (Wf >= 5 && s === k + 4)) E.set(x, yy, EZ, C.dtGlassHi);
+      if (s === k || s === k + 1 || (Wf >= 5 && s === k + 4)) E.set(x, yy, GZ != null ? GZ : EZ, GZ != null ? C.signWhite : C.dtGlassHi);
     }
   }
   E.box(a0 - 1, b0 - 1, 0, a0 - 1, b1 + 1, D, sc); E.box(a1 + 1, b0 - 1, 0, a1 + 1, b1 + 1, D, sc);
@@ -745,7 +768,7 @@ function svcSchool(rng, v) {
   const accent = [C.civSlate, C.roofGreen, C.civNavy][vi];
   const slate = [C.civSlate, C.civSlate, C.civSlate][vi], slateTop = C.stone, mb = C.civMarble, mbDk = C.civPanel;
   // (w2r1) ref05's hall windows are DARK navy glass in white frames
-  const winG = C.dtGlass;                                         // (w4r3) glassy blue, reflection streak (fineWin)
+  const winG = C.dtGlass;                                         // (w5r2) blue body; fineWin adds the bright sky third + streak
   // ---- massing: main block, two end wings (proud front and back), centre
   // pavilion (proud front and back), all three storeys
   const MX0 = 5, MX1 = 57, MZ0 = 16, MZ1 = 38;                    // main block (r10: wider, taller)
@@ -789,7 +812,12 @@ function svcSchool(rng, v) {
     // three-step corbel: a res-4 bed one out, fine dentils under it, a slab
     // three out with a dark drip line under its lip.
     if (proud) for (const [x, z, dx, dz] of [[x0, z0, 1, 1], [x1, z0, -1, 1], [x0, z1, 1, -1], [x1, z1, -1, -1]]) {
-      g.box(x, G + 1, z - dz, x + dx, FRZ - 1, z - dz, quoin); g.box(x - dx, G + 1, z - dz, x - dx, FRZ - 1, z + dz, quoin);
+      // (w5r1) critic w4r14: "big flat cream and teal faces". The proud
+      // corner Ls are now the pale trim stone (brick keeps its dark brick),
+      // like ref05's pale corner pilasters; the teal stays as the accent on
+      // the flush quoins, the wing pilasters and the pavilion edges.
+      const pq = vi === 1 ? quoin : trim;
+      g.box(x, G + 1, z - dz, x + dx, FRZ - 1, z - dz, pq); g.box(x - dx, G + 1, z - dz, x - dx, FRZ - 1, z + dz, pq);
       g.box(x - dx, G, z - dz, x - dx, G, z - dz, mbDk);
     }
     fineDentils(g, x0, z0, x1, z1, 2 * (TOP - 2), trim);
@@ -819,7 +847,12 @@ function svcSchool(rng, v) {
   // critic w4r3). The ring/transom is now the cream wall; sills, hoods and
   // keystones stay white, so it reads as ref05's cream wall with white trim.
   const wfr = vi === 1 ? trim : wall;
-  const win = (f, u, k, w = 2, h = 5) => fineWin(g, f.side, f.plane, u, fy(k), w, h, { frame: wfr, trim, surround: trim, glass: winG, key: k === 1 ? trim : false, mullion: false, recess: true });
+  // (w5r1) critic w4r14: "big flat cream and teal faces with widely spaced,
+  // repeated window modules" vs ref05's hall "packed with fine mullions,
+  // pilasters, cornice trim". Windows are TALL (6 rows, ref05's hall glass is
+  // ~2:1) and hoodless — the string course above is their head — so each bay
+  // reads as a vertical glass slot, not a cream panel with a small hole.
+  const win = (f, u, k, w = 2, h = 6) => fineWin(g, f.side, f.plane, u, fy(k), w, h, { frame: wfr, trim, surround: trim, glass: winG, hood: false, mullion: w >= 3 ? undefined : false, recess: true });
   // ---- long faces (front and back): wings, recessed runs, pavilion
   for (const back of [false, true]) {
     const side = back ? 'back' : 'front';
@@ -888,9 +921,23 @@ function svcSchool(rng, v) {
   // ---- ends (left/right faces of the wings)
   for (const right of [false, true]) {
     const F = facade(g, right ? 'right' : 'left', right ? 57 : 5);
-    for (let k = 0; k < 3; k++) for (const u of [15, 19, 22, 32, 35, 39]) win(F, u, k);
+    // (w5r1) a regular 4-voxel rhythm, symmetric about the door bay (27):
+    // three tall windows each side, and a slim giant-order FINE pilaster
+    // (2 fine wide, 2 proud, base + capital) in every 2-voxel pier between
+    // them, running from the plinth to the frieze across the string courses
+    // — ref05's hall is a fine vertical grid, ours was cream panels.
+    for (let k = 0; k < 3; k++) for (const u of [15, 19, 23, 30, 34, 38]) win(F, u, k);
     for (let k = 1; k < 3; k++) win(F, 26, k, 3);
     door(F, 26, G, 3, 6, { color: accent, frame: trim, step: null, glass: C.pBlue, canopy: trim });
+    { const E = hiFacade(g, F.side, F.plane);
+      for (const u of [17, 21, 32, 36]) {
+        const a = 2 * u + 1;
+        E.box(a, 2 * G + 2, 0, a + 1, 2 * FRZ - 3, 1, trim);
+        E.box(a - 1, 2 * G, 0, a + 2, 2 * G + 1, 2, mbDk);            // base
+        E.box(a - 1, 2 * FRZ - 2, 0, a + 2, 2 * FRZ - 1, 2, trim);    // capital
+        E.box(a - 1, 2 * FRZ - 3, 2, a + 2, 2 * FRZ - 3, 2, INK());
+      }
+    }
     const cx = right ? 59 : 3;
     g.box(right ? 60 : 2, y, 25, right ? 60 : 2, PY - 2, 29, mb);
     g.box(cx, PY - 1, 25, cx, PY - 1, 29, C.signWhite);
@@ -1127,10 +1174,29 @@ function svcFire(rng, v) {
         F.box(u0, y - 1, 0, u1, y - 1, -6, C.concrete);
         F.box(u0, SB - 2, -1, u1, SB - 2, -1, C.civPanel);
       } else {
-        F.box(u0, y, -1, u1, SB - 1, -1, C.signWhite);
-        for (let r = 2 * y + 2; r < 2 * SB - 1; r += 3) E.box(2 * u0, r, -2, 2 * u1 + 1, r, -2, C.civPanel);
-        E.box(2 * u0 + 2, 2 * y + 12, -2, 2 * u1 - 1, 2 * y + 13, -2, C.dtGlassDark);
-        E.box(2 * u0, 2 * y, -2, 2 * u1 + 1, 2 * y, -2, C.darkGray);
+        // (w5r2) critic w5r1: "the fire station has bold arched engine
+        // doors, which gives every facade crisp value contrast" (ref05). The
+        // slats and glass band sat at fine -2, coplanar with the door face
+        // (z-fight: the doors read grey-blue). They now sit one fine proud
+        // of the white leaf, which is lower: an arched glazed fanlight in a
+        // stone ring fills the head of each bay.
+        // (flush with the wall face: set back a voxel between the 2-proud
+        // piers the white leaf sat in AO and read grey)
+        F.box(u0, y, 0, u1, SB - 1, 0, C.signWhite);
+        const AH = 7;                                                  // fanlight height, fine rows
+        const top = 2 * SB - 1, lf = top - AH;                         // the leaf stops under the fanlight
+        for (let r = 2 * y + 3; r < lf - 1; r += 4) E.box(2 * u0, r, 0, 2 * u1 + 1, r, 0, C.offwhite);
+        E.box(2 * u0 + 2, lf - 6, 0, 2 * u1 - 1, lf - 5, 0, C.dtGlass);   // the leaf's window strip
+        for (let x = 2 * u0 + 5; x < 2 * u1 - 2; x += 4) E.box(x, lf - 6, 0, x, lf - 5, 0, C.signWhite);
+        E.box(2 * u0, lf - 1, 0, 2 * u1 + 1, lf - 1, 0, C.civPanel);    // leaf head rail
+        E.box(2 * u0, 2 * y, 0, 2 * u1 + 1, 2 * y, 0, C.darkGray);
+        const cxA = u0 + u1 + 1, rx = u1 - u0 + 1, ry = AH;             // fine: centre, half-width, rise
+        for (let x = 2 * u0; x <= 2 * u1 + 1; x++) for (let r = lf; r <= top; r++) {
+          const dx = (x + 0.5 - cxA) / rx, dy = (r + 0.5 - lf) / ry, e = dx * dx + dy * dy;
+          const col = e > 1.0 ? wall : e > 0.62 ? stone : (x - cxA === 0 || x - cxA === -1) ? C.signWhite : C.civGlass;
+          E.box(x, r, 0, x, r, e > 0.62 && e <= 1.0 ? 1 : 0, col);
+        }
+        E.box(cxA - 1, top - 1, 0, cxA, top, 2, stone);                    // keystone
       }
       win(F, u0 + 2, UW);
     });
@@ -1140,7 +1206,13 @@ function svcFire(rng, v) {
     // frieze: the name in red on a cream band, ink-edged
     F.box(14, FRZ, 1, X1, FRZ + 2, 1, stone);
     F.box(25, FRZ, 1, 57, FRZ + 2, 1, C.signWhite);
-    hiText(g, side, PZ, 41, FRZ + 0.5, 'FIRE STATION', C.fireRed, 1);
+    // (w5r1) the name sits on a PROUD plate (two out, ink-edged) so the
+    // piers' capitals below can't cut into the letters at the lens angle
+    F.box(28, FRZ, 2, 54, FRZ + 2, 2, C.signWhite);
+    { const Es = hiFacade(g, side, PZ);
+      Es.box(56, 2 * FRZ, 4, 109, 2 * FRZ, 4, INK());
+      Es.box(56, 2 * FRZ, 4, 56, 2 * FRZ + 5, 4, INK()); Es.box(109, 2 * FRZ, 4, 109, 2 * FRZ + 5, 4, INK()); }
+    hiText(g, side, PZ, 41, FRZ + 0.5, 'FIRE STATION', C.fireRed, 2);
     brickCourse(g, side, PZ, X0, X1, y + 1, FRZ - 2, wall, pierC);
   }
   // ---- ends
@@ -1228,16 +1300,43 @@ function svcFire(rng, v) {
     // grey paver walks: penthouse door → condenser pad → tank
     Hr.box(36, RY, 28, 39, RY, 59, C.civPanel);
     Hr.box(40, RY, 56, 103, RY, 59, C.civPanel);
-    // condenser pad (grey) with 2 × 5 white units, red caps, fan grilles
-    Hr.box(44, RY, 30, 99, RY, 52, C.concrete);
-    for (const az of [32, 43]) for (let ax = 46; ax <= 90; ax += 11) {
-      Hr.box(ax, RY + 1, az, ax + 7, RY + 5, az + 7, C.offwhite);
-      Hr.box(ax, RY + 6, az, ax + 7, RY + 6, az + 7, C.civPanel);
-      Hr.box(ax + 2, RY + 6, az + 2, ax + 5, RY + 6, az + 5, C.metalDark);
-      Hr.box(ax + 3, RY + 7, az + 3, ax + 4, RY + 7, az + 4, C.metal);
-      Hr.box(ax + 1, RY + 4, az - 1, ax + 3, RY + 4, az - 1, C.fireRed);   // a small red badge (ref05)
-      Hr.box(ax, RY + 1, az, ax + 7, RY + 1, az, C.darkGray);
-    }
+    // (w5r1) critic w4r14: "the fire station's roof is covered in a grid of
+    // identical grey boxes … varied rooftop equipment instead of a repeated
+    // box grid". The 2 × 5 condenser bank is gone. ref05's fire roof is a
+    // calm sage deck with a FEW different pieces scattered on it: one long
+    // twin-fan condenser on its own grey pad, a squat single-fan unit, a
+    // round turbine vent, a low louvred hood and two small crates with red
+    // lids at irregular spots — each a different size and height.
+    const fanTop = (x0, z0, s, yy) => {                           // a square fan grille
+      Hr.box(x0, yy, z0, x0 + s - 1, yy, z0 + s - 1, C.metalDark);
+      Hr.box(x0 + 1, yy, z0 + 1, x0 + s - 2, yy, z0 + s - 2, C.darkGray);
+      Hr.box(x0 + (s >> 1) - 1, yy + 1, z0 + (s >> 1) - 1, x0 + (s >> 1), yy + 1, z0 + (s >> 1), C.metal);
+    };
+    // twin-fan condenser (long, low) on a grey pad with its pipe stubs
+    Hr.box(44, RY, 30, 69, RY, 45, C.concrete);
+    Hr.box(46, RY + 1, 32, 67, RY + 6, 42, C.offwhite);
+    Hr.box(46, RY + 1, 32, 67, RY + 1, 42, C.darkGray);
+    for (let x = 48; x <= 65; x += 2) Hr.box(x, RY + 2, 31, x, RY + 5, 31, C.civPanel);   // louvre fins on the lens face
+    Hr.box(46, RY + 7, 32, 67, RY + 7, 42, C.civPanel);
+    fanTop(48, 33, 8, RY + 7); fanTop(57, 33, 8, RY + 7);
+    Hr.box(46, RY + 4, 43, 49, RY + 5, 44, C.metal);
+    // squat single-fan unit, turned the other way, taller
+    Hr.box(76, RY + 1, 34, 84, RY + 9, 42, C.offwhite);
+    Hr.box(76, RY + 1, 34, 84, RY + 1, 42, C.darkGray);
+    Hr.box(76, RY + 10, 34, 84, RY + 10, 42, C.civPanel);
+    fanTop(77, 35, 7, RY + 10);
+    Hr.box(75, RY + 6, 36, 75, RY + 7, 39, C.fireRed);                // red service badge (ref05)
+    // round turbine vent on a curb
+    Hr.box(92, RY, 36, 97, RY + 1, 41, C.civPanel);
+    for (const [dx, dz] of [[1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [5, 1], [0, 2], [5, 2], [0, 3], [5, 3], [0, 4], [5, 4], [1, 5], [2, 5], [3, 5], [4, 5]]) Hr.box(92 + dx, RY + 2, 36 + dz, 92 + dx, RY + 6, 36 + dz, (dx + dz) & 1 ? C.metal : C.metalDark);
+    Hr.box(93, RY + 7, 37, 96, RY + 7, 40, C.metal); Hr.box(94, RY + 8, 38, 95, RY + 8, 39, C.metalDark);
+    // low louvred exhaust hood
+    Hr.box(62, RY, 48, 71, RY + 3, 52, C.metal);
+    for (let x = 63; x <= 70; x += 2) Hr.box(x, RY + 1, 47, x, RY + 2, 47, C.metalDark);
+    Hr.box(61, RY + 4, 47, 72, RY + 4, 53, C.metalDark);
+    // two small crates with red lids (ref05's roof boxes), different sizes
+    Hr.box(86, RY + 1, 48, 91, RY + 4, 53, C.offwhite); Hr.box(86, RY + 5, 48, 91, RY + 5, 53, C.fireRed);
+    Hr.box(99, RY + 1, 44, 102, RY + 3, 47, C.civPanel); Hr.box(99, RY + 4, 44, 102, RY + 4, 47, C.fireRed);
     // plant-room roof: three AC units and a vent stack
     fineAC(g, 31, PY, 64, 6, 6); fineAC(g, 40, PY, 64, 6, 6); fineAC(g, 31, PY, 80, 6, 6);
     Hr.box(44, PY, 84, 45, PY + 6, 85, C.metal); Hr.box(43, PY + 7, 83, 46, PY + 7, 86, C.metalDark);
@@ -1557,7 +1656,12 @@ function svcFountain(rng, v) {
   // Same overall height, but the pedestal is lower and slimmer, the drum
   // 14 wide (was 18) and the shaft 10 wide (was 12) and 70 tall (was 50):
   // ~1:7, ref05's needle.
-  const S0 = T2 + 26, SM = S0 + 12, S1 = SM + 70;
+  // (w5r2) critic w5r1: "the monument obelisk is too thin and plain beside
+  // ref05's stepped base with statues". Midpoint of the w4r8 "lighthouse"
+  // (16 wide) and w4r11 "squat" (12 wide, 50 tall): the shaft is 12 fine
+  // wide again but keeps most of its height (64), and statue groups stand on
+  // the tier-2 corners round the pedestal foot (below), as in ref05.
+  const S0 = T2 + 26, SM = S0 + 12, S1 = SM + 64, SW = 6;
   const csq = (h, y0, y1, cf, col) => {                             // chamfered square, corner cut cf
     for (let yy = y0; yy < y1; yy++) for (let i = -h; i < h; i++) for (let k = -h; k < h; k++) {
       const ex = Math.min(i + h, h - 1 - i), ez = Math.min(k + h, h - 1 - k);
@@ -1566,7 +1670,7 @@ function svcFountain(rng, v) {
     }
   };
   csq(7, S0, SM, 1, mb);                                            // lower drum
-  for (let yy = SM; yy < S1; yy++) csq(5, yy, yy + 1, 1 + Math.floor(2 * (yy - SM) / (S1 - SM)), mb);
+  for (let yy = SM; yy < S1; yy++) csq(SW, yy, yy + 1, 1 + Math.floor(2 * (yy - SM) / (S1 - SM)), mb);
   sq(8, S0, S0 + 2, lip);                                           // base moulding
   csq(8, SM - 2, SM - 1, 1, lip); csq(7, SM - 1, SM, 1, lip);       // collar
   for (const n of SIDES) {
@@ -1576,10 +1680,22 @@ function svcFountain(rng, v) {
     sb(n, 5, 6, -4, 4, S0 + 3, SM - 4, relief);
     sb(n, 6, 7, -2, 2, S0 + 5, S0 + 7, mb);                          // tablet
     // the long flute up each face of the shaft (a shadow line)
-    sb(n, 4, 5, -1, 1, SM + 5, S1 - 8, null);
+    sb(n, SW - 1, SW, -1, 1, SM + 5, S1 - 8, null);
+    // a carved band a third of the way up the shaft
+    sb(n, SW, SW + 1, -SW + 1, SW - 1, SM + 16, SM + 18, lip);
   }
-  for (let k = 0; k < 5; k++) csq(5 - k, S1 + 2 * k, S1 + 2 * k + 2, Math.max(0, 2 - k), k === 4 ? lip : mb);   // pyramidion
-  sq(1, S1 + 10, S1 + 13, C.gold);
+  for (let k = 0; k < 6; k++) csq(SW - k, S1 + 2 * k, S1 + 2 * k + 2, Math.max(0, 2 - k), k === 5 ? lip : mb);   // pyramidion
+  // tier-2 corner statue groups: a carved block, a raised-arm hero and a
+  // kneeling figure at its foot (ref05's figures round the pedestal)
+  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const cx = sx * 19, cz = sz * 19;
+    hb(cx - 4, cx + 4, T2, T2 + 5, cz - 4, cz + 4, mb); hb(cx - 5, cx + 5, T2 + 5, T2 + 6, cz - 5, cz + 5, lip);
+    hb(cx - 4, cx + 4, T2 + 1, T2 + 4, cz - 4, cz + 4, null); hb(cx - 3, cx + 3, T2 + 1, T2 + 4, cz - 3, cz + 3, relief);
+    fineStatue(H, O + cx, T2 + 6, O + cz, relief);
+    hb(cx + 2 * sx, cx + 2 * sx + 2, T2 + 6, T2 + 10, cz - 2 * sz - 1, cz - 2 * sz + 1, relief);   // kneeling figure
+    hb(cx + 2 * sx, cx + 2 * sx + 2, T2 + 10, T2 + 12, cz - 2 * sz, cz - 2 * sz + 1, relief);
+  }
+  sq(1, S1 + 12, S1 + 15, C.gold);
   // ---- benches and lamps on the plaza, visitors on the walks and tiers
   // (w4r6) the plaza benches gave way to the twin pools (ref05 has none)
   const walk = SIDES.map((n) => cellRect(n, 22.5, 27, -5, 5));

@@ -1044,3 +1044,136 @@ gal-downtown-* now rings the showroom with 2 tiles of low shops/homes outside it
 1. Our BANK is still taller than the ref bank (about 101 vs about 75 voxels). If a critic again says "towers fill the frame", lower the bank's giant order by about 1 storey.
 2. The tower lots are still busy: lime cube trees in the side strips, people, the cochère taxi. The ref lots are clean paving with low hedges. Next lever: replace the hotelLot side-strip trees with low hedges or planters, and drop the podium-terrace side trees.
 3. The white P-block ([ui][life]) keeps landing in downtown crops. It needs its owner to fix it.
+
+## 2026-09-26 — wave 5, round 1 (builder)
+
+**Brief.** The 22 wave-4 losses agree on four things: (1) the towers crowd each other and their lots barely read; (2) facade depth should be built outward, with a composed base, shaft and crown; (3) glass bodies should be dtGlass/Teal with Hi used only for highlights; (4) each id needs its own identity. The last three critics (w4r12-r14) all named (1). w4r14 also said the glass on TECH, BLOX and BANK reads as "matte dark punched holes". coherence.md has no [downtown] items.
+
+**Changed (downtown.js only; no palette keys).**
+- **BANK, rebuilt to the ref05 proportions.** The ref bank is a broad, LOW temple on a beige forecourt.
+  - Footprint: plinth 51x41 (was 57x47), set back 18 from the front kerb.
+  - Heights: plinth 8 (was 11), order 30 (was 38), frieze 13 (was 17), attic 7 (was 9). The model top went from 102 to 85.
+  - The stair now starts at the plinth, 1 voxel per step and 23 wide, so the front of the lot stays open forecourt. That forecourt has two lawn panels in stone kerbs with a tree each, flags, lamps, benches, low side and back hedges, and a stone kerb round the lot rim. No fillLot scatter.
+  - Columns are slim, 5x5 with 7-wide bases and capitals (were 7x5). The corners stay 7x7. The glass bays are wider (9-11 voxels, were 7).
+  - The hall glass now sits on the column axis (H = Cl): 2 behind the column face instead of 3. In game the bays read bright blue with white streaks instead of dark navy slots.
+  - The pediment's gable runs back 7 (was 18). The long stepped teal roof had read as a staircase.
+  - Result in gal-3: BLOX's lot and entrance now show over the bank.
+- **No parked cars on tower lots.** A new `pocketPark()` builds a paved, kerbed strip with hedged lawn panels, trees and benches. It replaces the BLOX right-hand car park and the office-block side car park. These were the last two lot car parks; the spire's cochère taxi is a drop-off, not parking.
+- **TWINS** are one storey lower (top pt+66, was pt+76). The skybridge moved to pt+12. The twins now read as arcade podium, then 2 brick storeys, then the loggia, then the gold glass crown.
+- **`curtain()` glass ramp.** This is used by the SPIRE tiers, the TWINS/SKY/ONYX/BLOX crowns, TECH and the shops attic.
+  - Old ramp: 3 dark foot rows, 4 teal rows, 5 PALE dtGlassHi head rows. That pale head sat in transom and sunshade shadow and rendered grey (TECH measured (80,96,112)).
+  - New ramp: 1 Deep foot row, a teal body over about 62% of the floor, then a dtGlass head. The glints keep a white core, now with dtGlassHi edges.
+- **TECH:** the sunshades are 1 out (were 2) and the terracotta fins sit every ~12 (were 9). The upper block now renders bright cyan with white diagonals.
+- **BLOX upper punched zone:** 3-wide panes in pairs (were 2-wide triples), hoods 1 proud (were 2), pilasters 2 proud.
+
+**Measured.**
+- check.sh ok. Zero console errors on all 5 shots (rounds/downtown/w5r1-builder; gal-3 re-shot after the final bank edit).
+- Tris: gal-1 0.67M, gal-2 1.17M, gal-3 0.91M, one-glass-sky 0.17M, iso-mid 2.29M.
+- fps 20-39 on the galleries and 24 on iso-mid. Load was high from other agents; one-city-bank ran at 61.
+
+**Next.**
+1. TWINS and SPIRE still stand close together on gal-3 (adjacent lots with a 1-tile road between them). If critics repeat "shoulder to shoulder", the next lever is SPIRE's tier-1 height, or narrowing the twins' podium to x 9..53. The spire mast (top 205) also sets the gal-3 camera distance.
+2. The 1x1 towers on gal-1 are still 4-5:1 needles on full lots. They were left alone because silhouettes keep being praised.
+3. The bank's side faces have only 2 glass bays; the ref shows 4-5. A 4th side column (cz 22/33/44/54) would give narrower but more numerous bays.
+
+### Coordinator note (2026-09-27 10:15) — w5r1
+(1) "Lots buried under parked cars and props" — delete ALL parked cars and loose props from tower lots (the 21:45 note said this; check every id); a clean readable plinth = pale paving, 2-4 planters, steps, canopy. (2) "Chunky repeated pilaster bands" — my outward-depth note overshot into chunky bands: keep the podium/cornice depth, but on the shaft use FINE articulation — 1-voxel mullions between panes and slimmer piers (1-2 voxels proud), a column order only at the base. (3) Glass: reflective read = dtGlassHi top row / diagonal band on most panes.
+
+## 2026-09-26 — wave 5, round 2 (builder)
+
+**Critic (w5r1) picked the reference.** w4r13, w4r14 and w5r1 all say the same thing: the gal-3 towers (TECH, BLOX, TWINS, SPIRE) crowd and overlap each other, and their lots are hidden under props and cube saplings. The ref05 bank and hotel each stand on a clean pale plinth with low hedges. w5r1 also named "repeated tan/red pilaster bands" (TECH fins) and the saplings on the setbacks. The cars in the pair are almost all on the roads' parking lanes, which is not our file. coherence.md has no [downtown] items. I followed the coordinator's 10:15 note.
+
+**Changed (downtown.js only; no palette keys).**
+- **Clean lots, every id.**
+  - `fillLot` now places planters only (no trees, benches, bins, kiosks, umbrellas or lamps): at most 4 on a 2x2 lot and 2 on a 1x1.
+  - `people` places at most 2 figures per call.
+  - `hotelLot` (SKY, ONYX, TWINS, SPIRE) is now low only: paved stone-kerbed courts with an L of clipped hedge on the outer corner and one flower planter each, a lamp pair at the walk, and one low hedge run down each side strip. There are no trees, bollards, benches or scatter (`props` must be asked for).
+  - `podiumTerrace` has no trees. `skyGarden`'s lime corner boxes are off by default. `plazaStrip` and `forecourt` beds are low clipped hedges, and `pocketPark` has no tree.
+  - Also removed: the cochère taxi, BLOX's bike rack, umbrella and terrace trees, TECH's side and roof trees, and the twins' podium-roof trees.
+  - TECH's lot is a pale paved plaza (it was grass).
+- **Massing (less overlap).**
+  - SPIRE: podium 41 wide (was 45), tier 1 29x29 (was 33), tiers at Y+70/88/106 (were 74/97/118). Body 121 (was 133).
+  - TWINS: each tower is 21x31 (was 22x35) with a 5-voxel slot of sky between them, on a 47-wide podium.
+  - ONYX: stage 1 29 wide (was 33), upper stages 4 lower.
+  - BLOX: nf 6+v (was 7+v), with 1 banded storey.
+- **Facades.**
+  - On the slimmer shafts, gridBays had left 5-6-voxel blank corner slabs. Twins now use pw 1, which gives 4 windows a face, so the brick shaft reads like the ref hotel with white-headed windows. SPIRE and ONYX stage 1 use ww 4 (mullioned) with cpd 2. BLOX's punched zone uses ww 4 with cw 2.
+  - TECH: the mid-face terracotta fins are gone. The glass box is one curtain held by bold terracotta corner piers (3 wide, 2 proud), which is the critic's "fewer, larger facade steps".
+
+**Measured.**
+- check.sh ok, `_selfTest` ok, zero console errors on all 5 shots (rounds/downtown/w5r2-builder).
+- Tris: gal-1 0.67M, gal-2 1.15M, gal-3 1.19M, one-glass-sky 0.16M, iso-mid 2.27M. fps 29-33 on the galleries and 17-25 on iso-mid (other agents running).
+- Heights (v0 body): spire 121 (was 133), twins 103 (was 109), ONYX 132 (was 140), BLOX 106 (was 118).
+- In gal-3, every tower lot now reads as pale paving with low hedge edges. The TWINS/SPIRE pair has a visible gap and paving between them.
+
+**Next.**
+1. The gal-3 BLOX gallery variant still stands tall behind the BANK. If critics repeat "overlap", drop BLOX v1/v2 by another storey.
+2. iso-mid is still a dense wall of towers. That comes from demo-city's downtown density (coordinator's call).
+3. The kerbside cars that critics read as "lot clutter" are the roads piece's parking lane. That owner could thin it on gallery pages.
+4. The 1x1 towers on gal-1 are still 4-5:1 needles.
+
+### Coordinator note (2026-09-27 11:15) — w5r2: ONE clean massing per tower
+w5r2: "over-articulated stacks of chunky setbacks with coarse 2-3 voxel windows and crude block-letter signs, crammed on tight lots"; ref bank/hotel = "one clean massing each, fine regular window grids, crisp column + cornice rhythm, a small neat rooftop sign, a generous calm plinth with planters and a canopy". Simplify: at most ONE setback per tower (or none), a regular fine grid (windows 1 voxel wide at res 2 / 2 at res 4, evenly spaced) with thin mullions, a single crisp cornice, column rhythm only at the base, and SMALL signs (a neat plaque over the entrance or a small rooftop sign — no giant block letters). Lot: calm paving, planters, canopy entrance; no cars. Fewer, better elements.
+
+## 2026-09-26 — wave 5, round 3 (builder)
+
+**Critic (w5r2) picked the reference.** w4r13, w4r14, w5r1 and w5r2 agree: the towers crowd each other and read as busy stacks. w5r2 named the cause: "too many chunky setbacks, each tier adds a new ledge, colour band and roof garden", coarse windows, and big block-letter signs over the lower floors. The ref05 bank and hotel each read as ONE confident mass: base, a regular window grid, one cornice, a small sign. I followed the coordinator's 11:15 note. coherence.md has no open [downtown] items.
+
+**Changed (downtown.js only; no palette keys).**
+- New `fineShaft(g, T, y0, n, o)`, the ref05 hotel shaft: n identical storeys, PAIRS of framed 2-wide panes (shared mullion) between slim pilasters 1 proud, corner piers 1 proud, flush glass with glint streaks, a belt course at the foot, and ONE roofCornice.
+- One massing per tower (base + fineShaft + at most ONE setback):
+  - SPIRE: brick colonnade podium, a stone shaft of 5+v storeys, a glass lantern crown, a stepped cap and the striped mast. The loggia, the ribbon tier and the third tier are gone.
+  - TWINS: arcade podium, then two brick shafts of 4+v storeys each (brick pilasters, cream corners; each tower 19 wide with a 7-voxel slot, were 21 and 5), a gold-mullioned glass crown storey, a stepped gold cap and the spires. The loggia tier, the notches and the upper cornices are gone.
+  - BLOX: the left wing, banded storeys, teal fins, loggia and punched zone are gone. It is ONE white tower with continuous ribbons of fine 2-wide panes (per 99 = no pilasters), a curtain crown storey and one cornice, plus the blue lift core. The podium roof is a paved terrace with planters.
+  - SKY: ONE glass prism, a curtain wall (mullions every 4, a proud transom per floor) between silver corner piers, 5+v storeys, a 3-out cornice, and the helipad drum as its only setback. The shaft/terrace/crown split and the teal spine are gone.
+  - ONYX: a jade fineShaft of 4+v storeys with cream frames and gold belt + cornice, then ONE glass crown storey and the gold lantern + spire. The 3 stages, notches and balcony floor are gone.
+  - DECO: podium, fineShaft of 4+(v%2) storeys, one gold-headed crown storey, and stepped fins + spire. The 3 stages are gone.
+  - Clock tower: one storey lower (2+v).
+- Signs: new `plaque()` helper (3x5 pixelText on a slim 2-deep board, 7 tall, lettered both sides). Every portico sign uses it or 3x5 textC: letters, cochère, pergola, arch band, slab fascia, marquee fascia (now 7 tall) and temple name. The marquee's tall blade sign is gone. HOTEL keeps its roof sign, like the ref.
+- BANK: the stair is 31 wide (was 23), with 2-deep treads in alternating stone and shade. The flags moved to the lawn panels and the benches that sat on the stair are gone.
+
+**Measured.** check.sh ok, `_selfTest` ok, zero console errors on all 5 shots (rounds/downtown/w5r3-builder).
+- Tris: gal-1 0.67M, gal-2 1.11M, gal-3 1.19M, one-glass-sky 0.15M, iso-mid 2.21M.
+- fps: 34-36 on the galleries, 61 on the one-shot, 27 on iso-mid.
+- NOTE: the managed :8351 server was down from 20:57 for over 30 min. I shot on a private copy on port **8391** (`tools/dev-server.py 8391 .`, killed afterwards), never on 8351.
+- Model heights (sy incl. masts): spire 176/188, twins 130/142, ONYX 151/163, SKY 129/141, BLOX 108/128, deco 128/140.
+- In gal-3, SPIRE, TWINS and BLOX now each read as base, then one regular shaft, then one crown. The twins show a clear slot.
+
+**Next.**
+1. iso-mid is still a dense wall. It is demo-city density; the round tower (ORBIT) drum repeats 3x there and is the busiest silhouette left. Try a fineShaft-style ring.
+2. BLOX's ribbon faces read a little white-heavy at gallery zoom. Try wh 9 or a pale-grey spandrel if a critic calls it blank.
+3. The brick highrise (APTS), small office, glass office, hotel, office block and shops still use their older grids. Move them to fineShaft if critics name "coarse windows" again.
+4. Keep ONE setback per tower. Do not re-add loggias, balcony floors or extra tiers (w5r2 + coordinator 11:15).
+
+### Coordinator note (2026-09-27 11:50) — w5r3 was NOT a real verdict
+The dev server was down (stopped outside the agents) for ~45 min; the w5r3 critic could not boot the game. Ignore its "gap". Server is back. Re-render your r3 work first (you may not have been able to verify it), then continue with the 11:15 note.
+
+## 2026-09-26 — wave 5, round 4 (builder)
+
+**Critics.** w5r3 was not judged: the server was down. The w5r3 massing work had never been seen by a critic. w5r1 and w5r2, plus w4r13 and w4r14, still agree on three things: the towers crowd and overlap each other in gal-3, the TWINS/TECH facades read as "tan/red pilaster bands", and windows are coarse and dark. w5r2 also named "bank columns: thick blocks, no fluting". coherence.md has no open [downtown] items.
+
+**Measured first.** I measured each footprint with a flood fill of the enclosed plan (scratchpad dt/fp3.mjs).
+- Every 2x2 tower is already at or under 60% at ground and podium level: spire 33%, SKY 42%, ONYX 44-52%, TWINS 43-51%, BLOX 46-48%, TECH 48-51%, BANK 40-58%.
+- The 1x1s are 50-60% at ground but 66-83% at y20. The extra is the portico canopy and the upper podium storey.
+- The gal-3 "overlap" is height, not plan. Gallery framing fits the tallest model, so lowering everything does not shrink the frame, but it does shrink the overlap relative to the lots.
+
+**Changed (downtown.js only; no palette keys).**
+- TWINS: the shaft is a FLAT brick field with single 2-wide cream-framed punched windows. The grid is per 1, pw 3, pd 0, with cream corner piers 1 proud, like the ref05 hotel's centre bay. There are no more red/white pilaster stripes. The shaft is 3+v storeys (was 4+v), and the body now sits level with BLOX.
+- One storey off: SPIRE (4+v), SKY (4+v), ONYX (3+v), DECO (3+v%2), glass office (3+v), brick highrise APTS (3+v), round tower (4+v).
+- The SPIRE mast is +40 (was +60).
+- New tops: spire 143/155, SKY 116/128, ONYX 138/150, twins ~117/129, deco 115/127, APTS 93-117.
+- Glass: no Deep pane bodies left in punched windows. Small office, APTS, clock, office-block ribbons, hotel podium, bank attic and round v2 now use dtGlass bodies with Teal/Hi streaks (coordinator 02:50).
+- BANK: FLUTED columns. There are 1-deep grooves between ribs on every face: 1 per slim-column face, 3 per corner-column face. They read clearly in gal-3.
+
+**Measured.** check.sh ok, zero console errors on all 5 shots (rounds/downtown/w5r4-builder).
+- Tris: gal-1 0.62M, gal-2 1.10M, gal-3 1.05M, one-sky 0.15M, iso-mid 2.16M.
+- fps: 34-36 on the galleries, 28 on iso-mid.
+- `_selfTest` fails only on residential small-house#1 (not mine).
+
+**Next.**
+1. The 1x1 lots still have almost no forecourt: the portico sits about 4 voxels from the kerb, and the podium runs to the rear and side edges. The fix is a shallower podium (z 12..28) with B shifted back, but that means reworking 8 builders' hard-coded coordinates.
+2. The kerbside parked-car rows that critics read as "lot clutter" belong to roads/life.
+3. The round tower drum (3 slab rows a floor) is still the busiest repeated silhouette in iso-mid. Try 2 slab rows.
+
+### Coordinator note (2026-09-27 12:45) — w5r4: the midpoint between "over-articulated" (w5r2) and "plain slabs" (w5r4)
+Keep ONE clean massing (no stacks of chunky setbacks) but give every floor fine detail: a thin ledge/sill per floor (1 voxel), framed windows (light frame + glass), a few balconies on residential-looking ids, and a BUSY roof (AC units, vents, parapet rail, water tank, maybe a small neat sign). Detail = fine and regular, not chunky. (2) SIGN GLYPHS: "THEIE"/"SETRE" are illegible — your letter font has broken R/A/T etc. at the sign scale. Render every sign word large (one-<id>) and check each letter; fix the glyph table (civic had the same bug: FISE for FIRE). Short words (4-6 letters) read best.
