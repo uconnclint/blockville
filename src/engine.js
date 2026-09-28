@@ -152,6 +152,20 @@ const ISO_ZOOM_MIN = 36;
 // Ortho near is NEGATIVE: the camera sits only camDist from the target, and at
 // close zoom a tall tower near the bottom of the frame extends behind the
 // camera plane. A generous back margin keeps it from ever clipping.
+// PERF: frame-time governor ladder, best first (see Engine._governor).
+// q = render quality, pr = pixel-ratio cap, ss = post.js supersampling.
+// Measured on the reference city at iPad size (1180x820 CSS), pipelined ms
+// on an M-series Mac: q1@2 45, q1@1.5 28, q1@1 17, q0@1 11, q0@0.75 9.5.
+const GOV_RUNGS = [
+  { q: 2, pr: 2,    ss: 1.75 },
+  { q: 2, pr: 2,    ss: 1 },
+  { q: 1, pr: 2,    ss: 1 },
+  { q: 1, pr: 1.5,  ss: 1 },
+  { q: 1, pr: 1,    ss: 1 },
+  { q: 0, pr: 1,    ss: 1 },
+  { q: 0, pr: 0.75, ss: 1 },
+];
+
 const ISO_NEAR = -700;
 const ISO_FAR = 3200;
 
@@ -240,11 +254,15 @@ export class Engine {
     // and voxel bevelling. See CONTRACTS-RENDER.md §6.
     // PERF: start at the level this device can carry (see _deviceQuality);
     // the frame-time governor in render() steps down from there if needed.
-    this._quality = this._deviceQuality();
-    this._qualityCap = this._quality;
+    const devStart = this._deviceStart(this._deviceQuality());
+    this._quality = GOV_RUNGS[devStart.start].q;
+    this._qualityCap = GOV_RUNGS[devStart.cap].q;
     this._autoQ = true;
-    this._gov = { t: 0, acc: 0, n: 0, slow: 0, slowWins: 0, rung: this._quality === 2 ? 0 : this._quality === 1 ? 2 : 3,
-      cap: this._quality === 2 ? 0 : this._quality === 1 ? 2 : 3, lastChange: 0, failed: new Set(), probeAt: -1 };
+    this._gov = { t: 0, acc: 0, n: 0, slow: 0, slowWins: 0, rung: devStart.start,
+      cap: devStart.cap, lastChange: 0, failed: new Set(), probeAt: -1 };
+    // Render resolution is the biggest lever on retina tablets (frame cost
+    // scales with pixels: measured ~3x from pixel ratio 1 to 2).
+    this.renderer.setPixelRatio(Math.min(dpr, GOV_RUNGS[devStart.start].pr));
     // Micro-bevelling costs a measured 5.00x triangles (1.12M -> 5.60M for a
     // 500-building city, before shadow passes re-submit it). Off by default;
     // the per-vertex AO term carries block separation on its own.
@@ -2036,20 +2054,50 @@ export class Engine {
     } catch (e) { return 1; }
   }
 
-  // Governor rungs, best first: quality 2 (+ supersampling where post.js
-  // would use it), quality 2 without supersampling, quality 1, quality 0.
+  // Start rung + best rung the governor may probe up to, per device class.
+  // Touch devices and Chromebooks start low and earn their way up: booting
+  // too high means ~20 s of stutter before the governor has stepped down.
+  _deviceStart(q) {
+    const nav = typeof navigator !== 'undefined' ? navigator : {};
+    const ua = String(nav.userAgent || '');
+    const touchDev = /Android|iPhone|iPad|Mobile/i.test(ua) || ((nav.maxTouchPoints || 0) > 1 && /Macintosh/.test(ua));
+    if (q >= 2) return { start: 0, cap: 0 };
+    if (q === 1) return touchDev ? { start: 4, cap: 3 } : { start: 3, cap: 2 };
+    return /CrOS/.test(ua) || touchDev ? { start: 5, cap: 4 } : { start: 5, cap: 3 };
+  }
+
+  // Effective [quality, pixel ratio] of a rung on this display.
+  _rungKey(r) {
+    const R = GOV_RUNGS[r];
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    return R.q + '@' + Math.min(dpr, R.pr) + (R.ss > 1 ? 's' : '');
+  }
+
+  // Next rung from r in direction dir (+1 cheaper, -1 better) that actually
+  // changes something on this display (a dpr-1 screen skips the pixel-ratio
+  // rungs); -1 when there is none.
+  _rungStep(r, dir) {
+    const k = this._rungKey(r);
+    for (let n = r + dir; n >= 0 && n < GOV_RUNGS.length; n += dir) if (this._rungKey(n) !== k) return n;
+    return -1;
+  }
+
   _applyRung(r) {
-    const q = r <= 1 ? 2 : r === 2 ? 1 : 0;
-    if (this._post && this._post.setParams) this._post.setParams({ aa: { ssaa: r === 0 ? 1.75 : 1 } });
-    this.setQuality(q);
+    const R = GOV_RUNGS[r];
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+    if (this._post && this._post.setParams) this._post.setParams({ aa: { ssaa: R.ss } });
+    this.setQuality(R.q);
+    const pr = Math.min(dpr, R.pr);
+    if (this.renderer.getPixelRatio() !== pr) { this.renderer.setPixelRatio(pr); if (this._post) this.resize(); }
     this._gov.rung = r;
     this._gov.lastChange = this._elapsed;
   }
 
   // Called every frame with the real frame delta. Every 2 s: two slow windows
-  // in a row (avg < 50 fps, most frames slow) step one rung down; after 30 s
-  // at a lower rung it probes one rung up once, and a probe that is slow again
-  // within 10 s bans that rung. vsync hides headroom, hence probe-and-ban.
+  // in a row (avg < 50 fps, most frames slow) — or one very slow window
+  // (< 30 fps) — step one rung down; after 30 s at a lower rung it probes one
+  // rung up once, and a probe that is slow again within 12 s bans that rung.
+  // vsync hides headroom, hence probe-and-ban.
   _governor(dt) {
     const g = this._gov;
     // Ignore the first seconds (shader compiles, city meshing).
@@ -2061,19 +2109,21 @@ export class Engine {
     g.t = 0; g.acc = 0; g.n = 0; g.slow = 0;
     const since = this._elapsed - g.lastChange;
     if (avg > 1 / 50 && slowFrac > 0.5) {
-      g.slowWins++;
-      if (g.slowWins >= 2 && g.rung < 3 && since > 3) {
+      g.slowWins += avg > 1 / 30 ? 2 : 1;
+      const next = this._rungStep(g.rung, 1);
+      if (g.slowWins >= 2 && next >= 0 && since > 3) {
         if (g.probeAt >= 0 && this._elapsed - g.probeAt < 12) g.failed.add(g.rung);
         g.probeAt = -1;
         g.slowWins = 0;
-        this._applyRung(g.rung + 1);
+        this._applyRung(next);
       }
       return;
     }
     g.slowWins = 0;
-    if (g.rung > g.cap && since > 30 && avg < 1 / 55 && !g.failed.has(g.rung - 1)) {
+    const up = this._rungStep(g.rung, -1);
+    if (up >= g.cap && since > 30 && avg < 1 / 55 && !g.failed.has(up)) {
       g.probeAt = this._elapsed;
-      this._applyRung(g.rung - 1);
+      this._applyRung(up);
     }
   }
 

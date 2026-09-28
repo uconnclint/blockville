@@ -920,8 +920,14 @@ function update(dt) {
     saveTimer += dt; if (saveTimer > 10) { saveTimer = 0; autosave(); }
   }
 
+  // Fewer cars/people when the engine's frame-time governor has stepped the
+  // render quality down (slow iPads / Chromebooks): life is the main CPU cost.
+  const q = engine.getQuality();
+  if (q !== lifeQ) { lifeQ = q; life.setDensityScale(q >= 2 ? 1 : q === 1 ? 0.8 : 0.55); }
+
   engine.render(dt);
 }
+let lifeQ = -1;
 
 window.addEventListener('resize', () => engine.resize());
 
