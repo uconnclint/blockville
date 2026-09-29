@@ -82,27 +82,7 @@ function dayIcon(clockLabel) {
   return '☀️';
 }
 
-function fmtNum(v) {
-  const n = Math.round(typeof v === 'number' && isFinite(v) ? v : 0);
-  try { return n.toLocaleString('en-US'); } catch (_) { return String(n); }
-}
-
-function clamp01(v) {
-  const n = (typeof v === 'number' && isFinite(v)) ? v : 0;
-  return n < 0 ? 0 : (n > 1 ? 1 : n);
-}
-
-// happiness face that morphs 😟 🙂 😀 🤩 by value (0..1)
-function happyFace(v) {
-  const x = clamp01(v);
-  if (x < 0.3) return { em: '😟', word: 'sad', art: 'face-sad' };
-  if (x < 0.55) return { em: '🙂', word: 'okay', art: 'face-ok' };
-  if (x < 0.82) return { em: '😀', word: 'happy', art: 'face-happy' };
-  return { em: '🤩', word: 'super happy', art: 'face-amazed' };
-}
-
 // ---- the stylesheet (string built at init, injected into <head>) ----------
-
 const CSS = `
 #bv-ui, #bv-ui * { box-sizing: border-box; }
 #bv-ui {
@@ -137,7 +117,6 @@ const CSS = `
 /* runtime voxel icons (icons.js) in cards, stickers, menus */
 #bv-ui .bv-c-em .bv-glyph-img { width: 50px; height: 50px; }
 #bv-ui .bv-cell-em .bv-glyph-img { width: 56px; height: 56px; }
-#bv-ui .bv-mission-em .bv-glyph-img { width: 48px; height: 48px; }
 #bv-ui .bv-t-em { display: inline-flex; align-items: center; }
 #bv-ui .bv-ss-em { display: inline-flex; }
 #bv-ui .bv-ss-em .bv-glyph-img { width: 30px; height: 30px; }
@@ -147,12 +126,6 @@ const CSS = `
 #bv-ui .bv-il-ic .bv-glyph-img { width: 1.6em; height: 1.6em; }
 #bv-ui .bv-favs-tag { display: inline-flex; align-items: center; gap: 3px; }
 #bv-ui .bv-favs-ic .bv-glyph-img { width: 20px; height: 20px; }
-#bv-ui .bv-city-sub-ic { display: inline-flex; vertical-align: middle; }
-#bv-ui .bv-city-sub-ic .bv-glyph-img { width: 16px; height: 16px; }
-#bv-ui .bv-project-btn { display: flex; align-items: center; gap: 10px; }
-#bv-ui .bv-project-btn .bv-project-ic { display: inline-flex; flex: 0 0 auto; margin: 0; opacity: 1; font-size: 30px; }
-#bv-ui .bv-project-btn .bv-project-ic .bv-glyph-img { width: 46px; height: 46px; }
-#bv-ui .bv-project-btn .bv-project-tx { margin: 0; opacity: 1; font-size: 15px; }
 #bv-ui .bv-mode-em .bv-glyph-img { width: 2.4em; height: 2.4em; }
 #bv-ui .bv-menu-overlay { background-size: cover; background-position: center; }
 #bv-ui .bv-menu-logo { text-align: center; margin: -6px 0 2px; }
@@ -245,7 +218,6 @@ const CSS = `
 }
 .bv-stat .bv-ic { font-size: 22px; line-height: 1; }
 .bv-stat .bv-val { font-size: 20px; font-weight: 800; letter-spacing: .2px; }
-.bv-stat.bv-flash-up { background: rgba(47,191,113,.22); }
 .bv-day .bv-val { font-size: 16px; }
 .bv-day .bv-sub { font-size: 12px; font-weight: 700; opacity: .7; margin-left: 4px; }
 
@@ -595,21 +567,6 @@ const CSS = `
 }
 .bv-name-input:focus { border-color: var(--bv-accent); }
 
-/* ---------- extra HUD stats: jobs / happiness / air ---------- */
-.bv-happy .bv-ic { font-size: 24px; }
-.bv-air { gap: 6px; }
-.bv-air-bar {
-  width: 46px; height: 12px; border-radius: 7px;
-  background: rgba(43,106,153,.16); overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(43,106,153,.12);
-}
-.bv-air-fill {
-  display: block; height: 100%; width: 100%;
-  background: linear-gradient(90deg, #ffb703, #2fbf71);
-  border-radius: 7px;
-  transition: width .45s ease;
-}
-
 /* ---------- top-bar toggle pressed ---------- */
 .bv-btn-round.bv-on {
   background: var(--bv-accent);
@@ -695,59 +652,11 @@ const CSS = `
 }
 @keyframes bv-hint-bob { 0%,100% { transform: translateX(-50%); } 50% { transform: translateX(-42%); } }
 
-/* ---------- city helper (mission) card ---------- */
-.bv-mission {
-  position: absolute; left: calc(10px + env(safe-area-inset-left,0px));
-  bottom: calc(100px + env(safe-area-inset-bottom, 0px));
-  width: min(300px, calc(100vw - 24px));
-  display: none; flex-direction: column; gap: 8px;
-  padding: 14px; border-radius: 22px;
-  background: var(--bv-card-solid); color: var(--bv-text);
-  box-shadow: 0 12px 30px rgba(43,106,153,.26), inset 0 0 0 2px rgba(142,202,230,.5);
-  pointer-events: none;               /* container never blocks map drags */
-  z-index: 2;
-}
-.bv-mission.bv-show { display: flex; animation: bv-mission-in .34s var(--bv-spring) both; }
-.bv-mission.bv-complete { box-shadow: 0 14px 34px rgba(255,183,3,.4), inset 0 0 0 3px var(--bv-accent); }
-@keyframes bv-mission-in { from { opacity: 0; transform: translateX(-14px) scale(.94); } to { opacity: 1; transform: none; } }
-.bv-mission-top { display: flex; align-items: center; gap: 10px; }
-.bv-mission-em { font-size: 38px; line-height: 1; flex: 0 0 auto; }
-.bv-mission-title { font-size: 17px; font-weight: 900; line-height: 1.12; }
-.bv-mission-row { display: flex; align-items: center; gap: 8px; }
-.bv-mission-say {
-  flex: 0 0 auto; width: 38px; height: 38px; border: none; border-radius: 13px;
-  background: rgba(142,202,230,.25); color: inherit; font-size: 18px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; pointer-events: auto;
-  touch-action: manipulation; transition: transform .16s var(--bv-spring);
-}
-.bv-mission-say:active { transform: scale(.88); }
-.bv-mission-prog-tx { font-size: 13px; font-weight: 800; opacity: .8; }
-.bv-mission-bar { flex: 1 1 auto; height: 12px; border-radius: 7px; background: rgba(43,106,153,.14); overflow: hidden; }
-.bv-mission-fill { height: 100%; width: 0%; border-radius: 7px; background: linear-gradient(90deg, var(--bv-accent), var(--bv-accent-dark)); transition: width .4s var(--bv-spring); }
-.bv-mission.bv-complete .bv-mission-fill { background: linear-gradient(90deg, #2fbf71, #8ecae6); }
-.bv-mission-ask { font-size: 14px; font-weight: 700; opacity: .9; margin: 2px 0; display: none; }
-.bv-mission.bv-complete .bv-mission-ask { display: block; }
-.bv-mission-btns { display: flex; gap: 8px; pointer-events: auto; }
-.bv-mission-btn {
-  flex: 1 1 auto; border: none; cursor: pointer; border-radius: 14px;
-  font-size: 14px; font-weight: 900; padding: 10px 8px; min-height: 44px;
-  color: var(--bv-text); background: #eef4f8; pointer-events: auto;
-  touch-action: manipulation; transition: transform .16s var(--bv-spring);
-}
-.bv-mission-btn.bv-primary { color: #fff; background: linear-gradient(135deg, var(--bv-accent), var(--bv-accent-dark)); box-shadow: 0 6px 16px rgba(251,133,0,.4); }
-.bv-mission-btn:active { transform: scale(.94); }
-.bv-mission-next { display: none; }
-.bv-mission.bv-complete .bv-mission-next { display: block; }
-#bv-ui.bv-drawer-on .bv-mission { bottom: calc(200px + env(safe-area-inset-bottom, 0px)); }
-@media (max-height: 650px) {
-  #bv-ui.bv-drawer-on .bv-mission { transform: scale(.82); transform-origin: left bottom; bottom: calc(190px + env(safe-area-inset-bottom, 0px)); }
-}
-
 /* ---------- mode picker ---------- */
 .bv-mode-card { max-width: 580px; }
 /* Entry gate (splash / mode picker) — hide the in-game HUD chrome behind it. */
 #bv-ui.bv-gated .bv-top-wrap, #bv-ui.bv-gated .bv-toolbar, #bv-ui.bv-gated .bv-picbar,
-#bv-ui.bv-gated .bv-banner, #bv-ui.bv-gated .bv-mpbadge, #bv-ui.bv-gated .bv-mission,
+#bv-ui.bv-gated .bv-banner, #bv-ui.bv-gated .bv-mpbadge,
 #bv-ui.bv-gated .bv-favs { display: none !important; }
 .bv-splash-sub { text-align: center; color: var(--bv-text); opacity: .8; font-weight: 800; font-size: 15px; margin: 2px 0 14px; }
 .bv-splash-actions { display: flex; flex-direction: column; gap: 11px; }
@@ -782,10 +691,6 @@ const CSS = `
 .bv-mode-opt .bv-mode-em { font-size: 44px; line-height: 1; }
 .bv-mode-opt .bv-mode-nm { font-size: 18px; font-weight: 900; }
 .bv-mode-opt .bv-mode-age { font-size: 13px; font-weight: 700; opacity: .7; }
-.bv-project-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; max-height: 55vh; overflow-y: auto; margin: 10px 0; }
-.bv-project-btn { border: none; border-radius: 18px; padding: 12px; background: rgba(142,202,230,.18); color: var(--bv-text); font: inherit; font-weight: 850; text-align: left; cursor: pointer; }
-.bv-project-btn span { display: block; font-size: 12px; opacity: .72; margin-top: 3px; }
-
 /* ---------- picture-play simple bar ---------- */
 .bv-picbar {
   position: absolute; left: 0; right: 0;
@@ -844,7 +749,6 @@ const CSS = `
   .bv-postcard-banner { animation: none; }
   .bv-cell.bv-got .bv-cell-em { animation: none; }
   .bv-banner.bv-show { animation: none; }
-  .bv-mission.bv-show { animation: none; }
   .bv-toast.bv-toast-blocked { animation: none; }
   .bv-swipe-hint { animation: none; }
 }
@@ -867,8 +771,8 @@ export function initUI(hooks) {
       toast: noop, celebrate: noop, showWelcome: noop, destroy: noop,
       // v3.3 additions — all harmless no-ops without a DOM
       showModePicker: noop, setMode: noop, setSpeechState: noop, setBrightState: noop,
-      showHelpMenu: noop, showProjects: noop, showBlocked: noop,
-      setFavorites: noop, setMission: noop, hideMission: noop,
+      showHelpMenu: noop, showBlocked: noop,
+      setFavorites: noop,
       showCityManager: noop, announce: noop,
       // v3.5 multiplayer
       showMultiplayer: noop, setMultiplayer: noop, setArt: noop,
@@ -1035,46 +939,6 @@ export function initUI(hooks) {
   // ===== TOP BAR =====
   const top = el('div', 'bv-top');
 
-  function makeStat(cls, icon, val, artKey) {
-    const s = el('div', 'bv-stat ' + cls);
-    const ic = el('span', 'bv-ic');
-    setGlyph(ic, artKey, icon);
-    const v = el('span', 'bv-val', val);
-    s.appendChild(ic); s.appendChild(v);
-    return { root: s, ic, v };
-  }
-
-  const stPop = makeStat('bv-pop', '👥', '0', 'stat-people');
-  stPop.root.setAttribute('aria-label', '0 people');
-  stPop.root.title = 'People living in your homes';
-
-  // 💼 jobs — hidden until a jobs value is first supplied
-  const stJobs = makeStat('bv-jobs', '💼', '0', 'stat-jobs');
-  stJobs.root.style.display = 'none';
-  stJobs.root.setAttribute('aria-label', '0 jobs');
-  stJobs.root.title = 'Jobs created by shops, factories, and city places';
-
-  // 😀 happiness FACE — morphs 😟🙂😀🤩 by value; hidden until supplied
-  const stHappy = el('div', 'bv-stat bv-happy');
-  const happyIc = el('span', 'bv-ic');
-  setGlyph(happyIc, 'face-ok', '🙂');
-  happyIc.setAttribute('role', 'img');
-  stHappy.appendChild(happyIc);
-  stHappy.style.display = 'none';
-  stHappy.setAttribute('aria-label', 'Happiness');
-  stHappy.title = 'Parks, schools, fun, and nearby shops help happiness';
-
-  // 🌿 air meter — small bar; hidden until supplied
-  const stAir = el('div', 'bv-stat bv-air');
-  const airIc = el('span', 'bv-ic'); setGlyph(airIc, 'stat-air', '🌿'); stAir.appendChild(airIc);
-  const airBar = el('span', 'bv-air-bar');
-  const airFill = el('span', 'bv-air-fill');
-  airBar.appendChild(airFill);
-  stAir.appendChild(airBar);
-  stAir.style.display = 'none';
-  stAir.setAttribute('aria-label', 'Clean air');
-  stAir.title = 'Factories lower air quality; nearby trees and wind power help';
-
   // day stat: sun/moon icon + "Day n" + clock sublabel
   const stDay = el('div', 'bv-stat bv-day');
   const dayIc = el('span', 'bv-ic');
@@ -1083,10 +947,6 @@ export function initUI(hooks) {
   const daySub = el('span', 'bv-sub', '');
   stDay.appendChild(dayIc); stDay.appendChild(dayVal); stDay.appendChild(daySub);
 
-  top.appendChild(stPop.root);
-  top.appendChild(stJobs.root);
-  top.appendChild(stHappy);
-  top.appendChild(stAir);
   top.appendChild(stDay);
   top.appendChild(el('div', 'bv-sep'));
 
@@ -1330,40 +1190,6 @@ export function initUI(hooks) {
   favs.appendChild(favsStrip);
   root.appendChild(favs);
 
-  // ===== CITY HELPER (mission) CARD =====
-  const mission = el('div', 'bv-mission');
-  mission.setAttribute('role', 'region');
-  mission.setAttribute('aria-label', 'City Helper');
-  const misTop = el('div', 'bv-mission-top');
-  const misEm = el('span', 'bv-mission-em');
-  setGlyph(misEm, 'face-ok', '🙂');
-  misEm.setAttribute('aria-hidden', 'true');
-  const misTitle = el('div', 'bv-mission-title', '');
-  misTop.appendChild(misEm); misTop.appendChild(misTitle);
-  const misRow = el('div', 'bv-mission-row');
-  const misSay = iconBtn('bv-mission-say', '🔊', 'Say it again', null, 'helper-say-again');
-  const misBar = el('div', 'bv-mission-bar');
-  const misFill = el('span', 'bv-mission-fill');
-  misBar.appendChild(misFill);
-  const misProg = el('span', 'bv-mission-prog-tx', '');
-  misRow.appendChild(misSay); misRow.appendChild(misProg); misRow.appendChild(misBar);
-  const misAsk = el('div', 'bv-mission-ask', '');
-  const misBtns = el('div', 'bv-mission-btns');
-  const misFree = el('button', 'bv-mission-btn', 'Free Build');
-  misFree.type = 'button';
-  const misNext = el('button', 'bv-mission-btn bv-primary bv-mission-next', 'Next ▶');
-  misNext.type = 'button';
-  misBtns.appendChild(misFree); misBtns.appendChild(misNext);
-  mission.appendChild(misTop);
-  mission.appendChild(misRow);
-  mission.appendChild(misAsk);
-  mission.appendChild(misBtns);
-  let missionSay = '';
-  misSay.addEventListener('click', () => call(h.onSpeak, missionSay));
-  misFree.addEventListener('click', () => call(h.onFreeBuild));
-  misNext.addEventListener('click', () => call(h.onMissionNext));
-  root.appendChild(mission);
-
   // ===== PICTURE-PLAY SIMPLE BAR =====
   const picbar = el('div', 'bv-picbar');
   picbar.setAttribute('role', 'toolbar');
@@ -1428,9 +1254,6 @@ export function initUI(hooks) {
   let curSpeed = 1;
   let activeTool = null;   // null | 'road' | 'tree' | 'bulldoze' | entry object
   let openCat = null;      // currently open drawer category key or null
-  let popDisplayed = null; // last shown pop number (updated every animation frame)
-  let popTarget = null;    // value we're currently animating toward (or settled at)
-  let popAnimId = 0;
   const catalog = {};      // key -> [entry...]
   const cardBtns = {};     // entry.id -> { btn, entry }
   let stickers = new Set();  // collected type ids (defensive copy of what's passed)
@@ -1681,49 +1504,6 @@ export function initUI(hooks) {
     void banner.offsetWidth;
     banner.classList.add('bv-show');
     root.classList.add('bv-banner-on');
-  }
-
-  // ---------- pop count-up ----------
-  function animatePop(target) {
-    const to = Math.max(0, Math.round(typeof target === 'number' && isFinite(target) ? target : 0));
-    if (popDisplayed == null) {
-      popDisplayed = to; popTarget = to; stPop.v.textContent = fmtNum(to);
-      stPop.root.setAttribute('aria-label', to + (to === 1 ? ' person' : ' people'));
-      return;
-    }
-    // Already animating toward (or settled at) this value — don't restart. This
-    // guard uses popTarget, NOT popDisplayed: setStats is called ~every 0.2s but
-    // the tween runs 0.45s, so guarding on popDisplayed (which only reaches `to`
-    // at completion) would restart the tween forever and make the number flicker.
-    if (to === popTarget) return;
-    // real people change → announce politely for screen readers
-    stPop.root.setAttribute('aria-label', to + (to === 1 ? ' person' : ' people'));
-    announce('Now ' + to + (to === 1 ? ' person lives' : ' people live') + ' in your city');
-    popTarget = to;
-    const from = popDisplayed;
-
-    stPop.root.classList.remove('bv-flash-up');
-    void stPop.root.offsetWidth;
-    stPop.root.classList.add('bv-flash-up');
-    setTimeout(() => stPop.root.classList.remove('bv-flash-up'), 600);
-
-    const myId = ++popAnimId;
-    const start = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    const dur = 450;
-    const raf = (typeof requestAnimationFrame === 'function')
-      ? requestAnimationFrame
-      : (cb) => setTimeout(() => cb(Date.now()), 16);
-    function step(now) {
-      if (myId !== popAnimId) return;
-      const t = Math.min(1, (now - start) / dur);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const cur = Math.round(from + (to - from) * eased);
-      popDisplayed = cur;                 // track the visible value every frame so a
-      stPop.v.textContent = fmtNum(cur);  // new target mid-tween starts from here
-      if (t < 1) raf(step);
-      else { popDisplayed = to; stPop.v.textContent = fmtNum(to); }
-    }
-    raf(step);
   }
 
   // ---------- overlays ----------
@@ -2025,45 +1805,16 @@ export function initUI(hooks) {
     card.appendChild(el('p', null, 'Choose one—nothing will be reset unless you ask.'));
     const choices = el('div', 'bv-choices');
     const how = iconLabel(el('button', 'bv-cta bv-soft'), '🎮', 'How to play', 'btn-help');
-    const projects = iconLabel(el('button', 'bv-cta bv-soft'), '🗺️', 'Choose a project', 'icon-map');
     const modes = iconLabel(el('button', 'bv-cta bv-soft'), '🧸', 'Change play mode', 'mode-picture-play');
-    const restart = iconLabel(el('button', 'bv-cta bv-soft'), '🎯', 'Restart helper missions', 'icon-target');
     const close = el('button', 'bv-cta', 'Back to my city');
-    [how, projects, modes, restart, close].forEach((b) => { b.type = 'button'; choices.appendChild(b); });
+    [how, modes, close].forEach((b) => { b.type = 'button'; choices.appendChild(b); });
     how.addEventListener('click', showWelcomeOverlay);
-    projects.addEventListener('click', () => { closeOverlay(); call(h.onProjects); });
     modes.addEventListener('click', () => { closeOverlay(); showModePickerOverlay(h.onMode); });
-    restart.addEventListener('click', () => { closeOverlay(); call(h.onRestartHelper); });
     close.addEventListener('click', closeOverlay);
     card.appendChild(choices); ov.appendChild(card);
     ov.addEventListener('click', (e) => { if (e.target === ov) closeOverlay(); });
     root.appendChild(ov); activeOverlay = ov;
     activeOverlayDlg = makeDialog(ov, card, closeOverlay, { label: 'Help', initialFocus: how });
-  }
-
-  function showProjectsOverlay(projects, onPick) {
-    closeOverlay();
-    const ov = el('div', 'bv-overlay');
-    const card = el('div', 'bv-card bv-mode-card');
-    card.appendChild(iconLabel(el('h2'), '🗺️', 'Choose a city project', 'icon-map'));
-    card.appendChild(el('p', null, 'Try one idea, or close this and keep free-building.'));
-    const list = el('div', 'bv-project-list');
-    (Array.isArray(projects) ? projects : []).forEach((p) => {
-      if (!p || !p.id) return;
-      const b = el('button', 'bv-project-btn');
-      b.appendChild(glyphSpan('bv-project-ic', p.emoji || '🎯', p.art || emojiArt(p.emoji || '🎯')));
-      const bt = el('span', 'bv-project-tx');
-      bt.appendChild(el('b', null, p.title || 'Project'));
-      bt.appendChild(el('span', null, p.say || ''));
-      b.type = 'button'; b.appendChild(bt);
-      b.addEventListener('click', () => { closeOverlay(); call(onPick || h.onProject, p.id); });
-      list.appendChild(b);
-    });
-    card.appendChild(list);
-    const close = el('button', 'bv-cta bv-soft', 'Keep free-building');
-    close.type = 'button'; close.addEventListener('click', closeOverlay); card.appendChild(close);
-    ov.appendChild(card); root.appendChild(ov); activeOverlay = ov;
-    activeOverlayDlg = makeDialog(ov, card, closeOverlay, { label: 'Choose a city project', initialFocus: list.querySelector('button') || close });
   }
 
   // ---------- first-run mode picker ----------
@@ -2165,8 +1916,7 @@ export function initUI(hooks) {
     let firstOpt = null;
     [
       ['picture', '🧸', 'Picture Play', 'Big tools + spoken guidance', 'mode-picture-play'],
-      ['explorer', '🏙️', 'City Explorer', 'Full catalog + guided projects', 'mode-city-explorer'],
-      ['everything', '✨', 'Everything', 'Full catalog, free build', 'mode-everything'],
+      ['everything', '🏙️', 'Full Toolbox', 'Every building, road and tree', 'mode-city-explorer'],
     ].forEach(([mode, em, nm, age, art]) => {
       const opt = el('button', 'bv-mode-opt');
       opt.type = 'button';
@@ -2232,7 +1982,7 @@ export function initUI(hooks) {
   let curMode = 'everything';
   const advButtons = [];
   function applyMode(mode, picturePalette) {
-    const m = (mode === 'picture' || mode === 'explorer' || mode === 'everything') ? mode : 'everything';
+    const m = mode === 'picture' ? 'picture' : 'everything';   // (an old saved 'explorer' choice is the full toolbox)
     curMode = m;
     root.classList.toggle('bv-mode-picture', m === 'picture');
     // hide advanced top-bar buttons in Picture Play (minimal UI)
@@ -2276,26 +2026,6 @@ export function initUI(hooks) {
     favs.classList.add('bv-show');
     if (curMode !== 'picture') root.classList.add('bv-fav-on');
   }
-
-  // ---------- city helper (mission) ----------
-  function setMissionData(m) {
-    const d = m || {};
-    setGlyph(misEm, d.art || emojiArt(d.emoji || '🎯'), d.emoji || '🎯');
-    misTitle.textContent = d.title == null ? '' : String(d.title);
-    missionSay = d.say == null ? '' : String(d.say);
-    const total = Math.max(0, Math.round(Number(d.total) || 0));
-    const doneRaw = Math.max(0, Math.round(Number(d.done) || 0));
-    const done = total > 0 ? Math.min(total, doneRaw) : doneRaw;
-    const complete = !!d.complete;
-    misProg.textContent = total > 0 ? (done + ' of ' + total) : '';
-    const pct = complete ? 100 : (total > 0 ? Math.round(Math.min(1, done / total) * 100) : 0);
-    misFill.style.width = pct + '%';
-    misAsk.textContent = d.ask == null ? '' : String(d.ask);
-    mission.classList.toggle('bv-complete', complete);
-    mission.classList.add('bv-show');
-    mission.setAttribute('aria-label', 'City Helper: ' + (d.title || 'Mission'));
-  }
-  function hideMissionCard() { mission.classList.remove('bv-show'); }
 
   // ---------- city manager ----------
   let cityOv = null, cityDlg = null, cityArgs = null;
@@ -2425,11 +2155,7 @@ export function initUI(hooks) {
       const info = el('div', 'bv-city-info');
       info.appendChild(el('div', 'bv-city-name', c.name || 'City'));
       const day = Math.max(1, Math.round(Number(c.day) || 1));
-      const pop = Math.max(0, Math.round(Number(c.pop) || 0));
-      const sub = el('div', 'bv-city-sub', 'Day ' + day + ' · ');
-      sub.appendChild(glyphSpan('bv-city-sub-ic', '👥', 'stat-people'));
-      sub.appendChild(document.createTextNode(' ' + pop));
-      info.appendChild(sub);
+      info.appendChild(el('div', 'bv-city-sub', 'Day ' + day));
       row.appendChild(info);
       const acts = el('div', 'bv-city-acts');
       if (isCurrent) {
@@ -2496,27 +2222,6 @@ export function initUI(hooks) {
     setStats(s) {
       try {
         const d = s || {};
-        if ('pop' in d) animatePop(d.pop);
-        if ('jobs' in d) {
-          const j = Math.max(0, Math.round(Number(d.jobs) || 0));
-          stJobs.v.textContent = fmtNum(j);
-          stJobs.root.style.display = '';
-          stJobs.root.setAttribute('aria-label', j + (j === 1 ? ' job' : ' jobs'));
-        }
-        if ('happiness' in d) {
-          const f = happyFace(d.happiness);
-          setGlyph(happyIc, f.art, f.em);
-          happyIc.setAttribute('aria-label', 'Happiness: ' + f.word);
-          stHappy.setAttribute('aria-label', 'People are ' + f.word);
-          stHappy.style.display = '';
-        }
-        if ('air' in d) {
-          const a = clamp01(d.air);
-          airFill.style.width = Math.round(a * 100) + '%';
-          const airWord = a < 0.4 ? 'smoggy' : (a < 0.7 ? 'okay' : 'clean');
-          stAir.setAttribute('aria-label', 'Air is ' + airWord);
-          stAir.style.display = '';
-        }
         if ('day' in d) {
           const day = Math.max(1, Math.round(Number(d.day) || 1));
           dayVal.textContent = 'Day ' + day;
@@ -2633,10 +2338,6 @@ export function initUI(hooks) {
       try { showHelpMenuOverlay(); } catch (_) { /* ignore */ }
     },
 
-    showProjects(projects, onPick) {
-      try { showProjectsOverlay(projects, onPick); } catch (_) { /* ignore */ }
-    },
-
     // ---- v3.3 additions ----
     showModePicker(onPick) {
       try { showModePickerOverlay(onPick); } catch (_) { /* ignore */ }
@@ -2668,14 +2369,6 @@ export function initUI(hooks) {
 
     setFavorites(entries) {
       try { setFavoritesRow(entries); } catch (_) { /* ignore */ }
-    },
-
-    setMission(m) {
-      try { setMissionData(m); } catch (_) { /* ignore */ }
-    },
-
-    hideMission() {
-      try { hideMissionCard(); } catch (_) { /* ignore */ }
     },
 
     showCityManager(opts) {

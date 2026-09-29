@@ -3,9 +3,10 @@
 // Owns `state` (read-only to everyone else). All public methods are defensive:
 // bad args never throw, they return a safe value.
 //
-// Sandbox model: no economy, no zones-that-grow, no milestones. Kids pick a
-// specific building (a CATALOG ENTRY) and place it instantly. Buildings may
-// cover a tw×td footprint. Population is a cosmetic stat (drives car/ped density).
+// Plain sandbox: nothing to manage. No money, no residents or jobs, no happiness or
+// air, no goals. Kids pick a specific building (a CATALOG ENTRY) and place it
+// instantly; buildings may cover a tw×td footprint. The sim only knows the map,
+// what was built, and the day/night clock (life.js sizes traffic from the buildings).
 
 import { T, N, DAY_LENGTH, idx, inBounds } from './constants.js';
 
@@ -39,7 +40,7 @@ export class Sim {
     const s = (seed >>> 0) || ((Math.random() * 0xffffffff) >>> 0) || 1;
     this._rand = mulberry32(s);
 
-    // Catalog lookup (id -> {cat, tw, td, cap}). Injected via setCatalog too.
+    // Catalog lookup (id -> {cat, tw, td, variants}). Injected via setCatalog too.
     this._byId = new Map();
     if (catalog) this.setCatalog(catalog);
 
@@ -52,29 +53,16 @@ export class Sim {
       bridge: new Uint8Array(N * N),     // 1 on a ROAD tile that sits over water
       buildings: [],                     // [{bid,type,cat,x,z,tw,td,variant}]
       nextBid: 1,
-      pop: 0,                            // RESIDENTS only (sum of caps of 'homes')
-      jobs: 0,                           // sum of caps of all non-home categories
-      happiness: 1,                      // 0..1 cosmetic, recomputed cheaply
-      air: 1,                            // 0..1 cosmetic, recomputed cheaply
       day: 1, clock: 0.3, speed: 1,
       seed: s,
     };
 
-    // Cached tile counts, maintained incrementally on placeRoad/placeTree/bulldoze
-    // so metrics() never has to rescan the whole map.
-    this._roadCount = 0;
-    this._treeCount = 0;
-    this._bridgeCount = 0;
-    this._statTimer = 0;   // seconds accumulated toward the next stat recompute
-
     this._events = [];
     this._generateBaseTerrain();
     this._scatterTrees();
-    this._recountTiles();
-    this._recompute();
   }
 
-  // Register the building catalog so load() can reconstruct footprints/caps.
+  // Register the building catalog so load() can reconstruct footprints.
   // CATALOG = { homes:[ENTRY..], shops:[..], factories:[..], fun:[..] }.
   setCatalog(catalog) {
     this._byId = new Map();
@@ -88,7 +76,6 @@ export class Sim {
           cat,
           tw: (e.tw | 0) || 1,
           td: (e.td | 0) || 1,
-          cap: Number.isFinite(e.cap) ? e.cap : 0,
           variants: (e.variants | 0) || 1,
         });
       }
@@ -438,7 +425,7 @@ export class Sim {
     return { ok: false, reason: firstReason || 'terrain' };
   }
 
-  // Place a catalog building. `entry` = { id, cat, tw, td, cap, variants }.
+  // Place a catalog building. `entry` = { id, cat, tw, td, variants }.
   // Uses plan() to auto-rotate the building so its front faces an adjacent road.
   // Returns { ok, reason?, bid }. reason ∈ 'bounds' | 'terrain' | 'occupied'.
   place(entry, x, z, variant) {
@@ -446,7 +433,6 @@ export class Sim {
     if (!entry || typeof entry !== 'object') return { ok: false, reason: 'terrain' };
     x |= 0; z |= 0;
 
-    const cap = Number.isFinite(entry.cap) ? entry.cap : 0;
     const cat = entry.cat || (this._byId.get(entry.id) && this._byId.get(entry.id).cat) || 'homes';
 
     // Choose the rotation + effective footprint.
@@ -476,10 +462,7 @@ export class Sim {
 
     // tw/td stored as the EFFECTIVE dims so bulldoze/refresh logic is unchanged.
     st.buildings.push({ bid, type: entry.id, cat, x, z, tw: etw, td: etd, rot, variant: v });
-    // pop counts RESIDENTS (homes) only; every other category adds jobs.
-    if (cat === 'homes') st.pop += cap; else st.jobs += cap;
     this._events.push({ type: 'placed', bid, entry, x, z, variant: v, rot, etw, etd });
-    this._recompute();
     return { ok: true, bid };
   }
 
@@ -497,15 +480,12 @@ export class Sim {
       st.map[i] = T.ROAD;
       st.variant[i] = 0;
       st.bridge[i] = 0;
-      this._roadCount++;
       return { ok: true };
     }
     if (m === T.WATER) { // bridge: road spans the water
       st.map[i] = T.ROAD;
       st.variant[i] = 0;
       st.bridge[i] = 1;
-      this._roadCount++;
-      this._bridgeCount++;
       return { ok: true };
     }
     return { ok: false, reason: 'occupied' };
@@ -522,8 +502,6 @@ export class Sim {
     if (m === T.GRASS) {
       st.map[i] = T.TREE;
       st.variant[i] = this._randByte();
-      this._treeCount++;
-      this._recompute(); // trees noticeably raise happiness / air
       return { ok: true };
     }
     return { ok: false, reason: m === T.WATER || m === T.SAND || m === T.MOUNTAIN ? 'terrain' : 'occupied' };
@@ -551,12 +529,7 @@ export class Sim {
         }
       }
       st.buildings.splice(bi, 1);
-      const cap = this._capOf(b);
-      // Reverse whichever tally this building fed (homes → pop, else → jobs).
-      if (b.cat === 'homes') st.pop = Math.max(0, st.pop - cap);
-      else st.jobs = Math.max(0, st.jobs - cap);
       this._events.push({ type: 'removed', bid, x: b.x, z: b.z, tw: b.tw, td: b.td });
-      this._recompute();
       return { ok: true, removed: bid };
     }
 
@@ -565,19 +538,14 @@ export class Sim {
       this._clearTile(i);
       st.map[i] = T.WATER;
       st.bridge[i] = 0;
-      this._roadCount = Math.max(0, this._roadCount - 1);
-      this._bridgeCount = Math.max(0, this._bridgeCount - 1);
       return { ok: true };
     }
     if (m === T.ROAD) {
       this._clearTile(i);
-      this._roadCount = Math.max(0, this._roadCount - 1);
       return { ok: true };
     }
     if (m === T.TREE) {
       this._clearTile(i);
-      this._treeCount = Math.max(0, this._treeCount - 1);
-      this._recompute(); // fewer trees → recompute happiness / air
       return { ok: true };
     }
     return { ok: false, reason: 'terrain' }; // grass/water/sand
@@ -593,192 +561,6 @@ export class Sim {
     st.bridge[i] = 0;
   }
 
-  // Capacity a building contributes to pop (from entry cap via catalog lookup).
-  _capOf(b) {
-    const rec = this._byId.get(b.type);
-    if (rec && Number.isFinite(rec.cap)) return rec.cap;
-    return Number.isFinite(b.cap) ? b.cap : 0;
-  }
-
-  // ---- cosmetic stats (happiness / air) + metrics -----------------------
-
-  // Rescan the map once to (re)seed the cached road/tree/bridge counters.
-  // Called at construction and after load(); edits maintain them incrementally.
-  _recountTiles() {
-    const { map, bridge } = this.state;
-    let road = 0, tree = 0, br = 0;
-    for (let i = 0; i < map.length; i++) {
-      const m = map[i];
-      if (m === T.ROAD) { road++; if (bridge[i] === 1) br++; }
-      else if (m === T.TREE) tree++;
-    }
-    this._roadCount = road;
-    this._treeCount = tree;
-    this._bridgeCount = br;
-  }
-
-  // True if any TREE tile sits within Chebyshev `radius` of the footprint at
-  // (x,z) sized tw×td. Cheap window scan (only used for the few factories).
-  _treeNearFootprint(x, z, tw, td, radius) {
-    const { map } = this.state;
-    const x0 = x - radius, x1 = x + tw - 1 + radius;
-    const z0 = z - radius, z1 = z + td - 1 + radius;
-    for (let tz = z0; tz <= z1; tz++) {
-      if (tz < 0 || tz >= N) continue;
-      for (let tx = x0; tx <= x1; tx++) {
-        if (tx < 0 || tx >= N) continue;
-        if (map[idx(tx, tz)] === T.TREE) return true;
-      }
-    }
-    return false;
-  }
-
-  _roadNearFootprint(x, z, tw, td) {
-    const { map } = this.state;
-    for (let tz = z - 1; tz <= z + td; tz++) for (let tx = x - 1; tx <= x + tw; tx++) {
-      if (!inBounds(tx, tz)) continue;
-      if (tx >= x && tx < x + tw && tz >= z && tz < z + td) continue;
-      if (map[idx(tx, tz)] === T.ROAD) return true;
-    }
-    return false;
-  }
-
-  // A real crossing is a continuous run of bridge tiles with ordinary road on
-  // both banks. A single road tile dropped into water is still a bridge piece,
-  // but it does not count as crossing the river for the City Helper.
-  _bridgeCrossings() {
-    const st = this.state;
-    const isBridge = (x, z) => inBounds(x, z) && st.bridge[idx(x, z)] === 1;
-    const isLandRoad = (x, z) => inBounds(x, z) && st.map[idx(x, z)] === T.ROAD && !isBridge(x, z);
-    let crossings = 0;
-    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
-      if (!isBridge(x, z)) continue;
-      if ((x === 0 || !isBridge(x - 1, z)) && isLandRoad(x - 1, z)) {
-        let ex = x; while (ex + 1 < N && isBridge(ex + 1, z)) ex++;
-        if (isLandRoad(ex + 1, z)) crossings++;
-      }
-      if ((z === 0 || !isBridge(x, z - 1)) && isLandRoad(x, z - 1)) {
-        let ez = z; while (ez + 1 < N && isBridge(x, ez + 1)) ez++;
-        if (isLandRoad(x, ez + 1)) crossings++;
-      }
-    }
-    return crossings;
-  }
-
-  // Iterate buildings once, fold in cached tile counts, and produce the full
-  // metrics object. Also stores the derived happiness/air back onto state.
-  // Defensive: any failure falls back to safe values.
-  _recompute() {
-    const st = this.state;
-    try {
-      const trees = this._treeCount | 0;
-      let homes = 0, shops = 0, factories = 0, funCount = 0, downtown = 0;
-      let parks = 0, schools = 0, firestations = 0, windPowers = 0;
-      let roadConnectedBuildings = 0, roadConnectedHomes = 0, roadConnectedJobs = 0;
-      const types = Object.create(null);
-      let factoriesFarFromTrees = 0;
-      const shopTypes = new Set();
-      const homePts = [];
-      const shopPts = [];
-      const factoryPts = [];
-
-      for (const b of st.buildings) {
-        if (!b) continue;
-        const cat = b.cat;
-        const type = b.type;
-        if (type) types[type] = (types[type] || 0) + 1;
-        if (this._roadNearFootprint(b.x, b.z, b.tw | 0 || 1, b.td | 0 || 1)) {
-          roadConnectedBuildings++;
-          if (cat === 'homes') roadConnectedHomes++;
-          else if (cat !== 'deco') roadConnectedJobs++;
-        }
-        if (cat === 'homes') { homes++; homePts.push(b); }
-        else if (cat === 'shops') { shops++; shopPts.push(b); if (type) shopTypes.add(type); }
-        else if (cat === 'factories') {
-          factories++;
-          factoryPts.push(b);
-          if (!this._treeNearFootprint(b.x, b.z, b.tw | 0 || 1, b.td | 0 || 1, 6)) factoriesFarFromTrees++;
-        }
-        else if (cat === 'fun') funCount++;
-        else if (cat === 'downtown') downtown++;
-        if (type === 'park') parks++;
-        else if (type === 'school') schools++;
-        else if (type === 'fire-station') firestations++;
-        else if (type === 'wind-power') windPowers++;
-      }
-
-      // Shops within Chebyshev 6 of any home (anchor-to-anchor).
-      let shopNearHome = 0;
-      for (const s of shopPts) {
-        for (const h of homePts) {
-          if (Math.max(Math.abs(s.x - h.x), Math.abs(s.z - h.z)) <= 6) { shopNearHome++; break; }
-        }
-      }
-
-      const shopVariety = shopTypes.size;
-      // Count unique trees close to at least one factory. This powers the guided
-      // clean-air mission, so trees planted on the other side of town do not count.
-      const nearFactoryTreeTiles = new Set();
-      for (const f of factoryPts) {
-        const tw = f.tw | 0 || 1, td = f.td | 0 || 1;
-        for (let z = Math.max(0, f.z - 6); z <= Math.min(N - 1, f.z + td - 1 + 6); z++) {
-          for (let x = Math.max(0, f.x - 6); x <= Math.min(N - 1, f.x + tw - 1 + 6); x++) {
-            if (st.map[idx(x, z)] === T.TREE) nearFactoryTreeTiles.add(idx(x, z));
-          }
-        }
-      }
-      const treesNearFactories = nearFactoryTreeTiles.size;
-      // Happiness responds mostly to amenities the PLAYER adds (parks, schools,
-      // shops, fun) and dips when factories sit away from greenery, so the HUD
-      // face visibly reacts. Greenery is measured LOCALLY (factoriesFarFromTrees)
-      // rather than by a global tree count — the big procedural forest would
-      // otherwise pin these at the ceiling and they'd never move.
-      const happiness = clamp(
-        0.6 + 0.04 * parks + 0.03 * (schools > 0 ? 1 : 0) + 0.02 * shopVariety +
-        0.015 * funCount - 0.05 * factoriesFarFromTrees,
-        0.15, 1,
-      );
-      // Air: only factories WITHOUT nearby trees pollute — so planting trees next
-      // to a factory (moving it from "far" to "near") visibly cleans the air, and
-      // wind power helps too. No global tree term, so the forest can't mask it.
-      const air = clamp(
-        1 - 0.10 * factoriesFarFromTrees + 0.05 * windPowers,
-        0.1, 1,
-      );
-
-      st.happiness = happiness;
-      st.air = air;
-
-      return {
-        residents: st.pop | 0,
-        jobs: st.jobs | 0,
-        roadTiles: this._roadCount | 0,
-        bridges: this._bridgeCount | 0,
-        bridgeCrossings: this._bridgeCrossings(),
-        homes, shops, factories, funCount, downtown,
-        trees, treesNearFactories, parks, schools, firestations,
-        shopNearHome, roadConnectedBuildings, roadConnectedHomes, roadConnectedJobs,
-        happiness, air, types,
-      };
-    } catch (e) {
-      // Never throw from a cosmetic recompute; keep whatever state we had.
-      return {
-        residents: st.pop | 0, jobs: st.jobs | 0,
-        roadTiles: this._roadCount | 0, bridges: this._bridgeCount | 0, bridgeCrossings: 0,
-        homes: 0, shops: 0, factories: 0, funCount: 0, downtown: 0,
-        trees: this._treeCount | 0, treesNearFactories: 0, parks: 0, schools: 0, firestations: 0,
-        shopNearHome: 0, roadConnectedBuildings: 0, roadConnectedHomes: 0, roadConnectedJobs: 0, types: {},
-        happiness: Number.isFinite(st.happiness) ? st.happiness : 1,
-        air: Number.isFinite(st.air) ? st.air : 1,
-      };
-    }
-  }
-
-  // Public cheap snapshot of city stats (used by missions + suggestions).
-  metrics() {
-    return this._recompute();
-  }
-
   // ---- tick --------------------------------------------------------------
 
   // Advances clock/day only, then RETURNS the drained events. Callers must
@@ -788,9 +570,6 @@ export class Sim {
     if (Number.isFinite(dt) && dt > 0) {
       st.clock += dt / DAY_LENGTH;
       while (st.clock >= 1) { st.clock -= 1; st.day++; }
-      // Cheap cosmetic stat refresh roughly every 2 sim-seconds.
-      this._statTimer += dt;
-      if (this._statTimer >= 2) { this._statTimer = 0; this._recompute(); }
     }
     const out = this._events;
     this._events = [];
@@ -853,7 +632,7 @@ export class Sim {
     return JSON.stringify(obj);
   }
 
-  // Reconstruct occ/map/zoneOf/pop from the buildings list. Needs a catalog
+  // Reconstruct occ/map/zoneOf from the buildings list. Needs a catalog
   // (call setCatalog first). Returns false on anything malformed or v !== 2.
   load(str) {
     try {
@@ -931,14 +710,12 @@ export class Sim {
       // Buildings — reconstruct footprints from the catalog.
       st.buildings = [];
       st.nextBid = 1;
-      st.pop = 0;
-      st.jobs = 0;
       for (const rec of d.buildings) {
         if (!rec || typeof rec.t !== 'string') continue;
         const info = this._byId.get(rec.t);
         if (!info) continue; // unknown type without catalog — skip safely
         let x = rec.x | 0, z = rec.z | 0;
-        const { cap, cat } = info;
+        const { cat } = info;
         // Effective dims: catalog dims, swapped when rot is odd. Missing r → 0.
         const rot = (rec.r | 0) & 3;
         const etw = (rot & 1) ? info.td : info.tw;
@@ -975,17 +752,11 @@ export class Sim {
         }
         st.variant[idx(x, z)] = v & 255;
         st.buildings.push({ bid, type: rec.t, cat, x, z, tw: etw, td: etd, rot, variant: v });
-        // Recompute pop (residents) vs jobs from the rebuilt buildings.
-        if (cat === 'homes') st.pop += cap; else st.jobs += cap;
       }
 
       st.day = Number.isFinite(d.day) ? (d.day | 0) || 1 : 1;
       st.clock = Number.isFinite(d.clock) ? clamp(d.clock, 0, 1) : 0.3;
       this._events = [];
-      // jobs/happiness/air are derived — rebuild caches + cosmetic stats.
-      this._statTimer = 0;
-      this._recountTiles();
-      this._recompute();
       return true;
     } catch (e) {
       return false;
@@ -1001,8 +772,8 @@ export function _selfTest() {
   try {
     // Fake mini-catalog (don't import models.js).
     const catalog = {
-      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: '\u{1F3E0}', tw: 1, td: 1, cap: 2, variants: 3 }],
-      factories: [{ id: 'plant', cat: 'factories', name: 'Plant', emoji: '\u{1F3ED}', tw: 2, td: 2, cap: 6, variants: 2 }],
+      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: '\u{1F3E0}', tw: 1, td: 1, variants: 3 }],
+      factories: [{ id: 'plant', cat: 'factories', name: 'Plant', emoji: '\u{1F3ED}', tw: 2, td: 2, variants: 2 }],
     };
     const hut = catalog.homes[0];
     const plant = catalog.factories[0];
@@ -1018,7 +789,6 @@ export function _selfTest() {
         const i = z * N + x;
         M.map[i] = T.GRASS; M.variant[i] = 0; M.occ[i] = 0; M.bridge[i] = 0;
       }
-      if (s._recountTiles) s._recountTiles();
       return s;
     };
 
@@ -1028,14 +798,13 @@ export function _selfTest() {
     // place 1×1
     const p1 = sim.place(hut, 16, 16);
     const c = {};
-    c.place1x1 = p1.ok && S.pop === 2 && S.map[idx(16, 16)] === T.BLDG &&
+    c.place1x1 = p1.ok && S.map[idx(16, 16)] === T.BLDG &&
       S.zoneOf[idx(16, 16)] === T.ZONE_R && S.occ[idx(16, 16)] === p1.bid;
 
-    // place 2×2 (factory → ZONE_I on every tile so smoke works). Factory cap
-    // feeds JOBS, not residents: pop stays 2, jobs becomes 6.
+    // place 2×2 (factory → ZONE_I on every tile so smoke works).
     const p2 = sim.place(plant, 18, 18);
     const zi = S.zoneOf[idx(18, 18)] === T.ZONE_I && S.zoneOf[idx(19, 19)] === T.ZONE_I;
-    c.place2x2 = p2.ok && S.pop === 2 && S.jobs === 6 && S.occ[idx(19, 19)] === p2.bid && zi;
+    c.place2x2 = p2.ok && S.occ[idx(19, 19)] === p2.bid && zi;
 
     // overlap rejected (anchored so it hits the plant)
     const pOverlap = sim.place(hut, 19, 19);
@@ -1049,11 +818,9 @@ export function _selfTest() {
     const pWater = sim.place(hut, wx, wz);
     c.terrainRejected = !pWater.ok && pWater.reason === 'terrain';
 
-    // bulldoze middle-of-footprint removes whole 2×2; the factory's JOBS drop
-    // back to 0 while residents (pop) are untouched.
+    // bulldoze middle-of-footprint removes the whole 2×2.
     const bd = sim.bulldoze(19, 19); // inside plant (18..19, 18..19)
     c.bulldozeFootprint = bd.ok && bd.removed === p2.bid &&
-      S.pop === 2 && S.jobs === 0 &&
       S.occ[idx(18, 18)] === 0 && S.occ[idx(19, 19)] === 0 &&
       S.map[idx(18, 18)] === T.GRASS && S.map[idx(19, 18)] === T.GRASS;
 
@@ -1077,7 +844,7 @@ export function _selfTest() {
     for (let s = 0; s < DAY_LENGTH; s++) sim3.tick(1);
     c.dayWraps = sim3.state.day === 2;
 
-    // save / load roundtrip reproduces map + pop
+    // save / load roundtrip reproduces the map
     const sim4 = flatten(new Sim(2024, catalog), 8, 8, 44, 44);
     sim4.place(hut, 16, 16);
     sim4.place(plant, 20, 20);
@@ -1090,8 +857,7 @@ export function _selfTest() {
     // Roundtrip fidelity: re-saving the loaded sim reproduces the exact blob, and
     // the placed things landed. (Full-map compare is unreliable now that terrain is
     // procedurally regenerated; the save carries only player edits + seed.)
-    c.saveLoad = loaded && sim5.state.pop === sim4.state.pop &&
-      sim5.state.jobs === sim4.state.jobs && sim5.save() === blob &&
+    c.saveLoad = loaded && sim5.save() === blob &&
       sim5.state.map[idx(16, 16)] === T.BLDG && sim5.state.map[idx(16, 17)] === T.ROAD &&
       sim5.state.map[idx(18, 16)] === T.TREE;
 
@@ -1102,8 +868,8 @@ export function _selfTest() {
 
     // ---- rotation checks -------------------------------------------------
     const catalog2 = {
-      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: 'h', tw: 1, td: 1, cap: 2, variants: 3 }],
-      shops: [{ id: 'shop21', cat: 'shops', name: 'Shop', emoji: 's', tw: 2, td: 1, cap: 3, variants: 2 }],
+      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: 'h', tw: 1, td: 1, variants: 3 }],
+      shops: [{ id: 'shop21', cat: 'shops', name: 'Shop', emoji: 's', tw: 2, td: 1, variants: 2 }],
     };
     const hut2 = catalog2.homes[0];
     const shop21 = catalog2.shops[0];
@@ -1178,7 +944,6 @@ export function _selfTest() {
     simCross.state.map[idx(21, 20)] = T.WATER;
     simCross.placeRoad(19, 20); simCross.placeRoad(20, 20);
     simCross.placeRoad(21, 20); simCross.placeRoad(22, 20);
-    c.bridgeCrossing = simCross.metrics().bridgeCrossings === 1;
     // bulldozing the bridge restores WATER and clears the flag
     const bdBr = simBr.bulldoze(bx, bz);
     c.bridgeBulldozeRestoresWater = bdBr.ok && SB.map[bi] === T.WATER && SB.bridge[bi] === 0;
@@ -1205,9 +970,9 @@ export function _selfTest() {
 
     // ---- big footprints (v3.1: up to 4×4) --------------------------------
     const catalogBig = {
-      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: 'h', tw: 1, td: 1, cap: 2, variants: 3 }],
-      fun: [{ id: 'arena', cat: 'fun', name: 'Arena', emoji: 'a', tw: 4, td: 4, cap: 8, variants: 2 }],
-      shops: [{ id: 'shop32', cat: 'shops', name: 'Mall', emoji: 'm', tw: 3, td: 2, cap: 5, variants: 2 }],
+      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: 'h', tw: 1, td: 1, variants: 3 }],
+      fun: [{ id: 'arena', cat: 'fun', name: 'Arena', emoji: 'a', tw: 4, td: 4, variants: 2 }],
+      shops: [{ id: 'shop32', cat: 'shops', name: 'Mall', emoji: 'm', tw: 3, td: 2, variants: 2 }],
     };
     const hutB = catalogBig.homes[0];
     const arena = catalogBig.fun[0];
@@ -1225,9 +990,7 @@ export function _selfTest() {
       }
     }
     const b44 = bldgOfB(sim44, p44.bid);
-    // arena is category 'fun' → its cap feeds JOBS, residents stay 0.
-    c.place4x4 = all16 && !!b44 && b44.tw === 4 && b44.td === 4 &&
-      sim44.state.pop === 0 && sim44.state.jobs === 8;
+    c.place4x4 = all16 && !!b44 && b44.tw === 4 && b44.td === 4;
 
     // Overlap onto the 4×4 is rejected.
     const p44over = sim44.place(hutB, 12, 12);
@@ -1269,77 +1032,36 @@ export function _selfTest() {
     const treeOK = SM.map[idx(26, 26)] === T.TREE;
     const bldgOK = SM.buildings.length === 1 && SM.buildings[0].x === 30 &&
       SM.buildings[0].z === 30 && SM.occ[idx(30, 30)] === SM.buildings[0].bid &&
-      SM.map[idx(30, 30)] === T.BLDG && SM.pop === 2;
+      SM.map[idx(30, 30)] === T.BLDG;
     // The old flat index, read raw in the new grid, would be the WRONG tile —
     // confirm the remap actually moved it (roadOld != idx(28,28) since N changed).
     const remapped = roadOld !== idx(28, 28);
     c.migrateResize = migLoaded && roadOK && treeOK && bldgOK && remapped;
 
-    // ---- v3.3: pop/jobs split, metrics, happiness, shopNearHome ----------
+    // ---- plain sandbox: no residents, jobs, happiness or air --------------------
     const catalog3 = {
-      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: 'h', tw: 1, td: 1, cap: 2, variants: 3 }],
-      shops: [{ id: 'bakery', cat: 'shops', name: 'Bakery', emoji: 'b', tw: 1, td: 1, cap: 3, variants: 3 }],
-      factories: [{ id: 'plant', cat: 'factories', name: 'Plant', emoji: 'p', tw: 1, td: 1, cap: 5, variants: 3 }],
-      fun: [{ id: 'park', cat: 'fun', name: 'Park', emoji: 'k', tw: 1, td: 1, cap: 1, variants: 3 }],
+      homes: [{ id: 'hut', cat: 'homes', name: 'Hut', emoji: 'h', tw: 1, td: 1, variants: 3 }],
+      shops: [{ id: 'bakery', cat: 'shops', name: 'Bakery', emoji: 'b', tw: 1, td: 1, variants: 3 }],
+      factories: [{ id: 'plant', cat: 'factories', name: 'Plant', emoji: 'p', tw: 1, td: 1, variants: 3 }],
     };
-    const hut3 = catalog3.homes[0];
-    const bakery3 = catalog3.shops[0];
-    const plant3 = catalog3.factories[0];
-    const park3 = catalog3.fun[0];
-
-    // pop counts homes only; jobs counts everything else.
     const simM = flatten(new Sim(31337, catalog3), 6, 6, 22, 22);
     const SMx = simM.state;
-    simM.place(hut3, 10, 10);   // pop +2
-    simM.place(hut3, 12, 10);   // pop +2
-    simM.place(bakery3, 14, 10); // jobs +3
-    simM.place(plant3, 16, 10); // jobs +5
-    c.popHomesOnly = SMx.pop === 4 && SMx.jobs === 8;
-
-    // metrics() returns finite, sane numbers with the required fields.
-    const mm = simM.metrics();
-    const need = ['residents', 'jobs', 'roadTiles', 'bridges', 'homes', 'shops',
-      'factories', 'funCount', 'downtown', 'trees', 'parks', 'schools',
-      'firestations', 'shopNearHome', 'happiness', 'air'];
-    let metricsSane = need.every((k) => k in mm && Number.isFinite(mm[k]));
-    c.metricsSane = metricsSane && mm.residents === 4 && mm.jobs === 8 &&
-      mm.homes === 2 && mm.shops === 1 && mm.factories === 1 &&
-      mm.happiness >= 0.15 && mm.happiness <= 1 && mm.air >= 0.1 && mm.air <= 1;
-
-    // happiness increases after adding parks + trees. The base map already has
-    // ~70 terrain trees, which alone saturate happiness at the clamp ceiling, so
-    // first depress it below 1 with factories in the central tree-free zone
-    // (each counts as "far from trees" → applies the penalty), then add parks.
-    const simHap = flatten(new Sim(4242, catalog3), 20, 20, 40, 40);
-    // A few factories in the central tree-free zone depress happiness below the
-    // ceiling (each is "far from trees" → penalty) without flooring it, so adding
-    // parks can measurably raise it back.
-    simHap.place(plant3, 26, 26);
-    simHap.place(plant3, 30, 26);
-    simHap.place(plant3, 34, 26);
-    const h0 = simHap.state.happiness;   // below 1 (a few factories, no nearby trees)
-    simHap.place(park3, 26, 32);
-    simHap.place(park3, 28, 32);
-    simHap.place(park3, 30, 32);
-    const h1 = simHap.state.happiness;
-    c.happinessRises = h0 < 1 && h1 > h0;
-
-    // shopNearHome detects a shop placed next to a home.
-    const simS = flatten(new Sim(5150, catalog3), 14, 14, 44, 44);
-    simS.place(hut3, 20, 20);
-    simS.place(bakery3, 21, 20);         // adjacent → within Chebyshev 6
-    const near = simS.metrics().shopNearHome;
-    simS.place(bakery3, 40, 40);         // far away → not counted
-    const nearAfterFar = simS.metrics().shopNearHome;
-    c.shopNearHome = near === 1 && nearAfterFar === 1;
-
-    // load() recomputes jobs (derived, not stored) from rebuilt buildings.
-    const jobsBlob = simM.save();
-    const simJ = new Sim(999);
-    simJ.setCatalog(catalog3);
-    const jLoaded = simJ.load(jobsBlob);
-    c.loadRecomputesJobs = jLoaded && simJ.state.pop === 4 && simJ.state.jobs === 8 &&
-      Number.isFinite(simJ.state.happiness) && Number.isFinite(simJ.state.air);
+    simM.place(catalog3.homes[0], 10, 10);
+    simM.place(catalog3.shops[0], 14, 10);
+    simM.place(catalog3.factories[0], 16, 10);
+    // Nothing to manage: the sim tracks no people, jobs, mood or air, and keeps no counters.
+    c.noStats = !('pop' in SMx) && !('jobs' in SMx) && !('happiness' in SMx) && !('air' in SMx) &&
+      typeof simM.metrics === 'undefined' && SMx.buildings.length === 3;
+    // A shop with no home anywhere, and a home with no shop or road, place exactly like any other building.
+    const simAlone = flatten(new Sim(2, catalog3), 6, 6, 22, 22);
+    c.anyBuildingAlone = simAlone.place(catalog3.shops[0], 8, 8).ok && simAlone.place(catalog3.factories[0], 12, 8).ok &&
+      simAlone.state.buildings.length === 2;
+    // A save written by the game with stats (extra pop/jobs keys) still loads, and the extras are ignored.
+    const oldBlob = JSON.parse(simM.save());
+    oldBlob.pop = 99; oldBlob.jobs = 7; oldBlob.happiness = 0.5; oldBlob.money = 1500;
+    const simOld = new Sim(999); simOld.setCatalog(catalog3);
+    c.loadsOldSave = simOld.load(JSON.stringify(oldBlob)) && simOld.state.buildings.length === 3 &&
+      simOld.save() === simM.save();
 
     // ---- v3.6: generative terrain (oceans/lakes/rivers/mountains/forests) --
     const simTer = new Sim(24680, catalog);

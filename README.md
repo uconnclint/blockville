@@ -23,9 +23,9 @@ python3 -m http.server 8347
 
 ## How to play
 
-First run, pick a mode: **🧸 Picture Play** (ages 5–6: six big picture choices,
-read-aloud, minimal text), **🏙️ City Explorer** (ages 7–9: full catalog + stats +
-guided missions), or **✨ Everything** (the whole toolbox, nothing hidden).
+First run, pick a mode: **🧸 Picture Play** (ages 5–6: big picture choices,
+read-aloud, minimal text) or **🏙️ Full Toolbox** (every building, road and tree).
+Either way there is nothing to manage: no money, no score, no goals.
 
 1. ✋ **Move safely** — the dedicated Move tool pans the map. If a building or
    tree is selected, a tap places it while a drag pans instead, so exploring can
@@ -40,19 +40,14 @@ guided missions), or **✨ Everything** (the whole toolbox, nothing hidden).
    turn to face the nearest road. If a spot won't work you get a red footprint and
    a friendly reason ("This building needs grass").
 4. 🌉 **Cross the river** — drag a road from one bank to the other and it becomes
-   a wooden bridge. The helper only celebrates after both banks are connected.
-5. 🧭 **City Helper** (optional) — little missions with a picture, read-aloud
-   directions, and "2 of 3" progress: *build a road with 5 pieces*, *add 3 homes*,
-   *put a shop near the homes*, *build a bridge across the river*… tap **Free Build**
-   any time to just play.
-6. 👀 **Watch it come alive** — cars drive, people stroll (some walk their dogs!),
+   a wooden bridge.
+5. 👀 **Watch it come alive** — cars drive, people stroll (some walk their dogs!),
    boats drift the river, rides spin, balloons rise, factories puff smoke, windows
    glow at night, fireworks burst over the stadium. Seasons change every 3 days.
 
-**Cause & effect (gentle):** homes bring people, shops give places to visit, parks
-and trees make neighborhoods happier and cleaner, factories make smoke (plant trees
-to help!). The HUD shows 👥 people, 💼 jobs, a 😀 happiness face, and 🌿 clean-air —
-the game only *suggests*, never punishes.
+**A plain sandbox:** buildings, roads and trees go anywhere they fit, in any order.
+Nothing needs homes, jobs, money or a park nearby, and the game never keeps score or
+suggests what to build next. The streets fill with cars and walkers as the city grows.
 
 **🤝 Build together (multiplayer):** tap 🤝, choose *Build Together* to get a code
 (like `SUNNY-TIGER`), and friends who *Join a Friend* with that code build the SAME
@@ -61,8 +56,7 @@ by a tiny Cloudflare Worker + Durable Object (`mp/`); rooms are open, forgiving,
 vanish when everyone leaves.
 
 More: ↩️ undo and 🧹 erase in every mode, 📷 photo postcard (name your city!),
-📖 sticker book (all 93 types), 🎯 find-my-city, optional project library,
-changeable play modes,
+📖 sticker book (all 93 types), 🎯 find-my-city, changeable play modes,
 🗂️ several saved cities, ❓ replayable help, ☀️ always-bright and 🔊 read-aloud
 toggles, plus screen-reader labels, focusable dialogs, and reduced-motion support.
 
@@ -77,10 +71,9 @@ city autosaves; start or switch cities from 🗂️.
 - 93-type building catalog across six categories (homes, shops, factories, fun,
   downtown skyscrapers, deco; incl. animated rides), all pure-data voxel models
   (`src/models.js`), meshed with hidden-face culling (`src/engine.js`).
-- Sandbox sim with footprint occupancy, cosmetic cause-and-effect stats
-  (residents/jobs/happiness/air) + compact v2 saves (`src/sim.js`); learning
-  challenges (`src/challenges.js`); living city — cars/pedestrians/boats/dogs/
-  balloons/fireworks/smoke (`src/life.js`); category-drawer + City-Helper + a11y
+- Plain sandbox sim: footprint occupancy, the day/night clock and compact v2 saves
+  (`src/sim.js`); living city — cars/pedestrians/boats/dogs/balloons/fireworks/smoke,
+  sized by how much has been built (`src/life.js`); category-drawer + a11y
   UI (`src/ui.js`); synthesized WebAudio + speech (`src/audio.js`); wired in
   `src/main.js`.
 - Rebuild the single file: `npx esbuild src/main.js --bundle --minify --format=iife`,

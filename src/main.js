@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Clint McLeod. All rights reserved.
 // Blockville (sandbox) — integration layer. Owns boot, game loop, input routing,
-// and wiring between sim / engine / models / life / ui / audio / challenges
-// (which never import each other directly).
+// and wiring between sim / engine / models / life / ui / audio
+// (which never import each other directly). A plain sandbox: no goals, stats or economy.
 
 import { TILE, N, T, idx, inBounds } from './constants.js';
 import * as models from './models.js';
@@ -10,7 +10,6 @@ import { Sim } from './sim.js';
 import { Life } from './life.js';
 import { initUI } from './ui.js';
 import * as audio from './audio.js';
-import { CHALLENGES, GUIDED, makeBaseline, progress } from './challenges.js';
 import { Net, makeCode, normalizeCode } from './net.js';
 import { startIcons } from './icons.js';
 
@@ -30,17 +29,15 @@ const ENTRY_BY_ID = {};
 for (const list of Object.values(models.CATALOG)) {
   for (const entry of list) ENTRY_BY_ID[entry.id] = entry;
 }
-const challengeById = {};
-for (const c of CHALLENGES) challengeById[c.id] = c;
 
 const hash2 = (x, z) => ((x * 73856093) ^ (z * 19349663)) >>> 0;
 
 // ---------------------------------------------------------------------------
 // Named cities (save slots) — replaces the old single autosave
 // ---------------------------------------------------------------------------
-const CITIES_KEY = 'bv-cities';       // [{id,name,day,pop}]
+const CITIES_KEY = 'bv-cities';       // [{id,name,day}]
 const CURRENT_KEY = 'bv-current';     // id string
-const MODE_KEY = 'bv-mode';           // 'picture'|'explorer'|'everything'
+const MODE_KEY = 'bv-mode';           // 'picture'|'everything' (an old 'explorer' choice reads as 'everything')
 const SPEECH_KEY = 'bv-speech';       // '1'|'0'
 const BRIGHT_KEY = 'bv-bright';       // '1'|'0'
 const STICKER_KEY = 'blockville-stickers';
@@ -77,7 +74,7 @@ function saveIndex() { lsSet(CITIES_KEY, JSON.stringify(cities)); }
 function autosave() {
   lsSet(cityKey(currentId), sim.save());
   const c = currentCity();
-  if (c) { c.day = sim.state.day; c.pop = sim.state.pop; saveIndex(); }
+  if (c) { c.day = sim.state.day; saveIndex(); }
 }
 
 const life = new Life(engine, models);
@@ -186,83 +183,6 @@ const speechOn = () => { try { return audio.isSpeechEnabled && audio.isSpeechEna
 function setSpeech(on) { try { audio.setSpeechEnabled(on); } catch (e) {} lsSet(SPEECH_KEY, on ? '1' : '0'); }
 
 // ---------------------------------------------------------------------------
-// City Helper — guided missions from challenges.js
-// ---------------------------------------------------------------------------
-let helperOn = false, guidedIdx = 0, mission = null, baseline = null, customMission = false;
-let placedSinceStart = 0, missionComplete = false;
-let cityNamedFlag = false, postcardFlag = false;
-
-function missionMetrics() {
-  const m = (sim.metrics && sim.metrics()) || {};
-  m.cityNamed = cityNamedFlag; m.postcardTaken = postcardFlag; m.placedSinceStart = placedSinceStart;
-  return m;
-}
-function pushMission(complete) {
-  if (!mission || !ui.setMission) return;
-  const p = progress(mission.goal, missionMetrics(), baseline);
-  ui.setMission({ emoji: mission.emoji, title: mission.title, say: mission.say, done: p.done, total: p.total, ask: mission.ask, complete: !!complete });
-}
-function startMission(id) {
-  mission = challengeById[id];
-  if (!mission) { helperOn = false; if (ui.hideMission) ui.hideMission(); return; }
-  baseline = makeBaseline(mission.goal, (sim.metrics && sim.metrics()) || {});
-  placedSinceStart = 0; missionComplete = false;
-  pushMission(false);
-  if (id === 'bridge') focusNearestRiver();
-  if (speechOn()) speak(mission.say);
-}
-function startHelper() { helperOn = true; customMission = false; guidedIdx = 0; startMission(GUIDED[0]); }
-function startProject(id) { helperOn = true; customMission = true; startMission(id); }
-function checkMission() {
-  if (!helperOn || !mission || missionComplete) return;
-  const p = progress(mission.goal, missionMetrics(), baseline);
-  if (ui.setMission) ui.setMission({ emoji: mission.emoji, title: mission.title, say: mission.say, done: p.done, total: p.total, ask: mission.ask, complete: p.complete });
-  if (p.complete) {
-    missionComplete = true;
-    audio.play('upgrade');
-    if (speechOn()) speak('Great job! ' + (mission.ask || ''));
-  }
-}
-function nextMission() {
-  if (customMission) {
-    customMission = false; helperOn = false; mission = null;
-    if (ui.hideMission) ui.hideMission();
-    ui.celebrate('Project complete! 🎉', 'Pick another project any time from Help.');
-    return;
-  }
-  guidedIdx++;
-  if (guidedIdx < GUIDED.length) startMission(GUIDED[guidedIdx]);
-  else { helperOn = false; if (ui.hideMission) ui.hideMission(); ui.celebrate('You did it! 🎉', 'You finished all the helper missions!'); audio.play('milestone'); }
-}
-function freeBuild() { helperOn = false; mission = null; if (ui.hideMission) ui.hideMission(); }
-
-// ---------------------------------------------------------------------------
-// Gentle cause-and-effect suggestions
-// ---------------------------------------------------------------------------
-let suggestTimer = 0, lastSuggest = '';
-function maybeSuggest(dt) {
-  suggestTimer += dt;
-  if (suggestTimer < 25) return;
-  if (helperOn && mission && !missionComplete) { suggestTimer = 0; return; } // don't clutter a mission
-  const m = (sim.metrics && sim.metrics()) || {};
-  const opts = [];
-  if (m.factories > 0 && m.air < 0.72) opts.push(['So much smoke! Plant trees to clean the air.', '🌳']);
-  if (m.homes >= 3 && m.parks === 0) opts.push(['Add a park — it makes your neighborhood happier!', '🎠']);
-  if (m.homes === 0 && (m.shops + m.downtown + m.factories) > 0) opts.push(['Add some homes so people can move in!', '🏠']);
-  if (m.homes >= 5 && m.shops === 0) opts.push(['Your people need shops to visit!', '🏪']);
-  if (m.residents > 0 && m.jobs === 0) opts.push(['Add a shop or factory so grown-ups have places to work!', '💼']);
-  if (m.jobs > Math.max(8, m.residents * 2)) opts.push(['There are lots of jobs—build more homes for new neighbors!', '🏠']);
-  if ((m.homes + m.shops + m.factories + m.funCount) > 0 && m.roadConnectedBuildings === 0) {
-    opts.push(['Put a road beside a building—then cars and walkers can visit!', '🛣️']);
-  }
-  suggestTimer = 0;
-  if (!opts.length) return;
-  const pick = opts.find((o) => o[0] !== lastSuggest) || opts[0];
-  lastSuggest = pick[0];
-  ui.toast(pick[0], pick[1]);
-}
-
-// ---------------------------------------------------------------------------
 // Photo postcard
 // ---------------------------------------------------------------------------
 function takePhoto() {
@@ -271,7 +191,6 @@ function takePhoto() {
       engine.render(0.016);
       const url = canvas.toDataURL('image/png');
       if (ui.showPostcard) ui.showPostcard(url, name, sim.state.day);
-      postcardFlag = true;
       audio.play('place');
     } catch (e) { ui.toast('Photo failed — try again!', '📷'); }
   };
@@ -282,13 +201,14 @@ function takePhoto() {
 }
 function renameCurrentCity(name) {
   const c = currentCity();
-  if (c) { c.name = (name || 'Blockville').slice(0, 20); saveIndex(); cityNamedFlag = true; }
+  if (c) { c.name = (name || 'Blockville').slice(0, 20); saveIndex(); }
 }
 
 // ---------------------------------------------------------------------------
 // Modes
 // ---------------------------------------------------------------------------
 let mode = lsGet(MODE_KEY);
+if (mode === 'explorer') mode = 'everything';   // City Explorer only added missions and stats, which are gone
 function picturePalette() {
   const items = [
     { kind: 'tool', id: 'move', emoji: '✋', label: 'Move' },
@@ -305,6 +225,7 @@ function picturePalette() {
   return items;
 }
 function applyMode(m) {
+  if (m !== 'picture') m = 'everything';
   mode = m; lsSet(MODE_KEY, m);
   if (ui.setMode) ui.setMode(m, m === 'picture' ? picturePalette() : null);
   activeTool = null;
@@ -330,24 +251,13 @@ function focusCity() {
   ui.toast('Found your city!', '🎯');
 }
 
-function focusNearestRiver() {
-  if (!engine.focusAt) return;
-  let best = null, bestD = Infinity;
-  for (let z = 1; z < N - 1; z++) for (let x = 1; x < N - 1; x++) {
-    if (sim.state.map[idx(x, z)] !== T.WATER) continue;
-    const d = (x - N / 2) ** 2 + (z - N / 2) ** 2;
-    if (d < bestD) { bestD = d; best = { x, z }; }
-  }
-  if (best) { engine.focusAt(best.x, best.z, 125); ui.toast('The blue water is ready for your bridge!', '🌉'); }
-}
-
 // ---------------------------------------------------------------------------
 // City manager (My Cities)
 // ---------------------------------------------------------------------------
 function openCityManager() {
   if (!ui.showCityManager) return;
   ui.showCityManager({
-    cities: cities.map((c) => ({ id: c.id, name: c.name || 'My City', day: c.day || sim.state.day, pop: c.pop || 0 })),
+    cities: cities.map((c) => ({ id: c.id, name: c.name || 'My City', day: c.day || sim.state.day })),
     currentId,
     onLoad(id) { if (id !== currentId) switchToCity(id); },
     onNew(name) { createCity(name); },
@@ -357,9 +267,6 @@ function openCityManager() {
 }
 function afterCityChange() {
   undoStack.length = 0; growAnims.clear();
-  partyIdx = 0; while (partyIdx < POP_PARTY.length && sim.state.pop >= POP_PARTY[partyIdx]) partyIdx++;
-  cityNamedFlag = cityName() !== 'Blockville' && cityName() !== 'My City';
-  postcardFlag = false;
   rebuildAllVisuals();
   refreshStatsNow();
 }
@@ -394,7 +301,7 @@ function keepAsNewCity(name) {
   cities.push({ id, name: (name || 'Our City').slice(0, 20) }); saveIndex();
   lsSet(cityKey(id), sim.save());
   currentId = id; lsSet(CURRENT_KEY, id);
-  const c = currentCity(); if (c) { c.day = sim.state.day; c.pop = sim.state.pop; saveIndex(); }
+  const c = currentCity(); if (c) { c.day = sim.state.day; saveIndex(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -461,21 +368,15 @@ const ui = initUI({
   onNew() {
     if (onlineFlag) { ui.toast('Leave the room first!', '🤝'); return; }
     createCity('My City');
-    if (mode === 'everything') freeBuild(); else startHelper();
     focusCity();
-    ui.toast('New city—fresh map, fresh helper!', '🆕');
+    ui.toast('New city—fresh map!', '🆕');
   },
   onMute() { return audio.toggleMute(); },
   onUndo() { doUndo(); },
   onPhoto() { takePhoto(); },
   onHelp() { if (ui.showHelpMenu) ui.showHelpMenu(); else ui.showWelcome(); },
-  onProjects() { if (ui.showProjects) ui.showProjects(CHALLENGES, startProject); },
-  onProject(id) { startProject(id); },
-  onRestartHelper() { if (mode === 'everything') applyMode('explorer'); startHelper(); ui.toast('Helper missions restarted!', '🎯'); },
-  onMode(nextMode) { applyMode(nextMode || 'explorer'); if (mode === 'everything') freeBuild(); else startHelper(); },
+  onMode(nextMode) { applyMode(nextMode); },
   onFocusCity() { focusCity(); },
-  onFreeBuild() { freeBuild(); },
-  onMissionNext() { nextMission(); },
   onPalettePick(item) {
     if (!item) { activeTool = null; ui.setActiveTool('move'); return; }
     const tool = item.kind === 'tool' ? item.id : (item.entry || ENTRY_BY_ID[item.id]);
@@ -597,45 +498,22 @@ function toolOpAt(tool, tx, tz) {
 
 // Apply an op to the sim + visuals (NO networking). Used for both local (offline)
 // actions and remote ops arriving in server order — so every player converges.
-function announceEffect(entry, before, after) {
-  if (!entry || !before || !after) return;
-  const bits = [];
-  const pop = (after.residents || 0) - (before.residents || 0);
-  const jobs = (after.jobs || 0) - (before.jobs || 0);
-  const happy = Math.round(((after.happiness || 0) - (before.happiness || 0)) * 100);
-  const air = Math.round(((after.air || 0) - (before.air || 0)) * 100);
-  if (pop) bits.push('+' + pop + ' people');
-  if (jobs) bits.push('+' + jobs + ' jobs');
-  if (happy > 0) bits.push('happier neighbors');
-  if (air < 0) bits.push('air −' + Math.abs(air) + '%');
-  if (air > 0) bits.push('air +' + air + '%');
-  if (bits.length) ui.toast((entry.name || 'Building') + ': ' + bits.join(' · '), entry.emoji || '✨');
-}
-
 function applyOp(op) {
   if (!op) return;
   if (op.k === 'road') {
-    const before = sim.metrics();
     let placed = 0;
     for (const c of op.cells) {
       const x = c[0] | 0, z = c[1] | 0;
       const r = sim.placeRoad(x, z);
       if (r && r.ok) { refreshRoadArea(x, z); engine.refreshTile(sim.state, x, z); placed++; }
     }
-    if (placed) {
-      audio.play('road');
-      const after = sim.metrics();
-      if ((after.bridgeCrossings || 0) > (before.bridgeCrossings || 0)) ui.toast('Your bridge connects both river banks!', '🌉');
-    }
+    if (placed) audio.play('road');
   } else if (op.k === 'tree') {
-    const before = sim.metrics();
     const x = op.x | 0, z = op.z | 0;
     const r = sim.placeTree(x, z);
     if (r && r.ok) {
       engine.addProp('tree', models.treeModel(hash2(x, z) % 8), x, z); audio.play('place');
-      const after = sim.metrics();
-      const air = Math.round(((after.air || 0) - (before.air || 0)) * 100);
-      ui.toast(air > 0 ? ('Tree planted: air +' + air + '%') : 'Tree planted!', '🌳');
+      ui.toast('Tree planted!', '🌳');
     }
   } else if (op.k === 'erase') {
     const x = op.x | 0, z = op.z | 0, prevRoad = sim.state.map[idx(x, z)] === T.ROAD;
@@ -644,9 +522,8 @@ function applyOp(op) {
   } else if (op.k === 'build') {
     const e = ENTRY_BY_ID[op.id];
     if (e) {
-      const before = sim.metrics();
       const r = sim.place(e, op.x | 0, op.z | 0, op.v | 0);
-      if (r && r.ok) { audio.play('built'); announceEffect(e, before, sim.metrics()); }
+      if (r && r.ok) audio.play('built');
     }
   }
   drainNow();
@@ -799,7 +676,7 @@ canvas.addEventListener('keydown', (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Sim events → visuals / stickers / missions
+// Sim events → visuals / stickers
 // ---------------------------------------------------------------------------
 const growAnims = new Map();
 function handleEvents(events) {
@@ -813,7 +690,6 @@ function handleEvents(events) {
         if (model) { engine.addBuilding(ev.bid, model, ev.x, ev.z, 0.01, ev.rot || 0); growAnims.set(ev.bid, 0); }
         addSpinner(ev.bid, type, ev.x, ev.z, ev.rot || 0, ev.etw || (ev.entry && ev.entry.tw) || 1, ev.etd || (ev.entry && ev.entry.td) || 1);
         recordSticker(type, ev.entry && ev.entry.name);
-        placedSinceStart++;
         mapChanged = true;
         break;
       }
@@ -826,16 +702,6 @@ function handleEvents(events) {
     }
   }
   if (mapChanged) life.sync(sim.state, sim.roadGraph());
-}
-
-const POP_PARTY = [50, 150, 300, 500, 1000];
-let partyIdx = 0;
-function checkParty() {
-  while (partyIdx < POP_PARTY.length && sim.state.pop >= POP_PARTY[partyIdx]) {
-    ui.celebrate('Hooray! 🎉', `${POP_PARTY[partyIdx]} people live in ${cityName()}!`);
-    audio.play('milestone');
-    partyIdx++;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -874,7 +740,7 @@ function clockLabel(clock, nt) {
 }
 function refreshStatsNow() {
   const nt = nightFactor(sim.state.clock);
-  ui.setStats({ pop: sim.state.pop, jobs: sim.state.jobs, happiness: sim.state.happiness, air: sim.state.air, day: sim.state.day, clockLabel: clockLabel(sim.state.clock, nt) });
+  ui.setStats({ day: sim.state.day, clockLabel: clockLabel(sim.state.clock, nt) });
 }
 
 let last = performance.now();
@@ -905,12 +771,9 @@ function update(dt) {
   statTimer += dt;
   if (statTimer > 0.2) {
     statTimer = 0;
-    ui.setStats({ pop: sim.state.pop, jobs: sim.state.jobs, happiness: sim.state.happiness, air: sim.state.air, day: sim.state.day, clockLabel: clockLabel(sim.state.clock, nt) });
-    checkParty();
-    checkMission();
+    ui.setStats({ day: sim.state.day, clockLabel: clockLabel(sim.state.clock, nt) });
   }
-  maybeSuggest(dt);
-  ambTimer += dt; if (ambTimer > 1) { ambTimer = 0; audio.setAmbience(nt, sim.state.pop); }
+  ambTimer += dt; if (ambTimer > 1) { ambTimer = 0; audio.setAmbience(nt); }
   if (onlineFlag) {
     // In a room: the shared city lives on the server, not local slots. The
     // "primary" player periodically ships a fresh snapshot so late joiners
@@ -934,7 +797,7 @@ window.addEventListener('resize', () => engine.resize());
 // Debug/console handle
 window.BV = {
   sim, engine, life, ui, models, step: update,
-  metrics: () => missionMetrics(), mode: () => mode,
+  mode: () => mode,
   cities: () => cities, openCities: openCityManager,
   paint: (tool, x, z) => {
     activeTool = (typeof tool === 'string' && ENTRY_BY_ID[tool]) ? ENTRY_BY_ID[tool] : tool;
@@ -959,20 +822,16 @@ if (lsGet(BRIGHT_KEY) === '1') {
   if (engine.setDaylightLock) engine.setDaylightLock(true);
   if (ui.setBrightState) ui.setBrightState(true);
 }
-while (partyIdx < POP_PARTY.length && sim.state.pop >= POP_PARTY[partyIdx]) partyIdx++;
-cityNamedFlag = cityName() !== 'Blockville' && cityName() !== 'My City';
 rebuildAllVisuals();
 requestAnimationFrame(frame);
 
-// First-run flow: choose a play mode, then welcome + guided helper on the fresh
-// generated city.
+// First-run flow: choose a play mode, then a short welcome on the fresh generated city.
 function firstRunFlow() {
-  if (ui.showModePicker) ui.showModePicker((m) => { applyMode(m || 'explorer'); afterMode(); });
-  else { applyMode('explorer'); afterMode(); }
+  if (ui.showModePicker) ui.showModePicker((m) => { applyMode(m); afterMode(); });
+  else { applyMode('everything'); afterMode(); }
 }
 function afterMode() {
   if (!loadedFromSave) ui.showWelcome();
-  if (mode !== 'everything') startHelper();
 }
 
 const boot = document.getElementById('boot');
@@ -993,7 +852,7 @@ setTimeout(() => {
       else { createCity('My City'); ui.toast('New city! 🏗️', '🆕'); }
     },
     onJoin() {
-      if (firstRun) applyMode('explorer');   // need a mode before joining a room
+      if (firstRun) applyMode('everything');   // need a mode before joining a room
       if (ui.showMultiplayer) ui.showMultiplayer();
     },
     onGuide() { try { window.open('./teacher-guide.html', '_blank', 'noopener'); } catch (e) {} },

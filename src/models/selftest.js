@@ -74,9 +74,7 @@ export function _selfTest() {
       if (typeof e.name !== 'string' || !e.name) errors.push(e.id + ': bad name');
       if (typeof e.emoji !== 'string' || !e.emoji) errors.push(e.id + ': bad emoji');
       if (![1, 2, 3, 4].includes(e.tw) || ![1, 2, 3, 4].includes(e.td)) errors.push(e.id + ': bad tw/td');
-      const capLo = cat === 'homes' ? 2 : cat === 'deco' ? 0 : 1;
-      const capHi = cat === 'homes' ? 30 : cat === 'deco' ? 0 : 10;
-      if (!(Number.isInteger(e.cap) && e.cap >= capLo && e.cap <= capHi)) errors.push(e.id + ': bad cap ' + e.cap);
+      if ('cap' in e) errors.push(e.id + ': catalog entries no longer carry a population (cap)');
       const minVar = (e.tw > 1 || e.td > 1) ? 2 : 3;
       if (!(Number.isInteger(e.variants) && e.variants >= minVar)) errors.push(e.id + ': bad variants ' + e.variants);
       // v3.1: height cap keyed by the larger footprint dimension.

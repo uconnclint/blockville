@@ -16,7 +16,6 @@ window.BVSELF = async function BVSELF() {
   };
   await run('sim', '/src/sim.js', '_selfTest');
   await run('life', '/src/life.js', '_selfTest');
-  await run('challenges', '/src/challenges.js', '_selfTest');
   await run('models', '/src/models.js', '_selfTest');
   await run('voxel', '/src/render/voxel.js');
   await run('materials', '/src/render/materials.js', 'selfTest', [r]);

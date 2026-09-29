@@ -28,6 +28,9 @@ import { TILE, N, T, idx, inBounds } from './constants.js';
 // ---- tuning knobs -------------------------------------------------------
 const CAR_CAP = 300;    // pool size; the live count follows the view (below) (r11: 190 -> 300: iso-mid frames ~80 road tiles)
 const PED_CAP = 150;
+// Traffic and crowds follow what has been built, not who "lives" where: every building adds the same busyness
+// (decorations don't). Roughly what a typical home used to add, so an old city looks as lively as it did.
+const BUSY_PER_BUILDING = 12;
 const PUFF_CAP = 40;
 const BIRD_COUNT = 4;
 const CLOUD_COUNT = 0;   // coherence w4: 8 -> 0. The low voxel clouds (y 45-60) read as white stepped 'P' blocks lying on lots/grass in the ortho iso view (res/downtown builders' transient white block); the reference has no clouds.
@@ -389,10 +392,11 @@ export class Life {
     const step = Math.min(dt, 0.25);   // big catch-up steps still move smoothly
 
     const night = state.clock < 0.25 || state.clock > 0.75;
-    const pop = state.pop || 0;
+    let busy = 0;
+    for (const b of state.buildings || []) if (b && b.cat !== 'deco') busy += BUSY_PER_BUILDING;
 
     // ---- target counts ------------------------------------------------
-    // Population sets how busy the town can be; the view decides how many of
+    // The buildings set how busy the town can be; the view decides how many of
     // those are alive right now (the crowd follows the camera, so every street
     // the player looks at is busy without paying for the whole map).
     this._viewRefresh(dt);
@@ -407,15 +411,15 @@ export class Life {
     const wall = this._lastWall != null ? Math.max(0, Math.min(1, (now - this._lastWall) / 1000)) : 0;
     this._lastWall = now;
     const budget = Math.max(SPAWN_PER_FRAME, Math.min(90, Math.round(wall * SPAWN_PER_FRAME * 60)));
-    // population sets how busy the town can be (r11: pop/8 -> pop/3 — a
-    // ~1000-person town capped the streets at ~120 cars, well under the view)
-    let carTarget = Math.min(4 + Math.floor(pop / 3), CAR_CAP);
+    // busyness sets how busy the town can be (r11: /8 -> /3 — a big town capped the
+    // streets at ~120 cars, well under the view)
+    let carTarget = Math.min(4 + Math.floor(busy / 3), CAR_CAP);
     if (v) carTarget = Math.min(carTarget, Math.max(4, Math.round(v.road * CARS_PER_TILE + v.ring * 0.3)));
     if (night) carTarget = Math.floor(carTarget / 2);
     carTarget = Math.min(CAR_CAP, Math.floor(carTarget * this.density));
     if (this.roadTiles.length === 0) carTarget = 0;
 
-    let pedTarget = Math.min(Math.floor(pop / 5), PED_CAP);
+    let pedTarget = Math.min(Math.floor(busy / 5), PED_CAP);
     if (v) pedTarget = Math.min(pedTarget, Math.max(6, Math.round(v.road * PEDS_PER_TILE + v.ring * 0.3)));
     if (night) pedTarget = Math.floor(pedTarget * 0.2);
     pedTarget = Math.min(PED_CAP, Math.floor(pedTarget * this.density));
@@ -2022,7 +2026,9 @@ export function _selfTest() {
     { bid: 3, type: 'fire-station', cat: 'fun', x: 8, z: 11, tw: 1, td: 1, rot: 0 },
   ];
 
-  const state = { map, zoneOf, buildings, pop: 300, clock: 0.3, speed: 1 };
+  // a town of 25 houses gives the streets a healthy crowd (the plain houses need no map tiles: life only reads their type)
+  for (let i = 0; i < 25; i++) buildings.push({ bid: 10 + i, type: 'small-house', cat: 'homes', x: 2 + i, z: 2, tw: 1, td: 1, rot: 0 });
+  const state = { map, zoneOf, buildings, clock: 0.3, speed: 1 };
 
   const isRoad = (x, z) => inBounds(x, z) && map[idx(x, z)] === T.ROAD;
   const roadGraph = {

@@ -449,11 +449,10 @@ export function isSpeechEnabled() {
   return speechEnabled;
 }
 
-// Kept for API compatibility with main.js's day/night + population loop.
-// Background music is now a flat rotating playlist (no day/night or
-// population-driven mixing), so this just makes sure the playlist is
-// running — nightT/pop are accepted but unused.
-export function setAmbience(nightT, pop) {
+// Kept for API compatibility with main.js's day/night loop.
+// Background music is a flat rotating playlist (no day/night mixing),
+// so this just makes sure the playlist is running — nightT is unused.
+export function setAmbience(nightT) {
   try {
     if (!started) return;
     startMusic();

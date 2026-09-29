@@ -1,5 +1,12 @@
 # BLOCKVILLE v2 — SANDBOX REWORK CONTRACT (supplements CONTRACTS.md)
 
+> **v4 — plain sandbox (supersedes the "population" and "stats" parts of this contract).**
+> Removed: residents/jobs/happiness/air (`state.pop`, `jobs`, `happiness`, `air`, `sim.metrics()`), the City Helper
+> missions and project library (`src/challenges.js`), the gentle suggestion toasts, the population milestone parties,
+> the City Explorer mode, and the per-building `cap`. Buildings, roads and trees place wherever they fit, in any order.
+> `life.js` sizes cars and walkers from the number of non-deco buildings. Saves are unchanged (v2); extra keys in an
+> old save are ignored. An old saved "explorer" mode reads as "everything".
+
 Blockville becomes a PURE SANDBOX: no economy, no money, no costs, no unlocks, no
 milestones, no zones. Kids pick a specific building from a category and place it
 instantly. Population remains as a cosmetic stat (drives cars/pedestrian density).

@@ -13,32 +13,6 @@ export const T = {
   MOUNTAIN: 15,                       // raised rocky terrain; height in state.variant[i]
 };
 
-// Tools — id, what they paint, cost
-export const TOOLS = {
-  road:      { cost: 10,  paints: T.ROAD },
-  home:      { cost: 20,  paints: T.ZONE_R },
-  shop:      { cost: 30,  paints: T.ZONE_C },
-  factory:   { cost: 40,  paints: T.ZONE_I },
-  tree:      { cost: 5,   paints: T.TREE },
-  park:      { cost: 60,  paints: T.PARK },
-  school:    { cost: 150, paints: T.SCHOOL },
-  fire:      { cost: 120, paints: T.FIRE },
-  fountain:  { cost: 100, paints: T.FOUNTAIN },
-  power:     { cost: 200, paints: T.POWER },
-  stadium:   { cost: 400, paints: T.STADIUM },
-  bulldoze:  { cost: 0,   paints: -1 },
-};
-
-// Tool unlock thresholds by population
-export const UNLOCKS = [
-  { pop: 25,  tool: 'factory' },
-  { pop: 75,  tool: 'school' },
-  { pop: 75,  tool: 'fire' },
-  { pop: 150, tool: 'fountain' },
-  { pop: 150, tool: 'power' },
-  { pop: 300, tool: 'stadium' },
-];
-
 export const DAY_LENGTH = 120;   // real seconds per in-game day at speed 1
 export const CHUNK = 16;         // tiles per terrain chunk side (4x4 chunks at N=64)
 
