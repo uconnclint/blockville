@@ -28,6 +28,8 @@ import { TILE, N, T, idx, inBounds } from './constants.js';
 // ---- tuning knobs -------------------------------------------------------
 const CAR_CAP = 300;    // pool size; the live count follows the view (below) (r11: 190 -> 300: iso-mid frames ~80 road tiles)
 const PED_CAP = 150;
+// v3.8: half the cars (moving + kerb-parked) and people, for iPad/Chromebook speed.
+const CROWD = 0.5;
 // Traffic and crowds follow what has been built, not who "lives" where: every building adds the same busyness
 // (decorations don't). Roughly what a typical home used to add, so an old city looks as lively as it did.
 const BUSY_PER_BUILDING = 12;
@@ -416,13 +418,13 @@ export class Life {
     let carTarget = Math.min(4 + Math.floor(busy / 3), CAR_CAP);
     if (v) carTarget = Math.min(carTarget, Math.max(4, Math.round(v.road * CARS_PER_TILE + v.ring * 0.3)));
     if (night) carTarget = Math.floor(carTarget / 2);
-    carTarget = Math.min(CAR_CAP, Math.floor(carTarget * this.density));
+    carTarget = Math.min(CAR_CAP, Math.floor(carTarget * this.density * CROWD));
     if (this.roadTiles.length === 0) carTarget = 0;
 
     let pedTarget = Math.min(Math.floor(busy / 5), PED_CAP);
     if (v) pedTarget = Math.min(pedTarget, Math.max(6, Math.round(v.road * PEDS_PER_TILE + v.ring * 0.3)));
     if (night) pedTarget = Math.floor(pedTarget * 0.2);
-    pedTarget = Math.min(PED_CAP, Math.floor(pedTarget * this.density));
+    pedTarget = Math.min(PED_CAP, Math.floor(pedTarget * this.density * CROWD));
     if (this.roadTiles.length === 0 && this.parkTiles.length === 0) pedTarget = 0;
 
     // recycle agents that wandered far off screen (they respawn near the view)
@@ -660,7 +662,8 @@ export class Life {
       if (!kinds) continue;
       const fleet = !!FLEET[b.type] || depot;
       const lead = LEAD[b.type] != null ? LEAD[b.type] : null;
-      const p = fleet ? 1 : shop ? 0.9 : b.cat === 'homes' ? 0.6 : 0.8;   // r10: 0.95 / 0.65 / 0.45
+      // a building's own fleet (fire engines, vans) always parks; shoppers/residents at CROWD
+      const p = fleet ? 1 : CROWD * (shop ? 0.9 : b.cat === 'homes' ? 0.6 : 0.8);   // r10: 0.95 / 0.65 / 0.45
       const fill = fleet ? 0.95 : shop ? 0.8 : b.cat === 'homes' ? 0.55 : 0.7; // r10: 0.75 / 0.5
       const rot = b.rot | 0, tw = b.tw > 0 ? b.tw : 1, td = b.td > 0 ? b.td : 1;
       const w = (rot & 1) ? td : tw, d = (rot & 1) ? tw : td;

@@ -830,6 +830,9 @@ export class Props {
     this._time = 0;
     this._wind = opts.wind != null ? opts.wind : 1;
     this._userDensity = opts.density != null ? opts.density : 1;
+    // v3.8: no natural plants/trees/rocks on open ground (speed on iPads and
+    // Chromebooks; players plant their own trees). selfTest opts back in.
+    this._natural = opts.natural === true;
 
     this._state = null;         // retained for _autoRescatter
     this._occSig = 0;
@@ -1114,7 +1117,7 @@ export class Props {
     for (let t = 0; t < NT; t++) if (TYPES[t].group === 'veg') { this._raw[t].length = 0; this._dirty[t] = 1; }
 
     const map = state && state.map;
-    if (!map || map.length < N * N) { this.stats.scatter = 0; return this; }
+    if (!this._natural || !map || map.length < N * N) { this.stats.scatter = 0; return this; }
     // Retained so the scatter can follow the city as it is built — engine.js
     // calls scatter() from buildGround/reseed, which happens BEFORE any
     // building exists, so a one-shot scatter would compute an all-zero
@@ -2257,7 +2260,7 @@ export function selfTest(renderer) {
   let scene = null, props = null;
   try {
     scene = new THREE.Scene();
-    props = new Props(scene, { quality: 2 });
+    props = new Props(scene, { quality: 2, natural: true });
 
     // --- 1. geometry contract ---------------------------------------------
     const REQ = ['position', 'normal', 'color', 'glowColor', 'emissiveT', 'aoT', 'matParams'];
@@ -2369,7 +2372,7 @@ export function selfTest(renderer) {
       const bare = fakeState(20240601);
       bare.occ = new Int32Array(N * N);
       bare.level = new Uint8Array(N * N);
-      const p3 = new Props(new THREE.Scene(), { quality: 2 });
+      const p3 = new Props(new THREE.Scene(), { quality: 2, natural: true });
       p3.scatter(bare);
 
       // Empty tiles inside a road-enclosed block are terrain.js vacant lots
@@ -2427,7 +2430,7 @@ export function selfTest(renderer) {
     }
 
     // --- 5. determinism ---------------------------------------------------
-    const p2 = new Props(new THREE.Scene(), { quality: 2 });
+    const p2 = new Props(new THREE.Scene(), { quality: 2, natural: true });
     p2.scatter(fakeState(20240601));
     let same = p2.stats.scatter === props.stats.scatter;
     if (same) {
