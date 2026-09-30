@@ -1,7 +1,7 @@
 // Blockville shared constants — imported by every module. Keep dependency-free.
 
 export const TILE = 8;      // world units per tile
-export const N = 80;        // tiles per map side (v3.6: a quarter bigger than the old 64)
+export const N = 40;        // tiles per map side (v3.8: 80 -> 40 for iPad/Chromebook speed; all buildable)
 
 // Tile types stored in state.map
 export const T = {

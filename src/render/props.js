@@ -57,9 +57,8 @@ import { cityBlockMask, parcelPlan, skirtLandY, lawnMask, lawnPark, LZ_PICNIC, L
 // World facts
 // ---------------------------------------------------------------------------
 
-const TILE = 8;
-const N = 80;
-const MAP_W = N * TILE;               // 640
+import { TILE, N } from '../constants.js';
+const MAP_W = N * TILE;
 
 const T_GRASS = 0, T_WATER = 1, T_SAND = 2, T_ROAD = 3, T_TREE = 8, T_MOUNTAIN = 15;
 
@@ -123,7 +122,7 @@ function pickSize(u, sizes, cdf) {
 const URBAN_R = 4;                    // tiles (a 9x9 / 72-world-unit window)
 const URBAN_LO = 0.045, URBAN_HI = 0.30;
 
-const CHUNKS = 8;                     // 8x8 chunks of 10 tiles / 80 world units
+const CHUNKS = Math.max(1, Math.round(N / 10)); // chunks of ~10 tiles / 80 world units
 const CHUNK_W = MAP_W / CHUNKS;
 const NCHUNK = CHUNKS * CHUNKS;
 
@@ -2448,9 +2447,10 @@ export function selfTest(renderer) {
     // --- 6. draw-call budget + culling ------------------------------------
     const cam = new THREE.PerspectiveCamera(40, 16 / 9, 1, 2000);
     const probe = (dist, polar) => {
-      cam.position.set(320 + Math.sin(0.8) * dist * Math.sin(polar), dist * Math.cos(polar),
-        320 + Math.cos(0.8) * dist * Math.sin(polar));
-      cam.lookAt(320, 0, 320);
+      const c = MAP_W / 2;
+      cam.position.set(c + Math.sin(0.8) * dist * Math.sin(polar), dist * Math.cos(polar),
+        c + Math.cos(0.8) * dist * Math.sin(polar));
+      cam.lookAt(c, 0, c);
       cam.updateMatrixWorld(true);
       cam.updateProjectionMatrix();
       props._refreshVisible(cam);
@@ -2522,6 +2522,7 @@ function countMeshes(scene) {
 
 /** A plausible map for the self-test: ocean, a road grid, mountains, buildings. */
 function fakeState(seed) {
+  const k = N / 80;
   const map = new Uint8Array(N * N);
   const occ = new Int32Array(N * N);
   const bridge = new Uint8Array(N * N);
@@ -2530,13 +2531,14 @@ function fakeState(seed) {
     for (let x = 0; x < N; x++) {
       const i = z * N + x;
       let t = T_GRASS;
-      if (x < 7 + Math.round(Math.sin(z * 0.3) * 2)) t = T_WATER;
-      else if (x < 10 + Math.round(Math.sin(z * 0.3) * 2)) t = T_SAND;
-      else if (x > 66 && z > 60) t = T_MOUNTAIN;
-      else if ((x % 6 === 0 || z % 7 === 0) && x > 14 && x < 62 && z > 8 && z < 62) t = T_ROAD;
+      // Laid out for an 80-tile map; k rescales it to the current N.
+      if (x < 7 * k + Math.round(Math.sin(z * 0.3) * 2)) t = T_WATER;
+      else if (x < 10 * k + Math.round(Math.sin(z * 0.3) * 2)) t = T_SAND;
+      else if (x > 66 * k && z > 60 * k) t = T_MOUNTAIN;
+      else if ((x % 6 === 0 || z % 7 === 0) && x > 14 * k && x < 62 * k && z > 8 * k && z < 62 * k) t = T_ROAD;
       else if (rnd(x, z, seed) < 0.05) t = T_TREE;
       map[i] = t;
-      if (t === T_GRASS && x > 20 && x < 44 && z > 20 && z < 44 && rnd(x, z, seed + 3) < 0.35) {
+      if (t === T_GRASS && x > 20 * k && x < 44 * k && z > 20 * k && z < 44 * k && rnd(x, z, seed + 3) < 0.35) {
         occ[i] = 1; level[i] = 1;
       }
     }

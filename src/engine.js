@@ -323,7 +323,7 @@ export class Engine {
     this._roads = new Roads(this.scene, { quality: this._quality,
       groundTop: (x, z) => (this._terrain && this._terrain.cellTopY ? this._terrain.cellTopY(x, z) : 0) });
     // seabed:false — the surface is opaque; nothing below it is ever seen.
-    this._water = new WaterFX(this.scene, { seabed: false, quality: this._quality });
+    this._water = new WaterFX(this.scene, { seabed: false, quality: this._quality, n: N });
     // The foam line follows terrain.js's warped (off-grid) bank, not the tiles.
     if (this._water.setLandWarp && this._terrain && typeof this._terrain._warp === 'function') {
       this._water.setLandWarp((x, z, o) => this._terrain._warp(x, z, o), TILE / (this._terrain.sub || 2));
@@ -345,6 +345,8 @@ export class Engine {
     this._lighting = new LightingRig(this.renderer, this.scene, this.camera, {
       quality: this._quality,
       sunSource: 'external',      // sky.js is the authority on sun direction
+      mapCenter: new THREE.Vector3(CENTER, 0, CENTER),
+      mapSize: MAP_W,
       skylightWarmth: 0.62,       // full strength read as orange paint (R/B 1.82 on asphalt)
       // Must clear the TALLEST THING IN THE SCENE, not the tallest model:
       // buildings sit on terrain and the seeded city reaches y=56.3, so a 40

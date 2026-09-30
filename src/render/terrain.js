@@ -4917,7 +4917,7 @@ export function selfTest(renderer) {
         return terr._cls[tz * N + tx] === C_WATER ? terr.borderY : 0;
       };
       let worst = 0;
-      for (const w of [0, 137, 320, 501, N * TILE]) {
+      for (const w of [0, 0.214, 0.5, 0.783, 1].map((f) => Math.round(f * N * TILE))) {
         worst = Math.max(worst, Math.abs(terr._skirtY(w, 0) - edgeY(w, 0)));
         worst = Math.max(worst, Math.abs(terr._skirtY(0, w) - edgeY(0, w)));
         worst = Math.max(worst, Math.abs(terr._skirtY(w, N * TILE) - edgeY(w, N * TILE)));
@@ -5350,7 +5350,7 @@ export function selfTest(renderer) {
     }
 
     // Leak check: 100 rebuild cycles must not grow the chunk registry.
-    for (let k = 0; k < 100; k++) terr.refreshTile(st, 20 + (k % 40), 20 + (k % 40));
+    for (let k = 0; k < 100; k++) terr.refreshTile(st, k % N, k % N);
     if (terr._chunks.size !== CHUNKS * CHUNKS) fail('chunk registry leaked over 100 refresh cycles');
     else ok('no chunk leak over 100 refresh cycles');
 
