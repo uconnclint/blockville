@@ -33,6 +33,8 @@ const html = shell.replace(marker, () => '<script>\n' + bundle + '\n</script>');
 
 mkdirSync(join(root, 'dist'), { recursive: true });
 writeFileSync(join(root, 'dist/blockville.html'), html);
+// The shell's own inline scripts (boot watchdog) stay; the splice must add none.
+const expected = (shell.match(/<\/script/gi) || []).length;
 const closes = (html.match(/<\/script/gi) || []).length;
-if (closes !== 1) throw new Error('expected exactly 1 </script in dist, found ' + closes);
+if (closes !== expected) throw new Error('expected ' + expected + ' </script in dist, found ' + closes);
 console.log('dist/blockville.html', (html.length / 1e6).toFixed(2) + ' MB');

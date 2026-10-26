@@ -15,11 +15,56 @@
     background:linear-gradient(#7cc9f0,#b8e6ff); z-index:99; transition:opacity .5s; }
   #boot h1 { font-size:min(12vw,64px); color:#fff; text-shadow:0 4px 0 rgba(30,90,140,.35); margin:0; letter-spacing:1px; }
   #boot p { color:#2b6a99; font-size:20px; }
+  #boot .bv-boot-why { max-width:min(90vw,640px); margin:0 16px; font-size:13px; color:#2b6a99; opacity:.8;
+    text-align:center; word-break:break-word; -webkit-user-select:text; user-select:text; }
+  #boot button { margin-top:14px; font:inherit; font-size:20px; font-weight:700; color:#fff; background:#ff9a1f;
+    border:0; border-radius:999px; padding:12px 28px; box-shadow:0 4px 0 rgba(160,80,0,.35); }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <div id="boot"><h1>🏗️ Blockville</h1><p>Loading your city…</p></div>
+<script>
+// Boot watchdog. main.js removes #boot once the game is up; until then any
+// failure (a module that won't download, a script error, the tab crashing
+// and reloading) would otherwise leave "Loading your city…" up forever with
+// nothing to tell anyone why. Show what went wrong and a Try again button.
+(function () {
+  var boot = document.getElementById('boot');
+  var why = [];
+  var tries = 1;
+  try { tries = (+sessionStorage.getItem('bv-boot-tries') || 0) + 1; sessionStorage.setItem('bv-boot-tries', tries); } catch (e) {}
+  function show(title) {
+    if (!boot.isConnected) return;
+    boot.querySelector('p').textContent = title;
+    var d = boot.querySelector('.bv-boot-why');
+    if (!d) {
+      d = document.createElement('div'); d.className = 'bv-boot-why'; boot.appendChild(d);
+      var b = document.createElement('button'); b.textContent = 'Try again';
+      b.onclick = function () { location.reload(); }; boot.appendChild(b);
+    }
+    var info = why.slice(-3);
+    if (tries > 1) info.push('Page restarted ' + (tries - 1) + 'x');
+    info.push(navigator.userAgent);
+    d.textContent = info.join(' · ');
+  }
+  addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t !== window && (t.src || t.href)) why.push('Could not load ' + String(t.src || t.href).replace(location.origin, ''));
+    else why.push((e.message || 'Error') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : ''));
+    show('Oops — Blockville couldn’t start.');
+  }, true);
+  addEventListener('unhandledrejection', function (e) {
+    why.push('Error: ' + ((e.reason && e.reason.message) || e.reason));
+    show('Oops — Blockville couldn’t start.');
+  });
+  if (tries > 2) show('Still loading… (restarted ' + (tries - 1) + 'x)');
+  setTimeout(function () { show('This is taking a long time…'); }, 30000);
+  new MutationObserver(function (m, o) {
+    if (!boot.isConnected) { o.disconnect(); try { sessionStorage.removeItem('bv-boot-tries'); } catch (e) {} }
+  }).observe(document.body, { childList: true });
+})();
+</script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
