@@ -5,8 +5,6 @@
 // Everything is wrapped so unsupported / blocked audio never throws.
 // Module top-level touches no window / AudioContext (parse-safe in node).
 
-import { MUSIC } from './music.js';
-
 let ctx = null;          // AudioContext (created lazily on first initAudio())
 let master = null;       // master GainNode (0.25)
 let muted = false;
@@ -251,7 +249,10 @@ function base64ToArrayBuffer(dataUri) {
   return bytes.buffer;
 }
 
+// Dynamic import: music.js is over half the game's download and can't play
+// before the first tap anyway, so it must not hold up the loading screen.
 async function decodeMusicBuffers() {
+  const { MUSIC } = await import('./music.js');
   const keys = Object.keys(MUSIC || {});
   const results = await Promise.all(keys.map(async (key) => {
     try {
